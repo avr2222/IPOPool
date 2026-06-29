@@ -1,0 +1,5 @@
+[project]
+project_id = "ipo-tracker"
+
+[functions.check-allotment]
+verify_jwt = false

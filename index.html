@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>IPO Pool</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0B8A4B" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
+  <!-- iOS PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="IPO Pool" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+
+  <!-- SEO / share -->
+  <meta name="description" content="Apply together. Profit together. Group IPO pooling for friends and family." />
+  <meta property="og:title" content="IPO Pool" />
+  <meta property="og:description" content="Pool PAN accounts, apply for every IPO, split profits equally." />
+  <meta property="og:type" content="website" />
+
+  <link rel="stylesheet" href="src/tokens.css" />
+  <style>
+    /* ── App shell layout ───────────────────────────────── */
+    .shell {
+      display: grid;
+      grid-template-columns: var(--side-w) 1fr;
+      min-height: 100vh;
+    }
+    .main { min-width: 0; }
+    .bottomnav,
+    .mobile-topbar { display: none; }
+    .dash-spotlight { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; }
+
+    /* ── Tables: always horizontally scrollable ─────────── */
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    /* ── Tablet (901–1200px) ────────────────────────────── */
+    @media (max-width: 1200px) and (min-width: 901px) {
+      .kpi-grid           { grid-template-columns: repeat(3, 1fr) !important; }
+      .ipo-detail-grid    { grid-template-columns: 1fr !important; }
+    }
+
+    /* ── Mobile (≤ 900px) ───────────────────────────────── */
+    @media (max-width: 900px) {
+      .sidebar, .topbar   { display: none !important; }
+      .shell              { grid-template-columns: 1fr !important; }
+      .bottomnav          { display: flex !important; }
+      .mobile-topbar      { display: flex !important; }
+
+      /* Paddings + safe areas */
+      .content {
+        padding: 14px !important;
+        padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+      }
+      .bottomnav {
+        height: calc(60px + env(safe-area-inset-bottom, 0px)) !important;
+        padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+      }
+
+      /* Grid collapses */
+      .kpi-grid           { grid-template-columns: repeat(2, 1fr) !important; }
+      .pool-summary       { grid-template-columns: repeat(2, 1fr) !important; }
+      .dash-charts-2,
+      .pool-main,
+      .ipo-detail-grid,
+      .dash-spotlight     { grid-template-columns: 1fr !important; }
+
+      /* IPO timeline: 2 rows of 2 */
+      .ipo-timeline       { grid-template-columns: repeat(2, 1fr) !important; gap: 18px 0 !important; }
+
+      /* Card touch targets */
+      button              { -webkit-tap-highlight-color: transparent; }
+    }
+
+    /* ── Extra small (≤ 480px) ──────────────────────────── */
+    @media (max-width: 480px) {
+      .content            { padding: 12px !important; padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important; }
+      .ipo-grid           { grid-template-columns: 1fr !important; }
+      .pan-grid           { grid-template-columns: 1fr !important; }
+      .group-grid         { grid-template-columns: 1fr !important; }
+    }
+
+    /* ── Very small (≤ 360px) ───────────────────────────── */
+    @media (max-width: 360px) {
+      .content            { padding: 10px !important; }
+      .kpi-grid           { grid-template-columns: 1fr 1fr !important; }
+    }
+
+    /* ── Forced mobile preview (device frame) ───────────── */
+    .force-mobile                                         { grid-template-columns: 1fr !important; }
+    .force-mobile .sidebar, .force-mobile .topbar         { display: none !important; }
+    .force-mobile .bottomnav                              { display: flex !important; }
+    .force-mobile .mobile-topbar                          { display: flex !important; }
+    .force-mobile .content                                { padding: 14px !important; padding-bottom: 80px !important; }
+    .force-mobile .kpi-grid                               { grid-template-columns: repeat(2, 1fr) !important; }
+    .force-mobile .pool-summary                           { grid-template-columns: repeat(2, 1fr) !important; }
+    .force-mobile .dash-charts-2, .force-mobile .pool-main,
+    .force-mobile .ipo-detail-grid, .force-mobile .dash-spotlight { grid-template-columns: 1fr !important; }
+    .force-mobile .ipo-timeline                           { grid-template-columns: repeat(2, 1fr) !important; gap: 18px 0 !important; }
+    .force-mobile .ipo-grid                               { grid-template-columns: 1fr !important; }
+
+    /* ── Login responsive ───────────────────────────────── */
+    .login-grid  { grid-template-columns: 1fr; }
+    .login-brand { display: none; }
+    @media (min-width: 900px) {
+      .login-grid  { grid-template-columns: 1.04fr 1fr; }
+      .login-brand { display: flex !important; }
+    }
+    @media (max-width: 899px) {
+      .login-mobile-logo { display: block !important; }
+    }
+
+    /* ── More drawer (mobile) ───────────────────────────── */
+    .more-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.45);
+      z-index: 55; animation: fadeIn .18s ease;
+    }
+    .more-drawer {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: var(--surface); border-radius: 20px 20px 0 0;
+      z-index: 56; padding: 0 0 env(safe-area-inset-bottom, 0px);
+      box-shadow: 0 -8px 32px rgba(0,0,0,.12);
+      animation: slideUp .24s cubic-bezier(.2,.7,.3,1);
+    }
+    @keyframes slideUp { from { transform: translateY(100%); } to { transform: none; } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <template id="__bundler_thumbnail">
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100" height="100" rx="22" fill="#0B8A4B" />
+      <path d="M30 70V40m0 0h16a9 9 0 0 1 0 18H30M58 70V40l20 30V40" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+    </svg>
+  </template>
+
+  <!-- React + Babel (pinned) -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <!-- Supabase JS client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+  <!-- Expose React hooks + Supabase client globally so split babel files share them -->
+  <script>
+    window.useState    = React.useState;
+    window.useEffect   = React.useEffect;
+    window.useRef      = React.useRef;
+    window.useId       = React.useId;
+    window.useMemo     = React.useMemo;
+    window.useCallback = React.useCallback;
+  </script>
+
+  <!-- Register Service Worker -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+  </script>
+
+  <!-- Supabase client config + data layer (plain JS, no babel needed) -->
+  <script src="src/supabase-client.js"></script>
+  <script src="src/db.js"></script>
+
+  <!-- Tweaks + UI -->
+  <script type="text/babel" src="src/tweaks-panel.jsx"></script>
+  <script type="text/babel" src="src/charts.jsx"></script>
+  <script type="text/babel" src="src/components.jsx"></script>
+  <script type="text/babel" src="src/screens-auth.jsx"></script>
+  <script type="text/babel" src="src/screens-dashboard.jsx"></script>
+  <script type="text/babel" src="src/screens-ipo.jsx"></script>
+  <script type="text/babel" src="src/screens-pool.jsx"></script>
+  <script type="text/babel" src="src/screens-settle.jsx"></script>
+  <script type="text/babel" src="src/screens-manage.jsx"></script>
+  <script type="text/babel" src="src/screens-settings.jsx"></script>
+  <script type="text/babel" src="src/app.jsx"></script>
+</body>
+</html>

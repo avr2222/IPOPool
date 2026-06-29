@@ -1,0 +1,135 @@
+/* ============================================================
+   IPO Pool — Design System tokens
+   Clean, restrained fintech. Light-first with dark mode.
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap');
+
+:root {
+  /* Brand */
+  --brand: #0B8A4B;
+  --brand-600: #0A7A42;
+  --brand-700: #086B3A;
+  --brand-tint: #E8F5EE;
+  --brand-tint-2: #D6EEE0;
+
+  /* Semantic profit / loss */
+  --profit: #0B8A4B;
+  --profit-soft: #E8F5EE;
+  --loss: #E5484D;
+  --loss-soft: #FCEBEC;
+  --info: #2563EB;
+  --info-soft: #E8F0FE;
+  --warn: #C2870B;
+  --warn-soft: #FBF1DC;
+
+  /* Category hues */
+  --sme: #C2870B;       /* amber */
+  --sme-soft: #FBF1DC;
+  --mainboard: #2563EB; /* blue */
+  --mainboard-soft: #E8F0FE;
+
+  /* Neutrals (light) */
+  --bg: #F6F7F9;
+  --surface: #FFFFFF;
+  --surface-2: #FBFBFC;
+  --elevated: #FFFFFF;
+  --border: #ECEEF1;
+  --border-strong: #DFE2E7;
+  --ink: #15181D;
+  --ink-2: #5B6472;
+  --ink-3: #98A1B0;
+  --ink-inv: #FFFFFF;
+
+  /* Radii */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-pill: 999px;
+
+  /* Shadows */
+  --sh-sm: 0 1px 2px rgba(16,24,40,.05);
+  --sh-md: 0 2px 8px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
+  --sh-lg: 0 12px 32px rgba(16,24,40,.10), 0 2px 8px rgba(16,24,40,.05);
+  --sh-pop: 0 16px 48px rgba(16,24,40,.16);
+
+  /* Type */
+  --font: 'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --side-w: 248px;
+  --header-h: 64px;
+}
+
+:root[data-theme="dark"] {
+  --brand: #2BB673;
+  --brand-600: #28A869;
+  --brand-700: #1F8A56;
+  --brand-tint: #122A20;
+  --brand-tint-2: #16382A;
+
+  --profit: #36C588;
+  --profit-soft: #122A20;
+  --loss: #FF6166;
+  --loss-soft: #2C1517;
+  --info: #6AA0FF;
+  --info-soft: #15233E;
+  --warn: #E6B23E;
+  --warn-soft: #2A2210;
+
+  --sme: #E6B23E;
+  --sme-soft: #2A2210;
+  --mainboard: #6AA0FF;
+  --mainboard-soft: #15233E;
+
+  --bg: #0B0E12;
+  --surface: #141821;
+  --surface-2: #11151D;
+  --elevated: #1A1F29;
+  --border: #232A35;
+  --border-strong: #2E3744;
+  --ink: #EEF1F5;
+  --ink-2: #9BA6B5;
+  --ink-3: #69748A;
+  --ink-inv: #0B0E12;
+
+  --sh-sm: 0 1px 2px rgba(0,0,0,.4);
+  --sh-md: 0 2px 8px rgba(0,0,0,.45);
+  --sh-lg: 0 12px 32px rgba(0,0,0,.55);
+  --sh-pop: 0 16px 48px rgba(0,0,0,.6);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01", "cv01";
+  transition: background .18s, color .18s, border-color .18s;
+}
+#root { min-height: 100vh; }
+
+.num { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.pos { color: var(--profit); }
+.neg { color: var(--loss); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+button { font-family: inherit; cursor: pointer; }
+input, select { font-family: inherit; }
+a { color: inherit; text-decoration: none; }
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes popIn { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes growW { from { width: 0; } }
+@keyframes drawLine { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+@keyframes sweep { from { stroke-dashoffset: var(--circ); } }
+.animate { animation: fadeUp .4s cubic-bezier(.2,.7,.3,1) both; }
+.screen-enter { animation: fadeUp .34s cubic-bezier(.2,.7,.3,1); }
+@media (prefers-reduced-motion: reduce) { .animate, .screen-enter { animation: none; } }
