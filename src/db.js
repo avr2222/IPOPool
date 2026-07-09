@@ -443,8 +443,9 @@ async function loadDB() {
           var c = changes[i];
           var upd = { status: c.status, shares: c.shares || 0, gain: c.gain || 0, checked_at: new Date().toISOString() };
           if (c.sellPrice != null) upd.sell_price = c.sellPrice;
-          var { error } = await window.sb.from('allotments').update(upd).eq('id', c.id);
+          var { data, error } = await window.sb.from('allotments').update(upd).eq('id', c.id).select();
           if (error) throw error;
+          if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         }
         // Ensure a profit_pool row exists for each affected IPO so the Pool screen can show it
         var ipoIds = new Set(changes.map(function(c) {
@@ -500,10 +501,11 @@ async function loadDB() {
 
       async markSettlementPaid(settlementId) {
         var today = new Date().toISOString().slice(0, 10);
-        var { error } = await window.sb.from('settlements')
+        var { data, error } = await window.sb.from('settlements')
           .update({ status: 'Paid', paid_date: today })
-          .eq('id', settlementId);
+          .eq('id', settlementId).select();
         if (error) throw error;
+        if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         _settlements = _settlements.map(function(s) {
           return s.id === settlementId ? Object.assign({}, s, { status: 'Paid', date: today }) : s;
         });
@@ -514,8 +516,9 @@ async function loadDB() {
       async markPoolSettled(ipoId) {
         var pool = _pools.find(function(p){ return p.ipo === ipoId; });
         if (!pool) return;
-        var { error } = await window.sb.from('profit_pools').update({ status: 'Settled' }).eq('id', pool.id);
+        var { data, error } = await window.sb.from('profit_pools').update({ status: 'Settled' }).eq('id', pool.id).select();
         if (error) throw error;
+        if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         _pools = _pools.map(function(p){ return p.ipo === ipoId ? Object.assign({}, p, { status: 'Settled' }) : p; });
         window.DB.pools = _pools;
       },
