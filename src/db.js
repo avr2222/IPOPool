@@ -276,8 +276,9 @@ async function loadDB() {
       },
 
       async deleteMember(id) {
-        var { error } = await window.sb.from('members').delete().eq('id', id);
+        var { data, error } = await window.sb.from('members').delete().eq('id', id).select();
         if (error) throw error;
+        if (!data || data.length === 0) throw new Error('Delete failed — no rows removed (check admin permissions).');
         _members = _members.filter(function(m){ return m.id !== id; });
         window.DB.members = _members;
       },
@@ -310,8 +311,9 @@ async function loadDB() {
       },
 
       async deletePan(id) {
-        var { error } = await window.sb.from('pan_accounts').delete().eq('id', id);
+        var { data, error } = await window.sb.from('pan_accounts').delete().eq('id', id).select();
         if (error) throw error;
+        if (!data || data.length === 0) throw new Error('Delete failed — no rows removed (check admin permissions).');
         _pans = _pans.filter(function(p){ return p.id !== id; });
         window.DB.pans = _pans;
       },
@@ -377,8 +379,9 @@ async function loadDB() {
       },
 
       async deleteIpo(id) {
-        var { error } = await window.sb.from('ipos').delete().eq('id', id);
+        var { data, error } = await window.sb.from('ipos').delete().eq('id', id).select();
         if (error) throw error;
+        if (!data || data.length === 0) throw new Error('Delete failed — no rows removed (check admin permissions).');
         _ipos = _ipos.filter(function(i){ return i.id !== id; });
         window.DB.ipos = _ipos;
       },
@@ -458,10 +461,12 @@ async function loadDB() {
       async removeApplicant(allotmentId) {
         var allot = _allotments.find(function(a) { return a.id === allotmentId; });
         if (!allot) throw new Error('Allotment not found');
-        var { error: ae } = await window.sb.from('allotments').delete().eq('id', allotmentId);
+        var { data: ad, error: ae } = await window.sb.from('allotments').delete().eq('id', allotmentId).select();
         if (ae) throw ae;
-        var { error: ape } = await window.sb.from('applications').delete().eq('id', allot.appId);
+        if (!ad || ad.length === 0) throw new Error('Delete failed — no rows removed (check admin permissions).');
+        var { data: apd, error: ape } = await window.sb.from('applications').delete().eq('id', allot.appId).select();
         if (ape) throw ape;
+        if (!apd || apd.length === 0) throw new Error('Delete failed — no rows removed (check admin permissions).');
         await loadDB();
       },
 

@@ -1,5 +1,5 @@
 // IPO Pool — Service Worker (cache-first for app assets, network-first for CDN)
-const CACHE = 'ipo-pool-v32';
+const CACHE = 'ipo-pool-v33';
 
 const APP_ASSETS = [
   './',
@@ -40,8 +40,14 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = e.request.url;
 
+  const isCDN = url.includes('unpkg.com') || url.includes('fonts.googleapis') || url.includes('fonts.gstatic');
+
+  // Never cache cross-origin API calls (Supabase) — always hit the network,
+  // otherwise reads are served stale after writes.
+  if (!isCDN && new URL(url).origin !== self.location.origin) return;
+
   // Network-first for CDN scripts (React, Babel, Google Fonts) — fallback to cache
-  if (url.includes('unpkg.com') || url.includes('fonts.googleapis') || url.includes('fonts.gstatic')) {
+  if (isCDN) {
     e.respondWith(
       fetch(e.request)
         .then(res => {
