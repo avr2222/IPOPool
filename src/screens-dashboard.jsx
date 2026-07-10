@@ -101,6 +101,60 @@ function Dashboard({ navigate, tweaks }) {
     </ChartCard>
   );
 
+  const ProfitByIpo = (
+    <Card pad={0}>
+      <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 14.5, fontWeight: 800 }}>Profit by IPO</div>
+        <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 2 }}>Net profit per IPO and combined total</div>
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+          <thead>
+            <tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+              {['IPO', 'Board', 'Applied', 'Allotted', 'Gross gain', 'Net profit'].map((h, i) => (
+                <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', fontWeight: 700, padding: '11px 18px' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {(D.profitByIpo || []).map(p => (
+              <tr key={p.id} onClick={() => navigate('ipo', { id: p.id })} style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-2)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                <td style={{ padding: '12px 18px', fontWeight: 700, fontSize: 13.5 }}>{p.short}</td>
+                <td style={{ padding: '12px 18px' }}><Badge tone={p.type === 'SME' ? 'sme' : 'mainboard'}>{p.type}</Badge></td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.applied}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.allotted}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.gross > 0 ? f(p.gross, { compact: true }) : '—'}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 700, color: p.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{p.net > 0 ? f(p.net, { compact: true }) : '—'}</td>
+              </tr>
+            ))}
+            {(D.profitByIpo || []).length > 0 && (() => {
+              const totGross = D.profitByIpo.reduce((s, p) => s + p.gross, 0);
+              const totNet   = D.profitByIpo.reduce((s, p) => s + p.net, 0);
+              const totApp   = D.profitByIpo.reduce((s, p) => s + p.applied, 0);
+              const totAllot = D.profitByIpo.reduce((s, p) => s + p.allotted, 0);
+              return (
+                <tr style={{ borderTop: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
+                  <td style={{ padding: '12px 18px', fontWeight: 800, fontSize: 13.5 }}>All IPOs together</td>
+                  <td style={{ padding: '12px 18px' }} />
+                  <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{totApp}</td>
+                  <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{totAllot}</td>
+                  <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{totGross > 0 ? f(totGross, { compact: true }) : '—'}</td>
+                  <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: 'var(--profit)' }}>{totNet > 0 ? f(totNet, { compact: true }) : '—'}</td>
+                </tr>
+              );
+            })()}
+            {(D.profitByIpo || []).length === 0 && (
+              <tr style={{ borderTop: '1px solid var(--border)' }}>
+                <td colSpan={6} style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No applications yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+
   const RecentTable = (
     <Card pad={0}>
       <div style={{ padding: '16px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)' }}>
@@ -197,6 +251,8 @@ function Dashboard({ navigate, tweaks }) {
           </div>
         </>
       )}
+
+      {ProfitByIpo}
 
       {RecentTable}
     </div>

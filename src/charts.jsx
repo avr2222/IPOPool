@@ -8,9 +8,10 @@ function AreaChart({ data, w = 520, h = 180, pad = 8, color = 'var(--brand)', fm
   const uid = useId().replace(/:/g, '');
   const vals = data.map(d => d.v);
   const max = Math.max(...vals) * 1.12, min = Math.min(0, ...vals);
+  const span = (max - min) || 1;
   const innerH = h - 28;
-  const x = i => pad + (i * (w - pad * 2)) / (data.length - 1);
-  const y = v => innerH - ((v - min) / (max - min)) * (innerH - 10) + 4;
+  const x = i => data.length > 1 ? pad + (i * (w - pad * 2)) / (data.length - 1) : w / 2;
+  const y = v => innerH - ((v - min) / span) * (innerH - 10) + 4;
   const line = data.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d.v).toFixed(1)}`).join(' ');
   const area = `${line} L${x(data.length - 1).toFixed(1)},${innerH + 4} L${x(0).toFixed(1)},${innerH + 4} Z`;
   const [hi, setHi] = useState(null);
@@ -48,7 +49,7 @@ function AreaChart({ data, w = 520, h = 180, pad = 8, color = 'var(--brand)', fm
 
 // ---- Grouped bar chart ----
 function BarChart({ data, keys, colors, w = 520, h = 190, fmt }) {
-  const max = Math.max(...data.flatMap(d => keys.map(k => d[k]))) * 1.15;
+  const max = Math.max(1, ...data.flatMap(d => keys.map(k => d[k]))) * 1.15;
   const innerH = h - 26, pad = 6;
   const groupW = (w - pad * 2) / data.length;
   const bw = Math.min(18, (groupW - 16) / keys.length);

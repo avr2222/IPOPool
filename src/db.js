@@ -114,7 +114,11 @@ function txAllotments(rows) {
 
 function txPools(rows) {
   return rows.map(function(r) {
-    return { id: r.id, ipo: r.ipo_id, status: r.status };
+    return {
+      id: r.id, ipo: r.ipo_id, status: r.status,
+      stcgRate:  r.stcg_rate != null ? parseFloat(r.stcg_rate) : null,
+      brokerage: r.brokerage != null ? parseFloat(r.brokerage) : null,
+    };
   });
 }
 
@@ -135,14 +139,74 @@ function txSettlements(rows) {
   });
 }
 
+// ── Shared pool math (single source of truth for profit distribution) ─────────
+// Every screen that splits profit — dashboard KPIs, charts, the Profit Pool
+// screen and the Settlement ledger — goes through PoolMath so the numbers
+// always agree. Net profit is split equally per PAN applied; the rounding
+// remainder is distributed one rupee at a time so member shares sum EXACTLY
+// to the category's net profit (no unallocated/over-allocated paise).
+var PoolMath = {
+  // Base math for one category's allotments (same IPO, same category).
+  category: function(catAllots, stcgRate, brokerageAmt) {
+    var gross     = catAllots.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
+    var stcgAmt   = Math.round(gross * stcgRate / 100);
+    var net       = Math.max(0, gross - stcgAmt - brokerageAmt);
+    var total     = catAllots.length;
+    var perPan    = total > 0 ? Math.floor(net / total) : 0;
+    var remainder = net - perPan * total;   // integer rupees, 0 .. total-1
+    var allotted  = catAllots.filter(function(a){ return a.status === 'allotted'; }).length;
+    return { gross: gross, stcgAmt: stcgAmt, net: net, total: total, perPan: perPan, remainder: remainder, allotted: allotted };
+  },
+
+  // Amount per PAN with the remainder distributed deterministically:
+  // the first `remainder` PANs (sorted by id) each get one extra rupee.
+  panAmounts: function(catAllots, stcgRate, brokerageAmt) {
+    var m = this.category(catAllots, stcgRate, brokerageAmt);
+    var sorted = catAllots.slice().sort(function(a, b){ return String(a.id).localeCompare(String(b.id)); });
+    var out = {};
+    for (var i = 0; i < sorted.length; i++) {
+      out[sorted[i].id] = m.perPan + (i < m.remainder ? 1 : 0);
+    }
+    return out;
+  },
+
+  // Aggregate per-PAN amounts by member. panToMember(panId) -> memberId | null.
+  // Returns { [memberId]: { pans, share } } where the shares sum to net.
+  memberShares: function(catAllots, stcgRate, brokerageAmt, panToMember) {
+    var amounts = this.panAmounts(catAllots, stcgRate, brokerageAmt);
+    var shares = {};
+    catAllots.forEach(function(a) {
+      var mid = panToMember(a.pan);
+      if (mid == null) return;
+      if (!shares[mid]) shares[mid] = { pans: 0, share: 0 };
+      shares[mid].pans++;
+      shares[mid].share += (amounts[a.id] || 0);
+    });
+    return shares;
+  },
+};
+window.PoolMath = PoolMath;
+
+// Total net profit across a set of allotments, grouped by (ipo, category) so
+// STCG and brokerage are applied per category exactly as the pool screen does.
+function groupNetProfit(allots, stcgRate, brok) {
+  var groups = {};
+  allots.forEach(function(a) {
+    var key = a.ipo + '|' + a.category;
+    (groups[key] = groups[key] || []).push(a);
+  });
+  return Object.keys(groups).reduce(function(sum, k) {
+    return sum + PoolMath.category(groups[k], stcgRate, brok).net;
+  }, 0);
+}
+
 // ── Computed aggregates ───────────────────────────────────────────────────────
 
 function computeKpis() {
   var allotted  = _allotments.filter(function(a){ return a.status === 'allotted'; });
   var stcgRate  = parseFloat(localStorage.getItem('stcg')      || '15');
   var brok      = parseFloat(localStorage.getItem('brokerage') || '0');
-  var totalGross = allotted.reduce(function(s,a){ return s + a.gain; }, 0);
-  var totalNet   = Math.max(0, totalGross - Math.round(totalGross * stcgRate / 100) - brok);
+  var totalNet   = groupNetProfit(_allotments, stcgRate, brok);
   var invested   = _allotments.reduce(function(s, a) {
     var ip = _ipos.find(function(i){ return i.id === a.ipo; });
     return s + (ip ? ip.lotValue : 0);
@@ -168,41 +232,51 @@ function computeCharts() {
   var stcgRate = parseFloat(localStorage.getItem('stcg')      || '15');
   var brok     = parseFloat(localStorage.getItem('brokerage') || '0');
 
-  // Monthly profit trend from paid settlements
+  var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // Per-IPO profit breakdown (every IPO the pool applied to, newest first).
+  // Net is summed per (ipo, category) via PoolMath so it matches the pool
+  // screen and the settlement ledger exactly.
+  var profitByIpo = _ipos
+    .map(function(i) {
+      var apps     = _allotments.filter(function(a){ return a.ipo === i.id; });
+      var allotted = apps.filter(function(a){ return a.status === 'allotted'; });
+      var gross    = allotted.reduce(function(s,a){ return s + a.gain; }, 0);
+      return {
+        id: i.id, name: i.name, short: i.short, type: i.type, status: i.status,
+        applied: apps.length, allotted: allotted.length,
+        gross: gross, net: groupNetProfit(apps, stcgRate, brok),
+        month: i.listDate || i.allotDate || i.close || i.open || null,
+      };
+    })
+    .filter(function(p){ return p.applied > 0; });
+
+  // Monthly profit trend: net profit bucketed by each IPO's listing month
   var byMonth = {};
-  _settlements.filter(function(s){ return s.status === 'Paid' && s.date; })
-    .forEach(function(s) {
-      var m = s.date.slice(0, 7);
-      byMonth[m] = (byMonth[m] || 0) + s.amount;
-    });
+  profitByIpo.forEach(function(p) {
+    if (!p.net || !p.month) return;
+    var m = String(p.month).slice(0, 7);
+    byMonth[m] = (byMonth[m] || 0) + p.net;
+  });
   var months = Object.keys(byMonth).sort().slice(-7);
   var monthlyProfit = months.length
-    ? months.map(function(m){ return { label: m.slice(5), value: byMonth[m] }; })
-    : [{ label: '—', value: 0 }];
+    ? months.map(function(m){ return { m: MONTHS[parseInt(m.slice(5), 10) - 1] || m, v: byMonth[m] }; })
+    : [{ m: '—', v: 0 }];
 
-  // SME vs Mainboard
-  function netOf(gain) { return Math.max(0, gain - Math.round(gain * stcgRate / 100) - brok); }
-  var smeGross  = _allotments.filter(function(a){ return a.status === 'allotted' && a.category === 'SME'; })
-                              .reduce(function(s,a){ return s + a.gain; }, 0);
-  var mainGross = _allotments.filter(function(a){ return a.status === 'allotted' && a.category !== 'SME'; })
-                              .reduce(function(s,a){ return s + a.gain; }, 0);
+  // SME vs Mainboard — per-category nets grouped by board
+  var smeNet  = groupNetProfit(_allotments.filter(function(a){ return a.category === 'SME'; }), stcgRate, brok);
+  var mainNet = groupNetProfit(_allotments.filter(function(a){ return a.category !== 'SME'; }), stcgRate, brok);
 
-  // Allotment history (last 6 closed/listed IPOs)
-  var allotHistory = _ipos
-    .filter(function(i){ return i.status === 'Listed' || i.status === 'Closed'; })
-    .slice(0, 6)
-    .map(function(i) {
-      return {
-        label:   i.short,
-        applied: _allotments.filter(function(a){ return a.ipo === i.id; }).length,
-        allot:   _allotments.filter(function(a){ return a.ipo === i.id && a.status === 'allotted'; }).length,
-      };
-    });
+  // Allotment history: last 6 IPOs the pool applied to, oldest → newest
+  var allotHistory = profitByIpo.slice(0, 6).reverse().map(function(p) {
+    return { m: p.short, applied: p.applied, allot: p.allotted };
+  });
 
   return {
     monthlyProfit: monthlyProfit,
-    smeVsMain:     { sme: netOf(smeGross), mainboard: netOf(mainGross) },
+    smeVsMain:     { sme: smeNet, mainboard: mainNet },
     allotHistory:  allotHistory,
+    profitByIpo:   profitByIpo,
   };
 }
 
@@ -225,9 +299,15 @@ async function loadDB() {
     sb.from('settlements').select('*, profit_pools!inner(ipo_id)').order('created_at', { ascending: false }),
   ]);
 
-  [membersRes, pansRes, iposRes, allotRes, poolsRes, settleRes].forEach(function(r) {
-    if (r.error) console.error('[IPOPool DB]', r.error.message);
-  });
+  // If ANY table failed, abort rather than render a confident but partial
+  // picture (e.g. IPOs present but allotments silently empty). The caller
+  // surfaces this and offers a retry.
+  var failed = [membersRes, pansRes, iposRes, allotRes, poolsRes, settleRes]
+    .filter(function(r){ return r.error; });
+  if (failed.length) {
+    failed.forEach(function(r){ console.error('[IPOPool DB]', r.error.message); });
+    throw new Error(failed[0].error.message || 'Failed to load pool data.');
+  }
 
   _members     = txMembers    (membersRes.data  || []);
   _pans        = txPans       (pansRes.data     || []);
@@ -251,6 +331,7 @@ async function loadDB() {
     monthlyProfit: charts.monthlyProfit,
     smeVsMain:    charts.smeVsMain,
     allotHistory: charts.allotHistory,
+    profitByIpo:  charts.profitByIpo,
 
     me:     _members.find(function(m){ return m.you; }) || null,
     ipo:    function(id){ return _ipos.find(function(i){ return i.id === id; }); },
@@ -443,8 +524,9 @@ async function loadDB() {
           var c = changes[i];
           var upd = { status: c.status, shares: c.shares || 0, gain: c.gain || 0, checked_at: new Date().toISOString() };
           if (c.sellPrice != null) upd.sell_price = c.sellPrice;
-          var { error } = await window.sb.from('allotments').update(upd).eq('id', c.id);
+          var { data, error } = await window.sb.from('allotments').update(upd).eq('id', c.id).select();
           if (error) throw error;
+          if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         }
         // Ensure a profit_pool row exists for each affected IPO so the Pool screen can show it
         var ipoIds = new Set(changes.map(function(c) {
@@ -471,20 +553,42 @@ async function loadDB() {
       },
 
       // ─── Settlements ─────────────────────────────────────────────────────────
-      // Generate settlement rows for an IPO from the current pool math
-      // rows: [{ memberId, category, pans, amount }]
-      async createSettlements(ipoId, rows) {
-        var pool = _pools.find(function(p){ return p.ipo === ipoId; });
-        if (!pool) {
-          // Create pool first
-          var { data: poolData, error: poolErr } = await window.sb.from('profit_pools')
-            .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' })
-            .select().single();
-          if (poolErr) throw poolErr;
-          pool = txPools([poolData])[0];
+      // Generate settlement rows for an IPO from the current pool math.
+      // rows:  [{ memberId, category, pans, amount }]
+      // rates: { stcgRate, brokerage } — captured on the pool so the ledger
+      //        shows the same numbers on every device.
+      // Already-Paid settlements are preserved: re-finalizing never resets a
+      // payment back to Pending or changes its recorded amount/date.
+      async createSettlements(ipoId, rows, rates) {
+        var { data: poolData, error: poolErr } = await window.sb.from('profit_pools')
+          .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' })
+          .select().single();
+        if (poolErr) throw poolErr;
+        var pool = txPools([poolData])[0];
+
+        // Persist the rates used, so the ledger is identical on every device.
+        // Best-effort: if migration 003 (stcg_rate/brokerage columns) hasn't
+        // been applied yet, finalize still succeeds and falls back to local
+        // settings for display.
+        if (rates) {
+          var { error: rateErr } = await window.sb.from('profit_pools')
+            .update({ stcg_rate: rates.stcgRate, brokerage: rates.brokerage })
+            .eq('id', pool.id);
+          if (rateErr) console.warn('[IPOPool] pool rate columns missing — run migration 003:', rateErr.message);
         }
+
+        // Which (member, category) settlements are already Paid — leave untouched.
+        var { data: existing, error: exErr } = await window.sb.from('settlements')
+          .select('member_id, category, status').eq('pool_id', pool.id);
+        if (exErr) throw exErr;
+        var paid = {};
+        (existing || []).forEach(function(s) {
+          if (s.status === 'Paid') paid[s.member_id + '|' + s.category] = true;
+        });
+
         for (var i = 0; i < rows.length; i++) {
           var r = rows[i];
+          if (paid[r.memberId + '|' + r.category]) continue;   // don't un-pay
           var { error } = await window.sb.from('settlements').upsert({
             pool_id:   pool.id,
             member_id: r.memberId,
@@ -500,10 +604,11 @@ async function loadDB() {
 
       async markSettlementPaid(settlementId) {
         var today = new Date().toISOString().slice(0, 10);
-        var { error } = await window.sb.from('settlements')
+        var { data, error } = await window.sb.from('settlements')
           .update({ status: 'Paid', paid_date: today })
-          .eq('id', settlementId);
+          .eq('id', settlementId).select();
         if (error) throw error;
+        if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         _settlements = _settlements.map(function(s) {
           return s.id === settlementId ? Object.assign({}, s, { status: 'Paid', date: today }) : s;
         });
@@ -514,8 +619,9 @@ async function loadDB() {
       async markPoolSettled(ipoId) {
         var pool = _pools.find(function(p){ return p.ipo === ipoId; });
         if (!pool) return;
-        var { error } = await window.sb.from('profit_pools').update({ status: 'Settled' }).eq('id', pool.id);
+        var { data, error } = await window.sb.from('profit_pools').update({ status: 'Settled' }).eq('id', pool.id).select();
         if (error) throw error;
+        if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         _pools = _pools.map(function(p){ return p.ipo === ipoId ? Object.assign({}, p, { status: 'Settled' }) : p; });
         window.DB.pools = _pools;
       },
