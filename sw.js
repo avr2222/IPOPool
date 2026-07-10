@@ -1,5 +1,5 @@
 // IPO Pool — Service Worker (cache-first for app assets, network-first for CDN)
-const CACHE = 'ipo-pool-v33';
+const CACHE = 'ipo-pool-v34';
 
 const APP_ASSETS = [
   './',

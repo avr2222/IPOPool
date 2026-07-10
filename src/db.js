@@ -167,42 +167,53 @@ function computeKpis() {
 function computeCharts() {
   var stcgRate = parseFloat(localStorage.getItem('stcg')      || '15');
   var brok     = parseFloat(localStorage.getItem('brokerage') || '0');
+  function netOf(gain) { return Math.max(0, gain - Math.round(gain * stcgRate / 100) - brok); }
 
-  // Monthly profit trend from paid settlements
+  var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // Per-IPO profit breakdown (every IPO the pool applied to, newest first)
+  var profitByIpo = _ipos
+    .map(function(i) {
+      var apps     = _allotments.filter(function(a){ return a.ipo === i.id; });
+      var allotted = apps.filter(function(a){ return a.status === 'allotted'; });
+      var gross    = allotted.reduce(function(s,a){ return s + a.gain; }, 0);
+      return {
+        id: i.id, name: i.name, short: i.short, type: i.type, status: i.status,
+        applied: apps.length, allotted: allotted.length,
+        gross: gross, net: gross > 0 ? netOf(gross) : 0,
+        month: i.listDate || i.allotDate || i.close || i.open || null,
+      };
+    })
+    .filter(function(p){ return p.applied > 0; });
+
+  // Monthly profit trend: net profit bucketed by each IPO's listing month
   var byMonth = {};
-  _settlements.filter(function(s){ return s.status === 'Paid' && s.date; })
-    .forEach(function(s) {
-      var m = s.date.slice(0, 7);
-      byMonth[m] = (byMonth[m] || 0) + s.amount;
-    });
+  profitByIpo.forEach(function(p) {
+    if (!p.net || !p.month) return;
+    var m = String(p.month).slice(0, 7);
+    byMonth[m] = (byMonth[m] || 0) + p.net;
+  });
   var months = Object.keys(byMonth).sort().slice(-7);
   var monthlyProfit = months.length
-    ? months.map(function(m){ return { label: m.slice(5), value: byMonth[m] }; })
-    : [{ label: '—', value: 0 }];
+    ? months.map(function(m){ return { m: MONTHS[parseInt(m.slice(5), 10) - 1] || m, v: byMonth[m] }; })
+    : [{ m: '—', v: 0 }];
 
   // SME vs Mainboard
-  function netOf(gain) { return Math.max(0, gain - Math.round(gain * stcgRate / 100) - brok); }
   var smeGross  = _allotments.filter(function(a){ return a.status === 'allotted' && a.category === 'SME'; })
                               .reduce(function(s,a){ return s + a.gain; }, 0);
   var mainGross = _allotments.filter(function(a){ return a.status === 'allotted' && a.category !== 'SME'; })
                               .reduce(function(s,a){ return s + a.gain; }, 0);
 
-  // Allotment history (last 6 closed/listed IPOs)
-  var allotHistory = _ipos
-    .filter(function(i){ return i.status === 'Listed' || i.status === 'Closed'; })
-    .slice(0, 6)
-    .map(function(i) {
-      return {
-        label:   i.short,
-        applied: _allotments.filter(function(a){ return a.ipo === i.id; }).length,
-        allot:   _allotments.filter(function(a){ return a.ipo === i.id && a.status === 'allotted'; }).length,
-      };
-    });
+  // Allotment history: last 6 IPOs the pool applied to, oldest → newest
+  var allotHistory = profitByIpo.slice(0, 6).reverse().map(function(p) {
+    return { m: p.short, applied: p.applied, allot: p.allotted };
+  });
 
   return {
     monthlyProfit: monthlyProfit,
     smeVsMain:     { sme: netOf(smeGross), mainboard: netOf(mainGross) },
     allotHistory:  allotHistory,
+    profitByIpo:   profitByIpo,
   };
 }
 
@@ -251,6 +262,7 @@ async function loadDB() {
     monthlyProfit: charts.monthlyProfit,
     smeVsMain:    charts.smeVsMain,
     allotHistory: charts.allotHistory,
+    profitByIpo:  charts.profitByIpo,
 
     me:     _members.find(function(m){ return m.you; }) || null,
     ipo:    function(id){ return _ipos.find(function(i){ return i.id === id; }); },
