@@ -174,9 +174,35 @@ function LoadingScreen() {
   );
 }
 
+function ErrorScreen({ message, onRetry, onLogout, retrying }) {
+  return (
+    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)', padding: 20 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, maxWidth: 380, textAlign: 'center' }}>
+        <Logo size={34} />
+        <div style={{ width: 46, height: 46, borderRadius: 12, background: 'var(--loss-soft)', color: 'var(--loss)', display: 'grid', placeItems: 'center' }}>
+          <Icon name="x" size={24} />
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 800 }}>Couldn't load your pool</div>
+        <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.6 }}>
+          The data didn't load, so nothing is shown rather than risk showing a wrong or partial picture. Check your connection and try again.
+        </div>
+        {message && <div style={{ fontSize: 12, color: 'var(--ink-3)', fontFamily: 'monospace', wordBreak: 'break-word', background: 'var(--surface-2)', padding: '8px 12px', borderRadius: 8, width: '100%' }}>{message}</div>}
+        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+          <Button variant="primary" onClick={onRetry} style={{ opacity: retrying ? .7 : 1, pointerEvents: retrying ? 'none' : 'auto' }}>
+            {retrying ? 'Retrying…' : 'Retry'}
+          </Button>
+          <Button variant="ghost" onClick={onLogout}>Sign out</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [authed,   setAuthed]  = useState(false);
+  const [dbError,  setDbError] = useState(null);
+  const [retrying, setRetrying] = useState(false);
   const [dbReady,  setDbReady] = useState(false);   // true once loadDB() has resolved
   const [booting,  setBooting] = useState(true);    // true on first mount while checking session
   const [route, setRoute] = useState('dashboard');
@@ -186,7 +212,9 @@ function App() {
   useEffectA(() => {
     window.sb.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
-        try { await window.loadDB(); setAuthed(true); setDbReady(true); } catch(e) { console.error(e); }
+        setAuthed(true);   // session is valid; a load failure is not a sign-out
+        try { await window.loadDB(); setDbReady(true); }
+        catch(e) { console.error(e); setDbError(e.message || 'Failed to load data.'); }
       }
       setBooting(false);
     });
@@ -228,7 +256,14 @@ function App() {
 
   const login = async () => {
     await window.loadDB();
-    setDbReady(true); setAuthed(true); setRoute('dashboard');
+    setDbReady(true); setAuthed(true); setDbError(null); setRoute('dashboard');
+  };
+
+  const retryLoad = async () => {
+    setRetrying(true);
+    try { await window.loadDB(); setDbReady(true); setDbError(null); }
+    catch(e) { console.error(e); setDbError(e.message || 'Failed to load data.'); }
+    setRetrying(false);
   };
 
   const screen = () => {
@@ -259,6 +294,7 @@ function App() {
   );
 
   if (booting)           return <LoadingScreen />;
+  if (authed && dbError) return <ErrorScreen message={dbError} retrying={retrying} onRetry={retryLoad} onLogout={() => { setDbError(null); navigate('logout'); }} />;
   if (!authed || !dbReady) return (<><LoginScreen onLogin={login} />{Panel}</>);
 
   const shell = (

@@ -1,5 +1,8 @@
-// IPO Pool — Service Worker (cache-first for app assets, network-first for CDN)
-const CACHE = 'ipo-pool-v34';
+// IPO Pool — Service Worker.
+// Strategy: network-first for app files and CDN libs (so deploys reach users
+// without bumping this version), cache fallback for offline, and network-only
+// for Supabase API calls (so reads are never served stale after writes).
+const CACHE = 'ipo-pool-v35';
 
 const APP_ASSETS = [
   './',
@@ -40,37 +43,27 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = e.request.url;
 
-  const isCDN = url.includes('unpkg.com') || url.includes('fonts.googleapis') || url.includes('fonts.gstatic');
+  // CDN libraries we depend on (React, Babel, the Supabase client, fonts).
+  // These are safe to cache for offline use.
+  const isCDN = url.includes('unpkg.com') || url.includes('cdn.jsdelivr.net')
+             || url.includes('fonts.googleapis') || url.includes('fonts.gstatic');
+  const isSameOrigin = new URL(url).origin === self.location.origin;
 
-  // Never cache cross-origin API calls (Supabase) — always hit the network,
-  // otherwise reads are served stale after writes.
-  if (!isCDN && new URL(url).origin !== self.location.origin) return;
+  // Supabase (and any other cross-origin API): network-only, never cached,
+  // otherwise reads would be served stale after writes.
+  if (!isCDN && !isSameOrigin) return;
 
-  // Network-first for CDN scripts (React, Babel, Google Fonts) — fallback to cache
-  if (isCDN) {
-    e.respondWith(
-      fetch(e.request)
-        .then(res => {
-          const clone = res.clone();
-          caches.open(CACHE).then(cache => cache.put(e.request, clone));
-          return res;
-        })
-        .catch(() => caches.match(e.request))
-    );
-    return;
-  }
-
-  // Cache-first for all app files
+  // App files and CDN libs: network-first so a deploy is picked up on the next
+  // load without bumping CACHE; fall back to cache when offline.
   e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) return cached;
-      return fetch(e.request).then(res => {
-        if (res.ok) {
+    fetch(e.request)
+      .then(res => {
+        if (res && res.ok) {
           const clone = res.clone();
           caches.open(CACHE).then(cache => cache.put(e.request, clone));
         }
         return res;
-      });
-    })
+      })
+      .catch(() => caches.match(e.request).then(c => c || caches.match('./index.html')))
   );
 });

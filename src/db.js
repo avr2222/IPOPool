@@ -299,9 +299,15 @@ async function loadDB() {
     sb.from('settlements').select('*, profit_pools!inner(ipo_id)').order('created_at', { ascending: false }),
   ]);
 
-  [membersRes, pansRes, iposRes, allotRes, poolsRes, settleRes].forEach(function(r) {
-    if (r.error) console.error('[IPOPool DB]', r.error.message);
-  });
+  // If ANY table failed, abort rather than render a confident but partial
+  // picture (e.g. IPOs present but allotments silently empty). The caller
+  // surfaces this and offers a retry.
+  var failed = [membersRes, pansRes, iposRes, allotRes, poolsRes, settleRes]
+    .filter(function(r){ return r.error; });
+  if (failed.length) {
+    failed.forEach(function(r){ console.error('[IPOPool DB]', r.error.message); });
+    throw new Error(failed[0].error.message || 'Failed to load pool data.');
+  }
 
   _members     = txMembers    (membersRes.data  || []);
   _pans        = txPans       (pansRes.data     || []);
