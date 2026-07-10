@@ -2,6 +2,31 @@
    IPO Pool — PAN Management & Admin Panel
    ============================================================ */
 
+// Indian PAN: 5 letters, 4 digits, 1 letter (e.g. ABCDE1234F).
+const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+function panError(pan) {
+  const v = (pan || '').toUpperCase().trim();
+  if (!v) return 'PAN is required.';
+  if (!PAN_RE.test(v)) return 'Enter a valid PAN (5 letters, 4 digits, 1 letter — e.g. ABCDE1234F).';
+  return null;
+}
+// Is this PAN already registered? Returns the existing holder name, or null.
+function duplicatePanHolder(pan, excludeId) {
+  const v = (pan || '').toUpperCase().trim();
+  const hit = (window.DB.pans || []).find(p => (p.pan || '').toUpperCase() === v && p.id !== excludeId);
+  return hit ? (hit.holder || 'another member') : null;
+}
+// Turn a raw Postgres/Supabase error into something a pool admin can act on.
+function friendlyDbError(e) {
+  const m = (e && e.message) || String(e);
+  if (/duplicate key|already exists|unique constraint/i.test(m)) {
+    if (/pan/i.test(m))   return 'This PAN is already registered in the pool.';
+    if (/email/i.test(m)) return 'That email is already used by another member.';
+    return 'That entry already exists.';
+  }
+  return m;
+}
+
 // ── Shared modal wrapper ──────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (
@@ -304,37 +329,65 @@ function AdminPanel() {
 
   const saveMember = async () => {
     if (!memberForm.name) { setMemberErr('Name is required.'); return; }
-    if (memberForm.pan && memberForm.pan.length !== 10) { setMemberErr('PAN must be exactly 10 characters.'); return; }
+    if (memberForm.pan) {
+      const pe = panError(memberForm.pan);
+      if (pe) { setMemberErr(pe); return; }
+      const dup = duplicatePanHolder(memberForm.pan);
+      if (dup) { setMemberErr(`This PAN is already registered to ${dup}.`); return; }
+    }
     setMemberSaving(true); setMemberErr('');
     try {
       const added = await D.mutations.addMember({ ...memberForm, avatarHue: Math.floor(Math.random() * 360) });
       if (memberForm.pan) {
-        await D.mutations.addPan({ memberId: added.id, pan: memberForm.pan, holderName: memberForm.name, relation: 'Self', bank: memberForm.bank || null });
+        try {
+          await D.mutations.addPan({ memberId: added.id, pan: memberForm.pan, holderName: memberForm.name, relation: 'Self', bank: memberForm.bank || null });
+        } catch (panErr) {
+          // The PAN insert failed — roll back the just-created member so we
+          // don't leave an orphan member with no PAN.
+          try { await D.mutations.deleteMember(added.id); } catch (_) {}
+          throw panErr;
+        }
       }
       setMembers([...window.DB.members]);
       setShowAddMember(false);
       setMemberForm({ name: '', email: '', phone: '', pan: '', bank: '' });
-    } catch(e) { setMemberErr(e.message); }
+    } catch(e) { setMemberErr(friendlyDbError(e)); }
     setMemberSaving(false);
   };
 
   const savePan = async () => {
-    if (!panForm.pan || !panForm.holderName) { setPanErr('PAN and holder name are required.'); return; }
+    if (!panForm.holderName) { setPanErr('Holder name is required.'); return; }
+    const pe = panError(panForm.pan);
+    if (pe) { setPanErr(pe); return; }
+    const dup = duplicatePanHolder(panForm.pan);
+    if (dup) { setPanErr(`This PAN is already registered to ${dup}.`); return; }
     setPanSaving(true); setPanErr('');
     try {
       await D.mutations.addPan({ memberId: showAddPan, ...panForm });
       setMembers([...window.DB.members]); // refresh to show updated PAN counts
       setShowAddPan(null);
       setPanForm({ pan: '', holderName: '', relation: 'Self', bank: '' });
-    } catch(e) { setPanErr(e.message); }
+    } catch(e) { setPanErr(friendlyDbError(e)); }
     setPanSaving(false);
   };
 
-  const deleteMember = (id, name) => askConfirm(
-    `Remove "${name}"?`,
-    'This member and all their PAN accounts will be permanently removed from the pool.',
-    async () => { try { await D.mutations.deleteMember(id); setMembers([...window.DB.members]); } catch(e) { alert(e.message); } }
-  );
+  const deleteMember = (id, name) => {
+    const memberPans   = D.pans.filter(p => p.member === id);
+    const panIds       = memberPans.map(p => p.id);
+    const allotCount   = D.allotments.filter(a => panIds.includes(a.pan)).length;
+    const memberSetts  = D.settlements.filter(s => s.member === id);
+    const paidCount    = memberSetts.filter(s => s.status === 'Paid').length;
+
+    const parts = [`${memberPans.length} PAN account${memberPans.length !== 1 ? 's' : ''}`];
+    if (allotCount)  parts.push(`${allotCount} application/allotment record${allotCount !== 1 ? 's' : ''}`);
+    if (memberSetts.length) parts.push(`${memberSetts.length} settlement record${memberSetts.length !== 1 ? 's' : ''}${paidCount ? ` (including ${paidCount} already marked Paid)` : ''}`);
+
+    askConfirm(
+      `Remove "${name}"?`,
+      `This permanently deletes their ${parts.join(', ')}. Their allotted gains will no longer count toward any pool, so every other member's profit split for those IPOs will be recalculated. This cannot be undone.`,
+      async () => { try { await D.mutations.deleteMember(id); setMembers([...window.DB.members]); } catch(e) { alert(friendlyDbError(e)); } }
+    );
+  };
 
   // ── Edit member ──
   const [editMember, setEditMember]         = useState(null);
