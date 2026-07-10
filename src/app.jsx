@@ -207,6 +207,7 @@ function App() {
   const [booting,  setBooting] = useState(true);    // true on first mount while checking session
   const [route, setRoute] = useState('dashboard');
   const [params, setParams] = useState({});
+  const [dataVersion, setDataVersion] = useState(0);  // bumps when data changes externally
 
   // Check for existing session on mount
   useEffectA(() => {
@@ -225,6 +226,25 @@ function App() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  // Live sync: when another device changes any table, debounce-reload the DB
+  // and remount the current screen so everyone sees the same data.
+  useEffectA(() => {
+    if (!authed || !dbReady) return;
+    let timer = null;
+    const reload = () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        try { await window.loadDB(); setDataVersion(v => v + 1); }
+        catch (e) { console.error('[IPOPool] realtime reload failed', e); }
+      }, 500);
+    };
+    const channel = window.sb
+      .channel('pool-changes')
+      .on('postgres_changes', { event: '*', schema: 'public' }, reload)
+      .subscribe();
+    return () => { clearTimeout(timer); window.sb.removeChannel(channel); };
+  }, [authed, dbReady]);
 
   const navigate = (r, p = {}) => {
     if (r === 'logout') {
@@ -304,7 +324,7 @@ function App() {
         <Topbar route={route} navigate={navigate} dark={t.dark} setDark={(v) => setTweak('dark', v)} />
         <MobileTopbar route={route} dark={t.dark} setDark={(v) => setTweak('dark', v)} />
         <div className="content" style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-          <div style={{ maxWidth: 1240, margin: '0 auto' }} key={route + (params.id || '')}>
+          <div style={{ maxWidth: 1240, margin: '0 auto' }} key={route + (params.id || '') + '#' + dataVersion}>
             {screen()}
           </div>
         </div>
