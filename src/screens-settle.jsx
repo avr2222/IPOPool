@@ -28,27 +28,28 @@ function SettlementLedger({ navigate, id }) {
 
   const ipo = D.ipo(pool.ipo);
 
-  // Compute net profit per category (same logic as screens-pool.jsx)
-  const stcgRate     = parseFloat(localStorage.getItem('stcg')      || '15');
-  const brokerageAmt = parseFloat(localStorage.getItem('brokerage')  || '0');
+  // Net profit per category — uses the rates captured on the pool at finalize
+  // time (falling back to local settings for legacy pools) via the shared
+  // PoolMath, so the ledger matches what the Profit Pool screen computed.
+  const stcgRate     = pool.stcgRate  != null ? pool.stcgRate  : parseFloat(localStorage.getItem('stcg')      || '15');
+  const brokerageAmt = pool.brokerage != null ? pool.brokerage : parseFloat(localStorage.getItem('brokerage')  || '0');
   const ipoAllots    = D.allotments.filter(a => a.ipo === selIpo);
   const CAT_ORDER    = ['SME', 'Retail', 'sHNI', 'bHNI'];
   const categories   = CAT_ORDER.filter(c => ipoAllots.some(a => a.category === c));
+  const panToMember  = (panId) => { const p = D.pan(panId); return p ? p.member : null; };
   const catSummaries = categories.map(cat => {
-    const ca      = ipoAllots.filter(a => a.category === cat);
-    const gross   = ca.reduce((s, a) => s + (a.gain || 0), 0);
-    const stcg    = Math.round(gross * stcgRate / 100);
-    const net     = Math.max(0, gross - stcg - brokerageAmt);
-    const perPan  = ca.length > 0 ? Math.round(net / ca.length) : 0;
-    return { cat, net, perPan, total: ca.length };
+    const ca = ipoAllots.filter(a => a.category === cat);
+    const m  = window.PoolMath.category(ca, stcgRate, brokerageAmt);
+    return { cat, net: m.net, perPan: m.perPan, total: m.total };
   });
   const totalNet = catSummaries.reduce((s, d) => s + d.net, 0);
-
-  // Your retained share (sum across all categories)
   const myPanIds = D.pans.filter(p => p.member === me?.id).map(p => p.id);
-  const myShare  = catSummaries.reduce((sum, d) => {
-    const myCatPans = ipoAllots.filter(a => a.category === d.cat && myPanIds.includes(a.pan)).length;
-    return sum + myCatPans * d.perPan;
+
+  // Your retained share (exact, summed across all categories)
+  const myShare = categories.reduce((sum, cat) => {
+    const ca = ipoAllots.filter(a => a.category === cat);
+    const shares = window.PoolMath.memberShares(ca, stcgRate, brokerageAmt, panToMember);
+    return sum + (shares[me?.id]?.share || 0);
   }, 0);
 
   // Settlement rows for this IPO

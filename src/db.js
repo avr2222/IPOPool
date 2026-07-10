@@ -114,7 +114,11 @@ function txAllotments(rows) {
 
 function txPools(rows) {
   return rows.map(function(r) {
-    return { id: r.id, ipo: r.ipo_id, status: r.status };
+    return {
+      id: r.id, ipo: r.ipo_id, status: r.status,
+      stcgRate:  r.stcg_rate != null ? parseFloat(r.stcg_rate) : null,
+      brokerage: r.brokerage != null ? parseFloat(r.brokerage) : null,
+    };
   });
 }
 
@@ -135,14 +139,74 @@ function txSettlements(rows) {
   });
 }
 
+// ── Shared pool math (single source of truth for profit distribution) ─────────
+// Every screen that splits profit — dashboard KPIs, charts, the Profit Pool
+// screen and the Settlement ledger — goes through PoolMath so the numbers
+// always agree. Net profit is split equally per PAN applied; the rounding
+// remainder is distributed one rupee at a time so member shares sum EXACTLY
+// to the category's net profit (no unallocated/over-allocated paise).
+var PoolMath = {
+  // Base math for one category's allotments (same IPO, same category).
+  category: function(catAllots, stcgRate, brokerageAmt) {
+    var gross     = catAllots.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
+    var stcgAmt   = Math.round(gross * stcgRate / 100);
+    var net       = Math.max(0, gross - stcgAmt - brokerageAmt);
+    var total     = catAllots.length;
+    var perPan    = total > 0 ? Math.floor(net / total) : 0;
+    var remainder = net - perPan * total;   // integer rupees, 0 .. total-1
+    var allotted  = catAllots.filter(function(a){ return a.status === 'allotted'; }).length;
+    return { gross: gross, stcgAmt: stcgAmt, net: net, total: total, perPan: perPan, remainder: remainder, allotted: allotted };
+  },
+
+  // Amount per PAN with the remainder distributed deterministically:
+  // the first `remainder` PANs (sorted by id) each get one extra rupee.
+  panAmounts: function(catAllots, stcgRate, brokerageAmt) {
+    var m = this.category(catAllots, stcgRate, brokerageAmt);
+    var sorted = catAllots.slice().sort(function(a, b){ return String(a.id).localeCompare(String(b.id)); });
+    var out = {};
+    for (var i = 0; i < sorted.length; i++) {
+      out[sorted[i].id] = m.perPan + (i < m.remainder ? 1 : 0);
+    }
+    return out;
+  },
+
+  // Aggregate per-PAN amounts by member. panToMember(panId) -> memberId | null.
+  // Returns { [memberId]: { pans, share } } where the shares sum to net.
+  memberShares: function(catAllots, stcgRate, brokerageAmt, panToMember) {
+    var amounts = this.panAmounts(catAllots, stcgRate, brokerageAmt);
+    var shares = {};
+    catAllots.forEach(function(a) {
+      var mid = panToMember(a.pan);
+      if (mid == null) return;
+      if (!shares[mid]) shares[mid] = { pans: 0, share: 0 };
+      shares[mid].pans++;
+      shares[mid].share += (amounts[a.id] || 0);
+    });
+    return shares;
+  },
+};
+window.PoolMath = PoolMath;
+
+// Total net profit across a set of allotments, grouped by (ipo, category) so
+// STCG and brokerage are applied per category exactly as the pool screen does.
+function groupNetProfit(allots, stcgRate, brok) {
+  var groups = {};
+  allots.forEach(function(a) {
+    var key = a.ipo + '|' + a.category;
+    (groups[key] = groups[key] || []).push(a);
+  });
+  return Object.keys(groups).reduce(function(sum, k) {
+    return sum + PoolMath.category(groups[k], stcgRate, brok).net;
+  }, 0);
+}
+
 // ── Computed aggregates ───────────────────────────────────────────────────────
 
 function computeKpis() {
   var allotted  = _allotments.filter(function(a){ return a.status === 'allotted'; });
   var stcgRate  = parseFloat(localStorage.getItem('stcg')      || '15');
   var brok      = parseFloat(localStorage.getItem('brokerage') || '0');
-  var totalGross = allotted.reduce(function(s,a){ return s + a.gain; }, 0);
-  var totalNet   = Math.max(0, totalGross - Math.round(totalGross * stcgRate / 100) - brok);
+  var totalNet   = groupNetProfit(_allotments, stcgRate, brok);
   var invested   = _allotments.reduce(function(s, a) {
     var ip = _ipos.find(function(i){ return i.id === a.ipo; });
     return s + (ip ? ip.lotValue : 0);
@@ -167,11 +231,12 @@ function computeKpis() {
 function computeCharts() {
   var stcgRate = parseFloat(localStorage.getItem('stcg')      || '15');
   var brok     = parseFloat(localStorage.getItem('brokerage') || '0');
-  function netOf(gain) { return Math.max(0, gain - Math.round(gain * stcgRate / 100) - brok); }
 
   var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-  // Per-IPO profit breakdown (every IPO the pool applied to, newest first)
+  // Per-IPO profit breakdown (every IPO the pool applied to, newest first).
+  // Net is summed per (ipo, category) via PoolMath so it matches the pool
+  // screen and the settlement ledger exactly.
   var profitByIpo = _ipos
     .map(function(i) {
       var apps     = _allotments.filter(function(a){ return a.ipo === i.id; });
@@ -180,7 +245,7 @@ function computeCharts() {
       return {
         id: i.id, name: i.name, short: i.short, type: i.type, status: i.status,
         applied: apps.length, allotted: allotted.length,
-        gross: gross, net: gross > 0 ? netOf(gross) : 0,
+        gross: gross, net: groupNetProfit(apps, stcgRate, brok),
         month: i.listDate || i.allotDate || i.close || i.open || null,
       };
     })
@@ -198,11 +263,9 @@ function computeCharts() {
     ? months.map(function(m){ return { m: MONTHS[parseInt(m.slice(5), 10) - 1] || m, v: byMonth[m] }; })
     : [{ m: '—', v: 0 }];
 
-  // SME vs Mainboard
-  var smeGross  = _allotments.filter(function(a){ return a.status === 'allotted' && a.category === 'SME'; })
-                              .reduce(function(s,a){ return s + a.gain; }, 0);
-  var mainGross = _allotments.filter(function(a){ return a.status === 'allotted' && a.category !== 'SME'; })
-                              .reduce(function(s,a){ return s + a.gain; }, 0);
+  // SME vs Mainboard — per-category nets grouped by board
+  var smeNet  = groupNetProfit(_allotments.filter(function(a){ return a.category === 'SME'; }), stcgRate, brok);
+  var mainNet = groupNetProfit(_allotments.filter(function(a){ return a.category !== 'SME'; }), stcgRate, brok);
 
   // Allotment history: last 6 IPOs the pool applied to, oldest → newest
   var allotHistory = profitByIpo.slice(0, 6).reverse().map(function(p) {
@@ -211,7 +274,7 @@ function computeCharts() {
 
   return {
     monthlyProfit: monthlyProfit,
-    smeVsMain:     { sme: netOf(smeGross), mainboard: netOf(mainGross) },
+    smeVsMain:     { sme: smeNet, mainboard: mainNet },
     allotHistory:  allotHistory,
     profitByIpo:   profitByIpo,
   };
@@ -484,20 +547,42 @@ async function loadDB() {
       },
 
       // ─── Settlements ─────────────────────────────────────────────────────────
-      // Generate settlement rows for an IPO from the current pool math
-      // rows: [{ memberId, category, pans, amount }]
-      async createSettlements(ipoId, rows) {
-        var pool = _pools.find(function(p){ return p.ipo === ipoId; });
-        if (!pool) {
-          // Create pool first
-          var { data: poolData, error: poolErr } = await window.sb.from('profit_pools')
-            .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' })
-            .select().single();
-          if (poolErr) throw poolErr;
-          pool = txPools([poolData])[0];
+      // Generate settlement rows for an IPO from the current pool math.
+      // rows:  [{ memberId, category, pans, amount }]
+      // rates: { stcgRate, brokerage } — captured on the pool so the ledger
+      //        shows the same numbers on every device.
+      // Already-Paid settlements are preserved: re-finalizing never resets a
+      // payment back to Pending or changes its recorded amount/date.
+      async createSettlements(ipoId, rows, rates) {
+        var { data: poolData, error: poolErr } = await window.sb.from('profit_pools')
+          .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' })
+          .select().single();
+        if (poolErr) throw poolErr;
+        var pool = txPools([poolData])[0];
+
+        // Persist the rates used, so the ledger is identical on every device.
+        // Best-effort: if migration 003 (stcg_rate/brokerage columns) hasn't
+        // been applied yet, finalize still succeeds and falls back to local
+        // settings for display.
+        if (rates) {
+          var { error: rateErr } = await window.sb.from('profit_pools')
+            .update({ stcg_rate: rates.stcgRate, brokerage: rates.brokerage })
+            .eq('id', pool.id);
+          if (rateErr) console.warn('[IPOPool] pool rate columns missing — run migration 003:', rateErr.message);
         }
+
+        // Which (member, category) settlements are already Paid — leave untouched.
+        var { data: existing, error: exErr } = await window.sb.from('settlements')
+          .select('member_id, category, status').eq('pool_id', pool.id);
+        if (exErr) throw exErr;
+        var paid = {};
+        (existing || []).forEach(function(s) {
+          if (s.status === 'Paid') paid[s.member_id + '|' + s.category] = true;
+        });
+
         for (var i = 0; i < rows.length; i++) {
           var r = rows[i];
+          if (paid[r.memberId + '|' + r.category]) continue;   // don't un-pay
           var { error } = await window.sb.from('settlements').upsert({
             pool_id:   pool.id,
             member_id: r.memberId,

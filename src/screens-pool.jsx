@@ -13,23 +13,9 @@ const CAT_META = {
   bHNI:   { label: 'bHNI',   tone: 'warn',    desc: 'Above ₹10L application', textColor: 'var(--warn)' },
 };
 
-// Compute pool math for a set of allotment entries (same category, same IPO)
-function computePool(catAllots, stcgRate, brokerageAmt) {
-  const gross    = catAllots.reduce((s, a) => s + (a.gain || 0), 0);
-  const stcgAmt  = Math.round(gross * stcgRate / 100);
-  const net      = Math.max(0, gross - stcgAmt - brokerageAmt);
-  const total    = catAllots.length;
-  const perPan   = total > 0 ? Math.round(net / total) : 0;
-  const allotted = catAllots.filter(a => a.status === 'allotted').length;
-  return { gross, stcgAmt, net, total, perPan, allotted };
-}
-
 function ProfitPooling({ navigate, id }) {
   const D = window.DB;
   const f = (n, o) => D.fmtINR(n, o);
-
-  const stcgRate     = parseFloat(localStorage.getItem('stcg')      || '15');
-  const brokerageAmt = parseFloat(localStorage.getItem('brokerage')  || '0');
 
   const listedPools  = D.pools;
   const [sel, setSel] = useState(id || listedPools[0]?.ipo);
@@ -55,28 +41,26 @@ function ProfitPooling({ navigate, id }) {
   const ipoAllots  = D.allotments.filter(a => a.ipo === sel);
   const me         = D.members.find(m => m.you);
 
+  // Once a pool is finalized it carries the rates used at that time, so the
+  // math stays identical on every device. Before finalize, preview with the
+  // current local settings.
+  const stcgRate     = pool?.stcgRate  != null ? pool.stcgRate  : parseFloat(localStorage.getItem('stcg')      || '15');
+  const brokerageAmt = pool?.brokerage != null ? pool.brokerage : parseFloat(localStorage.getItem('brokerage') || '0');
+
   // Unique categories in this IPO's allotments (order: SME, Retail, sHNI, bHNI)
   const CAT_ORDER  = ['SME', 'Retail', 'sHNI', 'bHNI'];
   const categories = CAT_ORDER.filter(c => ipoAllots.some(a => a.category === c));
 
-  // Per-category math
+  // Per-category math. Member shares split net profit equally per PAN APPLIED
+  // (not per allottee): every applicant in a category shares in the profit from
+  // that category's allotments, so someone with 2 PANs in sHNI gets 2× the
+  // perPan share. PoolMath distributes the rounding remainder so the member
+  // shares sum EXACTLY to the category net.
+  const panToMember = (panId) => { const p = D.pan(panId); return p ? p.member : null; };
   const catData = categories.map(cat => {
     const catAllots = ipoAllots.filter(a => a.category === cat);
-    const math = computePool(catAllots, stcgRate, brokerageAmt);
-
-    // Member shares: split net profit equally per PAN APPLIED (not per allottee).
-    // Every applicant in a category shares in the profit from that category's allotments.
-    // Someone with 2 PANs in sHNI gets 2× the perPan share.
-    const memberShares = {};
-    catAllots.forEach(a => {
-      const panObj = D.pan(a.pan);
-      if (!panObj) return;
-      const mid = panObj.member;
-      if (!memberShares[mid]) memberShares[mid] = { pans: 0, share: 0 };
-      memberShares[mid].pans++;
-      memberShares[mid].share += math.perPan;
-    });
-
+    const math = window.PoolMath.category(catAllots, stcgRate, brokerageAmt);
+    const memberShares = window.PoolMath.memberShares(catAllots, stcgRate, brokerageAmt, panToMember);
     return { cat, catAllots, ...math, memberShares };
   });
 
@@ -101,7 +85,7 @@ function ProfitPooling({ navigate, id }) {
         });
       });
       if (rows.length === 0) { setFinalErr('No profit to distribute yet.'); setFinalizing(false); return; }
-      await D.mutations.createSettlements(sel, rows);
+      await D.mutations.createSettlements(sel, rows, { stcgRate, brokerage: brokerageAmt });
       navigate('settlement', { id: sel });
     } catch (e) {
       setFinalErr(e.message || 'Failed to save settlements.');
