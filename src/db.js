@@ -251,17 +251,26 @@ function computeCharts() {
     })
     .filter(function(p){ return p.applied > 0; });
 
-  // Monthly profit trend: net profit bucketed by each IPO's listing month
-  var byMonth = {};
+  // Monthly profit trend: net profit bucketed by each IPO's listing month.
+  // We emit a CONTIGUOUS run of the last 6 calendar months (zero-filling months
+  // with no profit) so the chart always renders a real trend line instead of a
+  // lone dot or an empty '—'. The window is anchored to the most recent month
+  // that actually has profit, falling back to the current month when there's none.
+  var byMonth = {};   // 'YYYY-MM' -> net profit
   profitByIpo.forEach(function(p) {
     if (!p.net || !p.month) return;
-    var m = String(p.month).slice(0, 7);
-    byMonth[m] = (byMonth[m] || 0) + p.net;
+    byMonth[String(p.month).slice(0, 7)] = (byMonth[String(p.month).slice(0, 7)] || 0) + p.net;
   });
-  var months = Object.keys(byMonth).sort().slice(-7);
-  var monthlyProfit = months.length
-    ? months.map(function(m){ return { m: MONTHS[parseInt(m.slice(5), 10) - 1] || m, v: byMonth[m] }; })
-    : [{ m: '—', v: 0 }];
+  var keys = Object.keys(byMonth).sort();
+  var anchor = keys.length ? keys[keys.length - 1] : (new Date()).toISOString().slice(0, 7);
+  var anchorYear  = parseInt(anchor.slice(0, 4), 10);
+  var anchorMonth = parseInt(anchor.slice(5, 7), 10) - 1;   // 0-based
+  var monthlyProfit = [];
+  for (var back = 5; back >= 0; back--) {
+    var d   = new Date(anchorYear, anchorMonth - back, 1);
+    var key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    monthlyProfit.push({ m: MONTHS[d.getMonth()], v: byMonth[key] || 0 });
+  }
 
   // SME vs Mainboard — per-category nets grouped by board
   var smeNet  = groupNetProfit(_allotments.filter(function(a){ return a.category === 'SME'; }), stcgRate, brok);
@@ -278,6 +287,45 @@ function computeCharts() {
     allotHistory:  allotHistory,
     profitByIpo:   profitByIpo,
   };
+}
+
+// Per-member profit totalled across EVERY IPO, ranked highest first. Reuses the
+// same PoolMath.memberShares split the Profit Pool screen uses, and the same
+// rate resolution (finalized pool rates when present, else the local defaults),
+// so a member's leaderboard total equals the sum of their pool shares.
+function computeMemberProfits() {
+  var globalStcg = parseFloat(localStorage.getItem('stcg')      || '15');
+  var globalBrok = parseFloat(localStorage.getItem('brokerage') || '0');
+  var panToMember = function(panId) {
+    var p = _pans.find(function(x){ return x.id === panId; });
+    return p ? p.member : null;
+  };
+
+  var totals = {};   // memberId -> { profit, pans }
+  _ipos.forEach(function(ipo) {
+    var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
+    if (!ipoAllots.length) return;
+    var pool = _pools.find(function(p){ return p.ipo === ipo.id; });
+    var stcg = pool && pool.stcgRate  != null ? pool.stcgRate  : globalStcg;
+    var brok = pool && pool.brokerage != null ? pool.brokerage : globalBrok;
+
+    var cats = {};
+    ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
+    Object.keys(cats).forEach(function(cat) {
+      var shares = PoolMath.memberShares(cats[cat], stcg, brok, panToMember);
+      Object.keys(shares).forEach(function(mid) {
+        if (!totals[mid]) totals[mid] = { profit: 0, pans: 0 };
+        totals[mid].profit += shares[mid].share;
+        totals[mid].pans   += shares[mid].pans;
+      });
+    });
+  });
+
+  return _members.map(function(m) {
+    var t = totals[m.id] || { profit: 0, pans: 0 };
+    return { id: m.id, name: m.name, avatarHue: m.avatarHue, you: m.you,
+             profit: Math.round(t.profit), pans: t.pans };
+  }).sort(function(a, b){ return b.profit - a.profit; });
 }
 
 // ── Main loader ───────────────────────────────────────────────────────────────
@@ -332,6 +380,7 @@ async function loadDB() {
     smeVsMain:    charts.smeVsMain,
     allotHistory: charts.allotHistory,
     profitByIpo:  charts.profitByIpo,
+    memberProfits: computeMemberProfits(),
 
     me:     _members.find(function(m){ return m.you; }) || null,
     ipo:    function(id){ return _ipos.find(function(i){ return i.id === id; }); },

@@ -155,6 +155,16 @@ function Dashboard({ navigate, tweaks }) {
     </Card>
   );
 
+  // Recent activity = IPOs the pool actually applied to (any status), newest
+  // first. Built from D.profitByIpo so the Profit column uses the shared PoolMath
+  // net (matching the Profit by IPO table), then joined back to the full IPO for
+  // logo/sector/status. Null-dated IPOs sort last.
+  const recentActivity = (D.profitByIpo || [])
+    .map(p => ({ ...p, ipo: D.ipo(p.id) }))
+    .filter(r => r.ipo)
+    .sort((a, b) => String(b.month || '').localeCompare(String(a.month || '')))
+    .slice(0, 5);
+
   const RecentTable = (
     <Card pad={0}>
       <div style={{ padding: '16px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)' }}>
@@ -171,37 +181,80 @@ function Dashboard({ navigate, tweaks }) {
             </tr>
           </thead>
           <tbody>
-            {D.ipos.filter(i => i.status === 'Listed' || i.status === 'Open').slice(0, 5).map(ipo => {
-              const pool = D.pools.find(p => p.ipo === ipo.id);
-              const stcg = parseFloat(localStorage.getItem('stcg') || '15');
-              const brok = parseFloat(localStorage.getItem('brokerage') || '0');
-              const gross = D.allotments.filter(a => a.ipo === ipo.id).reduce((s, a) => s + (a.gain || 0), 0);
-              const poolNet = pool ? Math.max(0, gross - Math.round(gross * stcg / 100) - brok) : 0;
-              return (
-                <tr key={ipo.id} onClick={() => navigate('ipo', { id: ipo.id })} style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-2)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                  <td style={{ padding: '13px 18px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-                      <IpoLogo ipo={ipo} size={36} />
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: 13.5 }}>{ipo.short}</div>
-                        <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{ipo.sector}</div>
-                      </div>
+            {recentActivity.map(({ ipo, applied, allotted, net }) => (
+              <tr key={ipo.id} onClick={() => navigate('ipo', { id: ipo.id })} style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-2)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                <td style={{ padding: '13px 18px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                    <IpoLogo ipo={ipo} size={36} />
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 13.5 }}>{ipo.short}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{ipo.sector}</div>
                     </div>
-                  </td>
-                  <td style={{ padding: '13px 18px' }}><Badge tone={ipo.type === 'SME' ? 'sme' : 'mainboard'}>{ipo.type}</Badge></td>
-                  <td className="num" style={{ padding: '13px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{D.allotments.filter(a => a.ipo === ipo.id).length || '—'}</td>
-                  <td className="num" style={{ padding: '13px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{D.allotments.filter(a => a.ipo === ipo.id && a.status === 'allotted').length || '—'}</td>
-                  <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontWeight: 700, color: poolNet > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{poolNet > 0 ? f(poolNet, { compact: true }) : '—'}</td>
-                  <td style={{ padding: '13px 18px', textAlign: 'right' }}>
-                    <Badge tone={ipo.status === 'Listed' ? 'profit' : ipo.status === 'Open' ? 'info' : 'neutral'}>{ipo.status}</Badge>
-                  </td>
-                </tr>
-              );
-            })}
+                  </div>
+                </td>
+                <td style={{ padding: '13px 18px' }}><Badge tone={ipo.type === 'SME' ? 'sme' : 'mainboard'}>{ipo.type}</Badge></td>
+                <td className="num" style={{ padding: '13px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{applied || '—'}</td>
+                <td className="num" style={{ padding: '13px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{allotted || '—'}</td>
+                <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontWeight: 700, color: net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{net > 0 ? f(net, { compact: true }) : '—'}</td>
+                <td style={{ padding: '13px 18px', textAlign: 'right' }}>
+                  <Badge tone={ipo.status === 'Listed' ? 'profit' : ipo.status === 'Open' ? 'info' : 'neutral'}>{ipo.status}</Badge>
+                </td>
+              </tr>
+            ))}
+            {recentActivity.length === 0 && (
+              <tr style={{ borderTop: '1px solid var(--border)' }}>
+                <td colSpan={6} style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No IPO activity yet.</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
+    </Card>
+  );
+
+  // Member leaderboard — every member ranked by total net profit across all IPOs
+  // (D.memberProfits, computed once in loadDB via PoolMath). Highlights the top
+  // earner, then lists everyone with a relative profit bar.
+  const memberRanks = (D.memberProfits || []).filter(m => m.profit > 0);
+  const topProfit   = memberRanks.length ? memberRanks[0].profit : 0;
+
+  const MemberLeaderboard = (
+    <Card pad={0}>
+      <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 14.5, fontWeight: 800 }}>Member leaderboard</div>
+        <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 2 }}>Net profit earned per member · across all IPOs</div>
+      </div>
+      {memberRanks.length > 0 ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px', background: 'var(--profit-soft)', borderBottom: '1px solid var(--border)' }}>
+            <Avatar name={memberRanks[0].name} hue={memberRanks[0].avatarHue} size={44} you={memberRanks[0].you} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Badge tone="profit" icon="spark">Top earner</Badge>
+              <div style={{ fontSize: 15, fontWeight: 800, marginTop: 5 }}>
+                {memberRanks[0].name}{memberRanks[0].you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{memberRanks[0].pans} PAN{memberRanks[0].pans === 1 ? '' : 's'} applied</div>
+            </div>
+            <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(memberRanks[0].profit)}</div>
+          </div>
+          {memberRanks.map((m, i) => (
+            <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--border)', background: m.you ? 'var(--brand-tint)' : 'transparent' }}>
+              <span className="num" style={{ width: 18, textAlign: 'right', fontSize: 13, fontWeight: 700, color: 'var(--ink-3)' }}>{i + 1}</span>
+              <Avatar name={m.name} hue={m.avatarHue} size={30} you={m.you} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {m.name}{m.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
+                </div>
+                <div style={{ marginTop: 5 }}><Meter value={m.profit} max={topProfit} color="var(--profit)" h={6} /></div>
+              </div>
+              <div className="num" style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>{f(m.profit, { compact: true })}</div>
+            </div>
+          ))}
+        </>
+      ) : (
+        <div style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No member profits yet.</div>
+      )}
     </Card>
   );
 
@@ -253,6 +306,8 @@ function Dashboard({ navigate, tweaks }) {
       )}
 
       {ProfitByIpo}
+
+      {MemberLeaderboard}
 
       {RecentTable}
     </div>
