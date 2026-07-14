@@ -93,7 +93,7 @@ function Donut({ segments, size = 168, stroke = 22, centerLabel, centerSub }) {
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }}>
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--border)" strokeWidth={stroke} />
         {segments.map((s, i) => {
-          const frac = s.v / total;
+          const frac = total > 0 ? s.v / total : 0;
           const dash = `${frac * c} ${c}`;
           const off = -acc * c;
           acc += frac;

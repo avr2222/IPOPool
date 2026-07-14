@@ -58,9 +58,9 @@ function Dashboard({ navigate, tweaks }) {
   const f = (n, o) => D.fmtINR(n, o);
 
   const kpiCards = [
-    { icon: 'calendar', label: 'IPOs Applied',        value: D.kpis.applied,                                tone: 'neutral', nav: 'manage' },
-    { icon: 'check',    label: 'Total Allotments',    value: D.kpis.allotments,                             tone: 'neutral', nav: 'manage' },
-    { icon: 'spark',    label: 'Allotment Rate',      value: D.kpis.allotRate + '%',                        tone: 'neutral', nav: 'manage' },
+    { icon: 'calendar', label: 'IPOs Applied',        value: D.kpis.applied,                                tone: 'neutral', nav: 'admin' },
+    { icon: 'check',    label: 'Total Allotments',    value: D.kpis.allotments,                             tone: 'neutral', nav: 'admin' },
+    { icon: 'spark',    label: 'Allotment Rate',      value: D.kpis.allotRate + '%',                        tone: 'neutral', nav: 'admin' },
     { icon: 'wallet',   label: 'Total Investment',    value: f(D.kpis.invested, { compact: true }),         tone: 'neutral', nav: 'pooling', delta: { tone: 'neutral', label: 'this season' } },
     { icon: 'trend',    label: 'Total Profit',        value: f(D.kpis.profit,   { compact: true }),         tone: 'profit',  nav: 'pooling',
       delta: D.kpis.roi > 0 ? { tone: 'profit', label: '+' + D.kpis.roi + '% ROI' } : undefined },
@@ -69,7 +69,7 @@ function Dashboard({ navigate, tweaks }) {
   ];
 
   const ProfitTrend = (
-    <ChartCard title="Monthly profit trend" sub="Pooled net profit · last 7 months"
+    <ChartCard title="Monthly profit trend" sub="Pooled net profit · last 6 months"
       right={null}>
       <AreaChart data={D.monthlyProfit} h={184} fmt={v => f(v, { compact: true })} />
     </ChartCard>

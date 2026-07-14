@@ -187,16 +187,31 @@ var PoolMath = {
 };
 window.PoolMath = PoolMath;
 
+// Rate resolution used by EVERY profit aggregate. Once a pool is finalized it
+// carries the STCG/brokerage rates used at that moment, so the dashboard, ledger
+// and leaderboard must all price a pool's profit with those captured rates.
+// Unfinalized pools (no row / null rates) fall back to the current local
+// settings, matching the Profit Pool screen's pre-finalize preview.
+function ratesForIpo(ipoId) {
+  var pool = _pools.find(function(p){ return p.ipo === ipoId; });
+  return {
+    stcg: pool && pool.stcgRate  != null ? pool.stcgRate  : parseFloat(localStorage.getItem('stcg')      || '15'),
+    brok: pool && pool.brokerage != null ? pool.brokerage : parseFloat(localStorage.getItem('brokerage') || '0'),
+  };
+}
+
 // Total net profit across a set of allotments, grouped by (ipo, category) so
 // STCG and brokerage are applied per category exactly as the pool screen does.
-function groupNetProfit(allots, stcgRate, brok) {
+// Each group is priced with its own IPO's finalized rates via ratesForIpo.
+function groupNetProfit(allots) {
   var groups = {};
   allots.forEach(function(a) {
     var key = a.ipo + '|' + a.category;
     (groups[key] = groups[key] || []).push(a);
   });
   return Object.keys(groups).reduce(function(sum, k) {
-    return sum + PoolMath.category(groups[k], stcgRate, brok).net;
+    var r = ratesForIpo(groups[k][0].ipo);
+    return sum + PoolMath.category(groups[k], r.stcg, r.brok).net;
   }, 0);
 }
 
@@ -204,10 +219,10 @@ function groupNetProfit(allots, stcgRate, brok) {
 
 function computeKpis() {
   var allotted  = _allotments.filter(function(a){ return a.status === 'allotted'; });
-  var stcgRate  = parseFloat(localStorage.getItem('stcg')      || '15');
-  var brok      = parseFloat(localStorage.getItem('brokerage') || '0');
-  var totalNet   = groupNetProfit(_allotments, stcgRate, brok);
-  var invested   = _allotments.reduce(function(s, a) {
+  var totalNet   = groupNetProfit(_allotments);
+  // Invested = capital actually deployed. Only allotted applications tie up money;
+  // non-allotted ASBA applications are refunded, so they don't count.
+  var invested   = allotted.reduce(function(s, a) {
     var ip = _ipos.find(function(i){ return i.id === a.ipo; });
     return s + (ip ? ip.lotValue : 0);
   }, 0);
@@ -229,9 +244,6 @@ function computeKpis() {
 }
 
 function computeCharts() {
-  var stcgRate = parseFloat(localStorage.getItem('stcg')      || '15');
-  var brok     = parseFloat(localStorage.getItem('brokerage') || '0');
-
   var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
   // Per-IPO profit breakdown (every IPO the pool applied to, newest first).
@@ -245,7 +257,7 @@ function computeCharts() {
       return {
         id: i.id, name: i.name, short: i.short, type: i.type, status: i.status,
         applied: apps.length, allotted: allotted.length,
-        gross: gross, net: groupNetProfit(apps, stcgRate, brok),
+        gross: gross, net: groupNetProfit(apps),
         month: i.listDate || i.allotDate || i.close || i.open || null,
       };
     })
@@ -273,8 +285,8 @@ function computeCharts() {
   }
 
   // SME vs Mainboard — per-category nets grouped by board
-  var smeNet  = groupNetProfit(_allotments.filter(function(a){ return a.category === 'SME'; }), stcgRate, brok);
-  var mainNet = groupNetProfit(_allotments.filter(function(a){ return a.category !== 'SME'; }), stcgRate, brok);
+  var smeNet  = groupNetProfit(_allotments.filter(function(a){ return a.category === 'SME'; }));
+  var mainNet = groupNetProfit(_allotments.filter(function(a){ return a.category !== 'SME'; }));
 
   // Allotment history: last 6 IPOs the pool applied to, oldest → newest
   var allotHistory = profitByIpo.slice(0, 6).reverse().map(function(p) {
@@ -294,8 +306,6 @@ function computeCharts() {
 // rate resolution (finalized pool rates when present, else the local defaults),
 // so a member's leaderboard total equals the sum of their pool shares.
 function computeMemberProfits() {
-  var globalStcg = parseFloat(localStorage.getItem('stcg')      || '15');
-  var globalBrok = parseFloat(localStorage.getItem('brokerage') || '0');
   var panToMember = function(panId) {
     var p = _pans.find(function(x){ return x.id === panId; });
     return p ? p.member : null;
@@ -305,14 +315,12 @@ function computeMemberProfits() {
   _ipos.forEach(function(ipo) {
     var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
     if (!ipoAllots.length) return;
-    var pool = _pools.find(function(p){ return p.ipo === ipo.id; });
-    var stcg = pool && pool.stcgRate  != null ? pool.stcgRate  : globalStcg;
-    var brok = pool && pool.brokerage != null ? pool.brokerage : globalBrok;
+    var r = ratesForIpo(ipo.id);
 
     var cats = {};
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
     Object.keys(cats).forEach(function(cat) {
-      var shares = PoolMath.memberShares(cats[cat], stcg, brok, panToMember);
+      var shares = PoolMath.memberShares(cats[cat], r.stcg, r.brok, panToMember);
       Object.keys(shares).forEach(function(mid) {
         if (!totals[mid]) totals[mid] = { profit: 0, pans: 0 };
         totals[mid].profit += shares[mid].share;
@@ -326,6 +334,17 @@ function computeMemberProfits() {
     return { id: m.id, name: m.name, avatarHue: m.avatarHue, you: m.you,
              profit: Math.round(t.profit), pans: t.pans };
   }).sort(function(a, b){ return b.profit - a.profit; });
+}
+
+// Pools worth showing: a profit pool is only meaningful once at least one PAN is
+// actually allotted. Marking an IPO's applicants all "not allotted" still upserts
+// a pool row (so the screen can list it), which would otherwise surface as an
+// empty "Distributing" pool with ₹0 to distribute. Filter those out everywhere
+// the UI reads DB.pools. The raw _pools array is kept for internal rate lookups.
+function activePools() {
+  return _pools.filter(function(p) {
+    return _allotments.some(function(a){ return a.ipo === p.ipo && a.status === 'allotted'; });
+  });
 }
 
 // ── Main loader ───────────────────────────────────────────────────────────────
@@ -373,7 +392,7 @@ async function loadDB() {
     pans:         _pans,
     ipos:         _ipos,
     allotments:   _allotments,
-    pools:        _pools,
+    pools:        activePools(),
     settlements:  _settlements,
     kpis:         computeKpis(),
     monthlyProfit: charts.monthlyProfit,
@@ -559,9 +578,13 @@ async function loadDB() {
           if (allotErr) throw allotErr;
         }
 
-        // Ensure a profit_pool row exists for this IPO
-        await window.sb.from('profit_pools')
-          .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' });
+        // Ensure a profit_pool row exists for this IPO — but only if at least one
+        // PAN was actually allotted. An all-"not allotted" import has nothing to
+        // distribute, so it must not create an empty "Distributing" pool.
+        if (rows.some(function(r){ return r.status === 'allotted'; })) {
+          await window.sb.from('profit_pools')
+            .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' });
+        }
 
         await loadDB();
       },
@@ -577,14 +600,26 @@ async function loadDB() {
           if (error) throw error;
           if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         }
-        // Ensure a profit_pool row exists for each affected IPO so the Pool screen can show it
+        // Ensure a profit_pool row exists for each affected IPO so the Pool screen
+        // can show it — but only when that IPO will have ≥1 allotted PAN after
+        // this edit. Otherwise (e.g. all marked "not allotted") there is nothing
+        // to distribute and we must not create an empty "Distributing" pool.
+        var changeStatus = {};
+        changes.forEach(function(c){ changeStatus[c.id] = c.status; });
         var ipoIds = new Set(changes.map(function(c) {
           var a = _allotments.find(function(x){ return x.id === c.id; });
           return a ? a.ipo : null;
         }).filter(Boolean));
         for (var ipoId of ipoIds) {
-          await window.sb.from('profit_pools')
-            .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' });
+          var willHaveAllot = _allotments.some(function(a) {
+            if (a.ipo !== ipoId) return false;
+            var st = changeStatus[a.id] != null ? changeStatus[a.id] : a.status;
+            return st === 'allotted';
+          });
+          if (willHaveAllot) {
+            await window.sb.from('profit_pools')
+              .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' });
+          }
         }
         await loadDB();
       },
@@ -628,15 +663,17 @@ async function loadDB() {
 
         // Which (member, category) settlements are already Paid — leave untouched.
         var { data: existing, error: exErr } = await window.sb.from('settlements')
-          .select('member_id, category, status').eq('pool_id', pool.id);
+          .select('id, member_id, category, status').eq('pool_id', pool.id);
         if (exErr) throw exErr;
         var paid = {};
         (existing || []).forEach(function(s) {
           if (s.status === 'Paid') paid[s.member_id + '|' + s.category] = true;
         });
 
+        var newKeys = {};
         for (var i = 0; i < rows.length; i++) {
           var r = rows[i];
+          newKeys[r.memberId + '|' + r.category] = true;
           if (paid[r.memberId + '|' + r.category]) continue;   // don't un-pay
           var { error } = await window.sb.from('settlements').upsert({
             pool_id:   pool.id,
@@ -647,6 +684,16 @@ async function loadDB() {
             status:    'Pending',
           }, { onConflict: 'pool_id,member_id,category' });
           if (error) throw error;
+        }
+
+        // Remove stale Pending rows no longer in the finalized set (e.g. a member
+        // whose corrected allotment dropped their share to 0). Paid rows are kept.
+        for (var j = 0; j < (existing || []).length; j++) {
+          var ex = existing[j];
+          if (ex.status === 'Paid') continue;
+          if (newKeys[ex.member_id + '|' + ex.category]) continue;
+          var { error: delErr } = await window.sb.from('settlements').delete().eq('id', ex.id);
+          if (delErr) throw delErr;
         }
         await loadDB();
       },
@@ -672,7 +719,7 @@ async function loadDB() {
         if (error) throw error;
         if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         _pools = _pools.map(function(p){ return p.ipo === ipoId ? Object.assign({}, p, { status: 'Settled' }) : p; });
-        window.DB.pools = _pools;
+        window.DB.pools = activePools();
       },
     },
   };
