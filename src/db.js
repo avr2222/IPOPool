@@ -328,6 +328,17 @@ function computeMemberProfits() {
   }).sort(function(a, b){ return b.profit - a.profit; });
 }
 
+// Pools worth showing: a profit pool is only meaningful once at least one PAN is
+// actually allotted. Marking an IPO's applicants all "not allotted" still upserts
+// a pool row (so the screen can list it), which would otherwise surface as an
+// empty "Distributing" pool with ₹0 to distribute. Filter those out everywhere
+// the UI reads DB.pools. The raw _pools array is kept for internal rate lookups.
+function activePools() {
+  return _pools.filter(function(p) {
+    return _allotments.some(function(a){ return a.ipo === p.ipo && a.status === 'allotted'; });
+  });
+}
+
 // ── Main loader ───────────────────────────────────────────────────────────────
 
 async function loadDB() {
@@ -373,7 +384,7 @@ async function loadDB() {
     pans:         _pans,
     ipos:         _ipos,
     allotments:   _allotments,
-    pools:        _pools,
+    pools:        activePools(),
     settlements:  _settlements,
     kpis:         computeKpis(),
     monthlyProfit: charts.monthlyProfit,
@@ -559,9 +570,13 @@ async function loadDB() {
           if (allotErr) throw allotErr;
         }
 
-        // Ensure a profit_pool row exists for this IPO
-        await window.sb.from('profit_pools')
-          .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' });
+        // Ensure a profit_pool row exists for this IPO — but only if at least one
+        // PAN was actually allotted. An all-"not allotted" import has nothing to
+        // distribute, so it must not create an empty "Distributing" pool.
+        if (rows.some(function(r){ return r.status === 'allotted'; })) {
+          await window.sb.from('profit_pools')
+            .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' });
+        }
 
         await loadDB();
       },
@@ -577,14 +592,26 @@ async function loadDB() {
           if (error) throw error;
           if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         }
-        // Ensure a profit_pool row exists for each affected IPO so the Pool screen can show it
+        // Ensure a profit_pool row exists for each affected IPO so the Pool screen
+        // can show it — but only when that IPO will have ≥1 allotted PAN after
+        // this edit. Otherwise (e.g. all marked "not allotted") there is nothing
+        // to distribute and we must not create an empty "Distributing" pool.
+        var changeStatus = {};
+        changes.forEach(function(c){ changeStatus[c.id] = c.status; });
         var ipoIds = new Set(changes.map(function(c) {
           var a = _allotments.find(function(x){ return x.id === c.id; });
           return a ? a.ipo : null;
         }).filter(Boolean));
         for (var ipoId of ipoIds) {
-          await window.sb.from('profit_pools')
-            .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' });
+          var willHaveAllot = _allotments.some(function(a) {
+            if (a.ipo !== ipoId) return false;
+            var st = changeStatus[a.id] != null ? changeStatus[a.id] : a.status;
+            return st === 'allotted';
+          });
+          if (willHaveAllot) {
+            await window.sb.from('profit_pools')
+              .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' });
+          }
         }
         await loadDB();
       },
@@ -672,7 +699,7 @@ async function loadDB() {
         if (error) throw error;
         if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         _pools = _pools.map(function(p){ return p.ipo === ipoId ? Object.assign({}, p, { status: 'Settled' }) : p; });
-        window.DB.pools = _pools;
+        window.DB.pools = activePools();
       },
     },
   };
