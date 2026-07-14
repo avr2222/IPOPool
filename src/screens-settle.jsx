@@ -55,43 +55,49 @@ function SettlementLedger({ navigate, id }) {
   // Settlement rows for this IPO
   const [rows, setRows] = useState(D.settlements.filter(s => s.ipo === selIpo));
 
-  // ── Minimal-transfer plan ─────────────────────────────────────────────────
-  // Each member's net position across ALL categories for this IPO:
+  // ── Net position per member (single source for both the transfer plan and the
+  // net-position display, so the two can never drift) ───────────────────────────
   //   received = gross gain from their allotted PANs (money already in account)
-  //   after_stcg = received × (1 - stcgRate/100) — they'll pay STCG to govt
-  //   owed = their total settlement share across categories
-  //   net = after_stcg - owed
-  //     positive → they received more than their share → PAYER
-  //     negative → they received less                 → RECEIVER
-  const transferPlan = useMemo(() => {
-    if (!rows.length) return [];
-
-    // Sum settlement amounts per member
+  //   holdings = received − their pro-rata share of total cost (STCG + brokerage)
+  //   owed     = their pooled entitlement (sum of settlement shares)
+  //   net = holdings − owed   (+ve → overfunded → PAYER, −ve → RECEIVER)
+  // Cost is attributed proportional to gross gain, so Σ net = 0 (payers exactly
+  // fund receivers) — unlike a bare (1 − STCG%) which omits brokerage.
+  const netPositions = useMemo(() => {
     const memberOwed = {};
     rows.forEach(r => { memberOwed[r.member] = (memberOwed[r.member] || 0) + r.amount; });
 
-    // Sum allotted gains per member
     const memberReceived = {};
     ipoAllots.forEach(a => {
       if (a.status !== 'allotted') return;
       const panObj = D.pan(a.pan);
-      if (!panObj) return;
-      const mid = panObj.member;
-      memberReceived[mid] = (memberReceived[mid] || 0) + (a.gain || 0);
+      if (panObj) memberReceived[panObj.member] = (memberReceived[panObj.member] || 0) + (a.gain || 0);
     });
 
-    // Net position per member (combine all who appear in either set)
-    const allIds = new Set([...Object.keys(memberOwed), ...Object.keys(memberReceived)]);
-    const netPos = [];
-    allIds.forEach(id => {
-      const received = memberReceived[id] || 0;
-      const afterStcg = received * (1 - stcgRate / 100);
-      const owed = memberOwed[id] || 0;
-      const net = Math.round(afterStcg - owed);
-      if (Math.abs(net) > 5) netPos.push({ id, net });
+    // Total gross and total cost (STCG + brokerage) across categories. PoolMath
+    // gives net = gross − STCG − brokerage, so (gross − net) is exactly the cost.
+    let grossTotal = 0, costTotal = 0;
+    categories.forEach(cat => {
+      const m = window.PoolMath.category(ipoAllots.filter(a => a.category === cat), stcgRate, brokerageAmt);
+      grossTotal += m.gross; costTotal += (m.gross - m.net);
     });
 
-    // Greedy debt minimization
+    const ids = new Set([...Object.keys(memberOwed), ...Object.keys(memberReceived)]);
+    const out = {};
+    ids.forEach(id => {
+      const received  = memberReceived[id] || 0;
+      const costShare = grossTotal > 0 ? costTotal * (received / grossTotal) : 0;
+      out[id] = Math.round((received - costShare) - (memberOwed[id] || 0));
+    });
+    return out;
+  }, [rows, ipoAllots, categories, stcgRate, brokerageAmt]);
+
+  // ── Minimal-transfer plan: greedy debt minimization over the net positions ────
+  const transferPlan = useMemo(() => {
+    const netPos = Object.entries(netPositions)
+      .filter(([, net]) => Math.abs(net) > 5)
+      .map(([id, net]) => ({ id, net }));
+
     const payers    = netPos.filter(n => n.net > 0).map(n => ({ ...n, bal: n.net  })).sort((a,b) => b.bal - a.bal);
     const receivers = netPos.filter(n => n.net < 0).map(n => ({ ...n, bal: -n.net })).sort((a,b) => b.bal - a.bal);
 
@@ -106,7 +112,7 @@ function SettlementLedger({ navigate, id }) {
       if (r.bal < 5) ri++;
     }
     return transfers;
-  }, [rows, ipoAllots, stcgRate]);
+  }, [netPositions]);
 
   const [tab,     setTab]     = useState('All');
   const [marking, setMarking] = useState(null);
@@ -388,30 +394,12 @@ function SettlementLedger({ navigate, id }) {
             <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Net positions</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {(() => {
-                const memberOwed = {};
-                rows.forEach(r => { memberOwed[r.member] = (memberOwed[r.member] || 0) + r.amount; });
-                const memberReceived = {};
-                ipoAllots.forEach(a => {
-                  if (a.status !== 'allotted') return;
-                  const panObj = D.pan(a.pan);
-                  if (!panObj) return;
-                  memberReceived[panObj.member] = (memberReceived[panObj.member] || 0) + (a.gain || 0);
-                });
-                const allIds = new Set([...Object.keys(memberOwed), ...Object.keys(memberReceived)]);
-                return [...allIds].map(id => {
-                  const m         = D.member(id);
-                  if (!m) return null;
-                  const received  = memberReceived[id] || 0;
-                  const afterStcg = received * (1 - stcgRate / 100);
-                  const owed      = memberOwed[id] || 0;
-                  const net       = Math.round(afterStcg - owed);
-                  const isPayer   = net > 0;
-                  const maxBar    = Math.max(...[...allIds].map(xid => {
-                    const r = memberReceived[xid] || 0;
-                    const o = memberOwed[xid] || 0;
-                    return Math.abs(Math.round(r * (1 - stcgRate/100) - o));
-                  }));
-                  const barPct = maxBar > 0 ? Math.abs(net) / maxBar * 100 : 0;
+                const entries = Object.entries(netPositions).filter(([id]) => D.member(id));
+                const maxBar  = Math.max(1, ...entries.map(([, net]) => Math.abs(net)));
+                return entries.map(([id, net]) => {
+                  const m       = D.member(id);
+                  const isPayer = net > 0;
+                  const barPct  = Math.abs(net) / maxBar * 100;
                   return (
                     <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <Avatar name={m.name} hue={m.avatarHue} size={28} />
@@ -431,7 +419,7 @@ function SettlementLedger({ navigate, id }) {
               })()}
             </div>
             <div style={{ marginTop: 10, fontSize: 12, color: 'var(--ink-3)' }}>
-              Net = allotted gain × (1 − {stcgRate}% STCG) − pool share. Positive = owes others; negative = owed by others.
+              Net = allotted gain − {stcgRate}% STCG − charges − pool share. Positive = owes others; negative = owed by others.
             </div>
           </div>
         </Card>
