@@ -272,7 +272,21 @@ function App() {
       root.style.removeProperty('--brand'); root.style.removeProperty('--brand-600'); root.style.removeProperty('--brand-700');
       root.style.removeProperty('--brand-tint'); root.style.removeProperty('--brand-tint-2'); root.style.removeProperty('--profit'); root.style.removeProperty('--profit-soft');
     }
+    // Keep the mobile browser status bar in sync with the live theme: the accent
+    // brand in light mode, the app's dark background in dark mode.
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) themeMeta.setAttribute('content', t.dark ? '#0B0E12' : a[0]);
   }, [t.accent, t.dark]);
+
+  // Per-screen browser tab title, so multiple open tabs are distinguishable.
+  useEffectA(() => {
+    let label = TITLES[route] ? TITLES[route][0] : '';
+    if (route === 'ipo' && params.id && window.DB) {
+      const ip = window.DB.ipo(params.id);
+      if (ip) label = ip.short || ip.name;
+    }
+    document.title = (authed && label) ? `${label} · IPO Pool` : 'IPO Pool';
+  }, [route, params.id, authed]);
 
   const login = async () => {
     await window.loadDB();
