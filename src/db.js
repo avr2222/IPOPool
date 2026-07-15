@@ -516,9 +516,13 @@ async function loadDB() {
         if (fields.listPrice     != null) updates.list_price    = fields.listPrice;
         if (fields.listGain      != null) updates.list_gain_pct = fields.listGain;
         if (fields.subscription  != null) updates.subscription  = fields.subscription;
-        if (fields.listDate      != null) updates.list_date     = fields.listDate;
-        if (fields.allotDate     != null) updates.allot_date    = fields.allotDate;
-        if (fields.closeDate     != null) updates.close_date    = fields.closeDate;
+        // Dates: presence-based so any of them can be entered, corrected, or
+        // cleared (empty → null). Only saveEditIpo calls updateIpo, and it always
+        // sends these keys. ISO YYYY-MM-DD strings map straight to DATE columns.
+        if ('openDate'  in fields) updates.open_date  = fields.openDate  || null;
+        if ('closeDate' in fields) updates.close_date = fields.closeDate || null;
+        if ('allotDate' in fields) updates.allot_date = fields.allotDate || null;
+        if ('listDate'  in fields) updates.list_date  = fields.listDate  || null;
         var { data, error } = await window.sb.from('ipos').update(updates).eq('id', id).select().single();
         if (error) throw error;
         var t = txIpos([data])[0];
