@@ -157,7 +157,7 @@ function AdminPanel() {
   const [newIpoId,  setNewIpoId]  = useState(null);
   const [ipoForm, setIpoForm]   = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
   const [editIpoId,   setEditIpoId]   = useState(null);
-  const [editIpoForm, setEditIpoForm] = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '' });
+  const [editIpoForm, setEditIpoForm] = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
   const [editIpoSaving, setEditIpoSaving] = useState(false);
   const [editIpoErr,    setEditIpoErr]    = useState('');
   const [ipoSaving, setIpoSaving] = useState(false);
@@ -215,7 +215,11 @@ function AdminPanel() {
 
   const openEditIpo = (ip) => {
     setEditIpoId(ip.id);
-    setEditIpoForm({ name: ip.name, shortName: ip.short || '', type: ip.type, price: ip.bandHigh || '', lotSize: ip.lotSize || '' });
+    setEditIpoForm({ name: ip.name, shortName: ip.short || '', type: ip.type, price: ip.bandHigh || '', lotSize: ip.lotSize || '',
+      openDate:  (ip.open      || '').slice(0, 10),
+      closeDate: (ip.close     || '').slice(0, 10),
+      allotDate: (ip.allotDate || '').slice(0, 10),
+      listDate:  (ip.listDate  || '').slice(0, 10) });
     setEditIpoErr('');
   };
 
@@ -229,6 +233,10 @@ function AdminPanel() {
         type: editIpoForm.type,
         bandHigh: parseFloat(editIpoForm.price) || null,
         lotSize: parseInt(editIpoForm.lotSize) || null,
+        openDate: editIpoForm.openDate,
+        closeDate: editIpoForm.closeDate,
+        allotDate: editIpoForm.allotDate,
+        listDate: editIpoForm.listDate,
       });
       setIpos([...window.DB.ipos]);
       setEditIpoId(null);
@@ -767,6 +775,22 @@ function AdminPanel() {
             </Field>
             <Field label="Lot size">
               <input style={inputSt} type="number" value={editIpoForm.lotSize} onChange={e => setEditIpoForm(p => ({ ...p, lotSize: e.target.value }))} placeholder="15" />
+            </Field>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Open date">
+              <input style={inputSt} type="date" value={editIpoForm.openDate} onChange={e => setEditIpoForm(p => ({ ...p, openDate: e.target.value }))} />
+            </Field>
+            <Field label="Close date">
+              <input style={inputSt} type="date" value={editIpoForm.closeDate} onChange={e => setEditIpoForm(p => ({ ...p, closeDate: e.target.value }))} />
+            </Field>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Allotment date">
+              <input style={inputSt} type="date" value={editIpoForm.allotDate} onChange={e => setEditIpoForm(p => ({ ...p, allotDate: e.target.value }))} />
+            </Field>
+            <Field label="Listing date">
+              <input style={inputSt} type="date" value={editIpoForm.listDate} onChange={e => setEditIpoForm(p => ({ ...p, listDate: e.target.value }))} />
             </Field>
           </div>
           {editIpoErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{editIpoErr}</div>}
