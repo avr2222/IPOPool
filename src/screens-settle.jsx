@@ -8,8 +8,16 @@ function SettlementLedger({ navigate, id }) {
   const D = window.DB;
   const f = (n, o) => D.fmtINR(n, o);
 
-  // Select IPO (from nav context or default to first pool)
-  const [selIpo, setSelIpo] = useState(id || D.pools[0]?.ipo);
+  // Settled pools are hidden from the working strip by default; a toggle reveals
+  // them (shown automatically if every pool is settled).
+  const activeTabPools = D.pools.filter(p => p.status !== 'Settled');
+  const settledPools   = D.pools.filter(p => p.status === 'Settled');
+
+  // Select IPO (from nav context or default to first ACTIVE pool)
+  const [selIpo, setSelIpo] = useState(id || activeTabPools[0]?.ipo || D.pools[0]?.ipo);
+  const [showSettled, setShowSettled] = useState(false);
+  const effectiveShow = showSettled || activeTabPools.length === 0;
+  const visiblePools  = effectiveShow ? [...activeTabPools, ...settledPools] : activeTabPools;
   const pool    = D.pools.find(p => p.ipo === selIpo) || D.pools[0] || null;
   const me      = D.members.find(m => m.you);
 
@@ -124,6 +132,11 @@ function SettlementLedger({ navigate, id }) {
   const settledCount   = paidRows.length;
   const filtered       = tab === 'All' ? rows : tab === 'Pending' ? pendingRows : paidRows;
 
+  // Fully settled: the pool is marked Settled, or every generated row is Paid.
+  // When settled the ledger is read-only (no mark actions) and a banner shows.
+  const isSettled      = pool?.status === 'Settled' || (rows.length > 0 && pendingRows.length === 0);
+  const lastPaidDate   = paidRows.map(r => r.date).filter(Boolean).sort().slice(-1)[0] || null;
+
   const markPaid = async (settlementId) => {
     setMarking(settlementId);
     try {
@@ -173,20 +186,44 @@ function SettlementLedger({ navigate, id }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
 
       {/* IPO switcher */}
-      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
-        {D.pools.map(p => {
+      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2, alignItems: 'center' }}>
+        {visiblePools.map(p => {
           const ip = D.ipo(p.ipo);
           const active = p.ipo === selIpo;
           return (
             <button key={p.ipo} onClick={() => { setSelIpo(p.ipo); setRows(D.settlements.filter(s => s.ipo === p.ipo)); setTab('All'); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 'var(--r-md)', flexShrink: 0, border: '1px solid', borderColor: active ? 'var(--brand)' : 'var(--border)', background: active ? 'var(--brand-tint)' : 'var(--surface)', cursor: 'pointer' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 'var(--r-md)', flexShrink: 0, border: '1px solid', borderColor: active ? 'var(--brand)' : 'var(--border)', background: active ? 'var(--brand-tint)' : 'var(--surface)', cursor: 'pointer', opacity: p.status === 'Settled' ? 0.72 : 1 }}>
               <IpoLogo ipo={ip} size={24} />
               <span style={{ fontSize: 13, fontWeight: 700, color: active ? 'var(--brand)' : 'var(--ink)' }}>{ip.short}</span>
               <Badge tone={p.status === 'Settled' ? 'profit' : 'warn'} style={{ fontSize: 10.5 }}>{p.status}</Badge>
             </button>
           );
         })}
+        {settledPools.length > 0 && activeTabPools.length > 0 && (
+          <Button variant="ghost" size="sm" style={{ flexShrink: 0 }}
+            onClick={() => {
+              const next = !showSettled;
+              setShowSettled(next);
+              if (!next && settledPools.some(p => p.ipo === selIpo)) {
+                const a = activeTabPools[0]?.ipo;
+                if (a) { setSelIpo(a); setRows(D.settlements.filter(s => s.ipo === a)); setTab('All'); }
+              }
+            }}>
+            {effectiveShow ? 'Hide settled' : `Show settled (${settledPools.length})`}
+          </Button>
+        )}
       </div>
+
+      {/* Settled completion banner */}
+      {isSettled && rows.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 20px', background: 'var(--profit-soft)', borderRadius: 'var(--r-lg)', border: '1px solid var(--profit)' }}>
+          <Icon name="check" size={18} color="var(--profit)" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--profit)' }}>All payouts settled{lastPaidDate ? ` · ${lastPaidDate}` : ''}</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>Every transfer for this IPO has been marked paid. The ledger is now read-only.</div>
+          </div>
+        </div>
+      )}
 
       {/* Your retained share */}
       {myShare > 0 && (
@@ -251,7 +288,10 @@ function SettlementLedger({ navigate, id }) {
       {rows.length > 0 && <Card pad={0}>
         <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div>
-            <div style={{ fontSize: 14.5, fontWeight: 800 }}>Distribution ledger</div>
+            <div style={{ fontSize: 14.5, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+              Distribution ledger
+              {isSettled && <Badge tone="profit">🔒 Settled · read-only</Badge>}
+            </div>
             <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>{ipo.name} · {catSummaries.map(d => `${d.cat}: ${f(d.net, {compact:true})} net`).join(' · ')}</div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -260,7 +300,7 @@ function SettlementLedger({ navigate, id }) {
               value={tab === 'All' ? `All (${rows.length})` : tab === 'Pending' ? `Pending (${pendingRows.length})` : `Paid (${paidRows.length})`}
               onChange={v => setTab(v.split(' ')[0])}
               size="sm" />
-            {pendingRows.length > 0 && (
+            {pendingRows.length > 0 && !isSettled && (
               <Button variant="primary" size="sm" icon="check"
                 onClick={markAllPaid}
                 style={{ opacity: markingAll ? .7 : 1, pointerEvents: markingAll ? 'none' : 'auto' }}>
@@ -314,6 +354,8 @@ function SettlementLedger({ navigate, id }) {
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, color: 'var(--profit)' }}>
                           <StatusDot tone="profit" /> Paid
                         </span>
+                      ) : isSettled ? (
+                        <span style={{ fontSize: 13, color: 'var(--ink-3)', fontWeight: 600 }}>Pending</span>
                       ) : (
                         <button
                           onClick={() => markPaid(r.id)}
