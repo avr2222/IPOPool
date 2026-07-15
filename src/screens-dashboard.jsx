@@ -120,7 +120,12 @@ function Dashboard({ navigate, tweaks }) {
             {(D.profitByIpo || []).map(p => (
               <tr key={p.id} onClick={() => navigate('ipo', { id: p.id })} style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}
                 onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-2)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                <td style={{ padding: '12px 18px', fontWeight: 700, fontSize: 13.5 }}>{p.short}</td>
+                <td style={{ padding: '12px 18px', fontWeight: 700, fontSize: 13.5 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                    {p.short}
+                    {D.pools.some(pl => pl.ipo === p.id && pl.status === 'Settled') && <Badge tone="profit">Settled</Badge>}
+                  </span>
+                </td>
                 <td style={{ padding: '12px 18px' }}><Badge tone={p.type === 'SME' ? 'sme' : 'mainboard'}>{p.type}</Badge></td>
                 <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.applied}</td>
                 <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.allotted}</td>

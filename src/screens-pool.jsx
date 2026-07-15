@@ -18,10 +18,17 @@ function ProfitPooling({ navigate, id }) {
   const f = (n, o) => D.fmtINR(n, o);
 
   const listedPools  = D.pools;
-  const [sel, setSel] = useState(id || listedPools[0]?.ipo);
+  // Settled pools are hidden from the working strip by default; a toggle reveals
+  // them. If every pool is settled, show them so the screen isn't empty.
+  const activeTabPools = listedPools.filter(p => p.status !== 'Settled');
+  const settledPools   = listedPools.filter(p => p.status === 'Settled');
+  const [sel, setSel] = useState(id || activeTabPools[0]?.ipo || listedPools[0]?.ipo);
+  const [showSettled, setShowSettled] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalErr,   setFinalErr]   = useState('');
   const [confirmFinal, setConfirmFinal] = useState(false);
+  const effectiveShow = showSettled || activeTabPools.length === 0;
+  const visiblePools  = effectiveShow ? [...activeTabPools, ...settledPools] : activeTabPools;
 
   if (!listedPools.length) return (
     <Card pad={32} style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
@@ -97,8 +104,8 @@ function ProfitPooling({ navigate, id }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
 
       {/* IPO selector pills */}
-      <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 2 }}>
-        {listedPools.map(p => {
+      <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 2, alignItems: 'center' }}>
+        {visiblePools.map(p => {
           const ip = D.ipo(p.ipo);
           const active = p.ipo === sel;
           return (
@@ -106,6 +113,7 @@ function ProfitPooling({ navigate, id }) {
               display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 'var(--r-md)', flexShrink: 0,
               border: '1px solid', borderColor: active ? 'var(--brand)' : 'var(--border)',
               background: active ? 'var(--brand-tint)' : 'var(--surface)', cursor: 'pointer',
+              opacity: p.status === 'Settled' ? 0.72 : 1,
             }}>
               <IpoLogo ipo={ip} size={30} />
               <div style={{ textAlign: 'left' }}>
@@ -118,7 +126,29 @@ function ProfitPooling({ navigate, id }) {
             </button>
           );
         })}
+        {settledPools.length > 0 && activeTabPools.length > 0 && (
+          <Button variant="ghost" size="sm" style={{ flexShrink: 0 }}
+            onClick={() => {
+              const next = !showSettled;
+              setShowSettled(next);
+              if (!next && settledPools.some(p => p.ipo === sel)) setSel(activeTabPools[0]?.ipo);
+            }}>
+            {effectiveShow ? 'Hide settled' : `Show settled (${settledPools.length})`}
+          </Button>
+        )}
       </div>
+
+      {/* Settled banner */}
+      {pool?.status === 'Settled' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 18px', background: 'var(--profit-soft)', borderRadius: 'var(--r-lg)', border: '1px solid var(--profit)' }}>
+          <Icon name="check" size={18} color="var(--profit)" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--profit)' }}>This pool is fully settled</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>All payouts have been distributed. This pool is read-only.</div>
+          </div>
+          <Button variant="ghost" size="sm" icon="ledger" onClick={() => navigate('settlement', { id: sel })}>View ledger</Button>
+        </div>
+      )}
 
       {/* Your combined share */}
       {myTotal > 0 && (
