@@ -160,6 +160,7 @@ function AdminPanel() {
   const [editIpoForm, setEditIpoForm] = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
   const [editIpoSaving, setEditIpoSaving] = useState(false);
   const [editIpoErr,    setEditIpoErr]    = useState('');
+  const [copiedIpo,     setCopiedIpo]     = useState(null);
   const [ipoSaving, setIpoSaving] = useState(false);
   const [ipoErr, setIpoErr]     = useState('');
 
@@ -212,6 +213,15 @@ function AdminPanel() {
     'All applications and allotments for this IPO will also be permanently deleted.',
     async () => { try { await D.mutations.deleteIpo(id); setIpos([...window.DB.ipos]); } catch(e) { alert(e.message); } }
   );
+
+  // Copy the shareable member apply link (#/apply/<ipoId>) to post in the group.
+  const copyApplyLink = async (ip) => {
+    const url = window.applyLinkFor(ip.id);
+    try { await navigator.clipboard.writeText(url); }
+    catch (e) { window.prompt('Copy this apply link:', url); }
+    setCopiedIpo(ip.id);
+    setTimeout(() => setCopiedIpo(c => (c === ip.id ? null : c)), 1600);
+  };
 
   const openEditIpo = (ip) => {
     setEditIpoId(ip.id);
@@ -498,6 +508,9 @@ function AdminPanel() {
                             style={{ marginRight: 6 }}>
                             Allotments
                           </Button>
+                          <IconButton name={copiedIpo === ip.id ? 'check' : 'external'} size={30}
+                            tip={copiedIpo === ip.id ? 'Link copied!' : 'Copy apply link'}
+                            onClick={() => copyApplyLink(ip)} />
                           <IconButton name="edit" size={30} tip="Edit IPO" onClick={() => openEditIpo(ip)} />
                           <IconButton name="trash" size={30} tip="Delete" onClick={() => deleteIpo(ip.id, ip.short)} />
                         </td>

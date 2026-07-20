@@ -3,6 +3,22 @@
    ============================================================ */
 const { useEffect: useEffectA } = React;
 
+// Parse the shared member apply deep link. Supports #/apply/<ipoId> and ?apply=<ipoId>.
+function parseApplyLink() {
+  try {
+    var m = (location.hash || '').match(/#\/apply\/([^/?#]+)/);
+    if (m) return decodeURIComponent(m[1]);
+    var q = new URLSearchParams(location.search).get('apply');
+    return q || null;
+  } catch (e) { return null; }
+}
+
+// Build the shareable apply link for an IPO (posted by the admin in the group).
+function applyLinkFor(ipoId) {
+  return location.origin + location.pathname + '#/apply/' + encodeURIComponent(ipoId);
+}
+window.applyLinkFor = applyLinkFor;
+
 const ACCENTS = {
   Emerald: ['#0B8A4B', '#0A7A42', '#086B3A', '#E8F5EE', '#D6EEE0'],
   Indigo: ['#4F46E5', '#4338CA', '#3730A3', '#ECEBFD', '#DDDBFA'],
@@ -208,9 +224,11 @@ function App() {
   const [route, setRoute] = useState('dashboard');
   const [params, setParams] = useState({});
   const [dataVersion, setDataVersion] = useState(0);  // bumps when data changes externally
+  const [memberApplyIpo] = useState(parseApplyLink);  // non-null when opened via the shared apply link
 
   // Check for existing session on mount
   useEffectA(() => {
+    if (memberApplyIpo) { setBooting(false); return; }   // anonymous member portal — no admin session
     window.sb.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
         setAuthed(true);   // session is valid; a load failure is not a sign-out
@@ -326,6 +344,11 @@ function App() {
       <TweakRadio label="Device" value={t.preview} options={['Web', 'Mobile']} onChange={(v) => setTweak('preview', v)} />
     </TweaksPanel>
   );
+
+  // Shared member apply link (#/apply/<ipoId>): render the anonymous member
+  // portal instead of the admin app. It talks only to MemberAPI RPCs, so no
+  // Supabase session / loadDB is needed — short-circuit before the admin gate.
+  if (memberApplyIpo) return <MemberPortal ipoId={memberApplyIpo} />;
 
   if (booting)           return <LoadingScreen />;
   if (authed && dbError) return <ErrorScreen message={dbError} retrying={retrying} onRetry={retryLoad} onLogout={() => { setDbError(null); navigate('logout'); }} />;
