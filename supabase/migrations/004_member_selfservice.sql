@@ -201,8 +201,8 @@ BEGIN
   END IF;
   SELECT name INTO v_name FROM members WHERE id = v_member_id;
 
-  -- Scope: the family head (Self PAN) sees all family PANs + family profit; a
-  -- sub-member sees only their own PAN's applications and NO profit.
+  -- Scope: the family head (Self PAN) sees all family PANs + the family profit; a
+  -- sub-member sees only their own PAN's applications and their OWN per-PAN share.
   WITH my_pans AS (
     SELECT id FROM pan_accounts
     WHERE (v_is_head AND member_id = v_member_id) OR (NOT v_is_head AND id = v_login_pan)
@@ -213,18 +213,40 @@ BEGIN
     JOIN my_pans mp ON mp.id = a.pan_id
     LEFT JOIN allotments al ON al.application_id = a.id
   ),
-  my_settle AS (
-    -- profit only for the head; empty for a sub-member
-    SELECT pp.ipo_id,
-           sum(s.amount)                                   AS profit,
-           sum(s.amount) FILTER (WHERE s.status = 'Paid')    AS paid,
-           sum(s.amount) FILTER (WHERE s.status = 'Pending') AS pending,
-           bool_or(s.status = 'Paid')    AS any_paid,
-           bool_or(s.status = 'Pending') AS any_pending
-    FROM settlements s
-    JOIN profit_pools pp ON pp.id = s.pool_id
-    WHERE s.member_id = v_member_id AND v_is_head
-    GROUP BY pp.ipo_id
+  -- Profit per IPO. Head: the family's full settlement amounts. Sub-member: for
+  -- each IPO+category THIS PAN applied to, the member's settlement for that
+  -- category divided by the applied-PAN count (= this PAN's equal share). A PAN
+  -- that did not apply to a pool contributes nothing.
+  pf AS (
+    SELECT ipo_id,
+           sum(share)         AS profit,
+           sum(paid_share)    AS paid,
+           sum(pending_share) AS pending,
+           bool_or(is_paid)    AS any_paid,
+           bool_or(is_pending) AS any_pending
+    FROM (
+      SELECT pp.ipo_id,
+             s.amount AS share,
+             CASE WHEN s.status = 'Paid'    THEN s.amount ELSE 0 END AS paid_share,
+             CASE WHEN s.status = 'Pending' THEN s.amount ELSE 0 END AS pending_share,
+             (s.status = 'Paid')    AS is_paid,
+             (s.status = 'Pending') AS is_pending
+      FROM settlements s
+      JOIN profit_pools pp ON pp.id = s.pool_id
+      WHERE v_is_head AND s.member_id = v_member_id
+      UNION ALL
+      SELECT pp.ipo_id,
+             round(s.amount::numeric / nullif(s.pans, 0)) AS share,
+             CASE WHEN s.status = 'Paid'    THEN round(s.amount::numeric / nullif(s.pans, 0)) ELSE 0 END AS paid_share,
+             CASE WHEN s.status = 'Pending' THEN round(s.amount::numeric / nullif(s.pans, 0)) ELSE 0 END AS pending_share,
+             (s.status = 'Paid')    AS is_paid,
+             (s.status = 'Pending') AS is_pending
+      FROM applications a
+      JOIN profit_pools pp ON pp.ipo_id = a.ipo_id
+      JOIN settlements s   ON s.pool_id = pp.id AND s.member_id = v_member_id AND s.category = a.category
+      WHERE NOT v_is_head AND a.pan_id = v_login_pan
+    ) q
+    GROUP BY ipo_id
   ),
   per_ipo AS (
     SELECT ma.ipo_id,
@@ -245,9 +267,9 @@ BEGIN
     'pans_applied',   (SELECT count(*) FROM my_apps),
     'allotments',     (SELECT count(*) FROM my_apps WHERE allot_status = 'allotted'),
     'ipos_applied',   (SELECT count(*) FROM per_ipo),
-    'paid_profit',    coalesce((SELECT sum(paid)    FROM my_settle), 0),
-    'pending_profit', coalesce((SELECT sum(pending) FROM my_settle), 0),
-    'total_profit',   coalesce((SELECT sum(profit)  FROM my_settle), 0),
+    'paid_profit',    coalesce((SELECT sum(paid)    FROM pf), 0),
+    'pending_profit', coalesce((SELECT sum(pending) FROM pf), 0),
+    'total_profit',   coalesce((SELECT sum(profit)  FROM pf), 0),
     'ipos', coalesce((
       SELECT jsonb_agg(jsonb_build_object(
         'ipo_id',     i.id,
@@ -258,8 +280,8 @@ BEGIN
         'applied',    pi.applied,
         'allotted',   pi.allotted,
         'allot_state', pi.allot_state,
-        'profit',     CASE WHEN v_is_head THEN coalesce(ms.profit, 0) ELSE NULL END,
-        'settle_status', CASE WHEN NOT v_is_head THEN NULL
+        'profit',     coalesce(ms.profit, 0),
+        'settle_status', CASE
             WHEN ms.any_paid AND NOT coalesce(ms.any_pending, false) THEN 'paid'
             WHEN ms.any_paid AND ms.any_pending                      THEN 'partly'
             WHEN ms.any_pending                                      THEN 'pending'
@@ -268,7 +290,7 @@ BEGIN
       ) ORDER BY i.list_date DESC NULLS LAST, i.open_date DESC NULLS LAST)
       FROM per_ipo pi
       JOIN ipos i ON i.id = pi.ipo_id
-      LEFT JOIN my_settle ms ON ms.ipo_id = pi.ipo_id
+      LEFT JOIN pf ms ON ms.ipo_id = pi.ipo_id
     ), '[]'::jsonb)
   ) INTO v_result;
 
