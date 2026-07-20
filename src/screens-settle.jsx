@@ -137,6 +137,15 @@ function SettlementLedger({ navigate, id }) {
   const isSettled      = pool?.status === 'Settled' || (rows.length > 0 && pendingRows.length === 0);
   const lastPaidDate   = paidRows.map(r => r.date).filter(Boolean).sort().slice(-1)[0] || null;
 
+  // Self-heal: if every row is Paid but the pool still says Distributing (e.g.
+  // it was re-finalized after settling, or the settle write once failed), flip
+  // it to Settled. Admin-only — RLS would reject the write for anyone else.
+  useEffect(() => {
+    if (!pool || pool.status === 'Settled' || !D.me?.isAdmin) return;
+    if (rows.length === 0 || rows.some(r => r.status !== 'Paid')) return;
+    D.mutations.markPoolSettled(pool.ipo).catch(e => console.warn('[IPOPool] auto-settle failed', e));
+  }, [pool?.ipo, pool?.status, rows]);
+
   const markPaid = async (settlementId) => {
     setMarking(settlementId);
     try {

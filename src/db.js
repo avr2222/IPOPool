@@ -648,8 +648,11 @@ async function loadDB() {
       // Already-Paid settlements are preserved: re-finalizing never resets a
       // payment back to Pending or changes its recorded amount/date.
       async createSettlements(ipoId, rows, rates) {
+        // Upsert WITHOUT status: a fresh pool gets the column default
+        // ('Distributing'), and re-finalizing never downgrades a Settled pool —
+        // the real status is reconciled from the ledger rows at the end.
         var { data: poolData, error: poolErr } = await window.sb.from('profit_pools')
-          .upsert({ ipo_id: ipoId, status: 'Distributing' }, { onConflict: 'ipo_id' })
+          .upsert({ ipo_id: ipoId }, { onConflict: 'ipo_id' })
           .select().single();
         if (poolErr) throw poolErr;
         var pool = txPools([poolData])[0];
@@ -698,6 +701,16 @@ async function loadDB() {
           if (newKeys[ex.member_id + '|' + ex.category]) continue;
           var { error: delErr } = await window.sb.from('settlements').delete().eq('id', ex.id);
           if (delErr) throw delErr;
+        }
+
+        // Reconcile the pool status from what the ledger actually holds now:
+        // rows exist and every one is Paid → Settled, otherwise Distributing.
+        var { data: after, error: afterErr } = await window.sb.from('settlements')
+          .select('status').eq('pool_id', pool.id);
+        if (!afterErr) {
+          var allPaid = (after || []).length > 0 && after.every(function(s){ return s.status === 'Paid'; });
+          await window.sb.from('profit_pools')
+            .update({ status: allPaid ? 'Settled' : 'Distributing' }).eq('id', pool.id);
         }
         await loadDB();
       },
