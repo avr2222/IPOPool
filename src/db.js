@@ -88,6 +88,7 @@ function txIpos(rows) {
       sub:       r.subscription,
       hue:       r.hue        || 220,
       logo:      r.logo       || '',
+      createdAt: r.created_at || null,
     };
   });
 }
