@@ -236,13 +236,47 @@ BEGIN
 END;
 $$;
 
+-- my_ipo_applications(login_pan, ipo): the member's OWN existing applications for
+-- one IPO, so the apply form can pre-fill them (edit instead of a blank re-submit).
+CREATE OR REPLACE FUNCTION my_ipo_applications(p_login_pan text, p_ipo uuid)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_member_id uuid;
+  v_result    jsonb;
+BEGIN
+  SELECT pa.member_id INTO v_member_id FROM pan_accounts pa
+    WHERE upper(pa.pan) = upper(btrim(coalesce(p_login_pan, ''))) AND pa.status = 'Active'
+    LIMIT 1;
+  IF v_member_id IS NULL THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'pan_id',       a.pan_id,
+           'category',     a.category,
+           'lots',         a.lots,
+           'allot_status', al.status
+         )), '[]'::jsonb)
+    INTO v_result
+    FROM applications a
+    JOIN pan_accounts pa ON pa.id = a.pan_id AND pa.member_id = v_member_id
+    LEFT JOIN allotments al ON al.application_id = a.id
+    WHERE a.ipo_id = p_ipo;
+
+  RETURN v_result;
+END;
+$$;
+
 -- ── Grants: anon (and authenticated) may EXECUTE these; base tables stay locked ──
 REVOKE ALL ON FUNCTION member_login(text)                      FROM public;
 REVOKE ALL ON FUNCTION get_apply_ipo(uuid)                     FROM public;
 REVOKE ALL ON FUNCTION submit_applications(text, uuid, jsonb)  FROM public;
 REVOKE ALL ON FUNCTION member_summary(text)                    FROM public;
+REVOKE ALL ON FUNCTION my_ipo_applications(text, uuid)         FROM public;
 
 GRANT EXECUTE ON FUNCTION member_login(text)                     TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION get_apply_ipo(uuid)                    TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION submit_applications(text, uuid, jsonb) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION member_summary(text)                   TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION my_ipo_applications(text, uuid)        TO anon, authenticated;

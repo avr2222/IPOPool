@@ -244,12 +244,39 @@ function MemberApply({ ipo, session }) {
     pans.forEach(p => { init[p.id] = { on: false, category: isSME ? 'SME' : 'Retail', lots: 1 }; });
     return init;
   });
-  const [saving, setSaving] = useState(false);
-  const [err,    setErr]    = useState('');
-  const [done,   setDone]   = useState(null);   // { count } after success
+  const [appliedIds, setAppliedIds] = useState({});   // { [panId]: allot_status } — already-applied PANs
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [err,     setErr]     = useState('');
+  const [done,    setDone]    = useState(null);   // { count, updated } after success
+
+  // Load the member's existing applications for this IPO, so re-opening the link
+  // edits the current application instead of starting blank.
+  useEffect(() => {
+    if (!ipo || !ipo.id) { setLoading(false); return; }
+    let alive = true;
+    window.MemberAPI.myIpoApplications(session.loginPan, ipo.id)
+      .then(existing => {
+        if (!alive) return;
+        const applied = {};
+        setRows(prev => {
+          const next = { ...prev };
+          (existing || []).forEach(a => {
+            applied[a.pan_id] = a.allot_status || 'pending';
+            if (next[a.pan_id]) next[a.pan_id] = { on: true, category: isSME ? 'SME' : (a.category || 'Retail'), lots: a.lots || 1 };
+          });
+          return next;
+        });
+        setAppliedIds(applied);
+        setLoading(false);
+      })
+      .catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [ipo && ipo.id, session.loginPan]);
 
   const setRow = (id, patch) => setRows(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
-  const selected = pans.filter(p => rows[p.id] && rows[p.id].on);
+  const selected    = pans.filter(p => rows[p.id] && rows[p.id].on);
+  const hasExisting = Object.keys(appliedIds).length > 0;
 
   const submit = async () => {
     if (!selected.length) { setErr('Select at least one PAN that applied.'); return; }
@@ -261,12 +288,14 @@ function MemberApply({ ipo, session }) {
         lots: Math.max(1, parseInt(rows[p.id].lots, 10) || 1),
       }));
       const res = await window.MemberAPI.submitApplications(session.loginPan, ipo.id, payload);
-      setDone({ count: (res && res.count) || payload.length });
+      setDone({ count: (res && res.count) || payload.length, updated: hasExisting });
     } catch (e) {
       setErr(e.message || 'Could not save your application. Please try again.');
     }
     setSaving(false);
   };
+
+  if (loading) return <Card pad={28} style={{ textAlign: 'center', color: 'var(--ink-3)', fontSize: 13.5 }}>Loading…</Card>;
 
   if (done) {
     return (
@@ -274,9 +303,9 @@ function MemberApply({ ipo, session }) {
         <div style={{ width: 52, height: 52, borderRadius: 14, background: 'var(--profit-soft)', color: 'var(--profit)', display: 'grid', placeItems: 'center' }}>
           <Icon name="check" size={26} />
         </div>
-        <div style={{ fontSize: 17, fontWeight: 800 }}>Application recorded</div>
+        <div style={{ fontSize: 17, fontWeight: 800 }}>{done.updated ? 'Application updated' : 'Application recorded'}</div>
         <div style={{ fontSize: 13.5, color: 'var(--ink-3)', maxWidth: 340, lineHeight: 1.6 }}>
-          Saved <strong>{done.count} PAN{done.count === 1 ? '' : 's'}</strong> for <strong>{ipo.name}</strong>.
+          {done.updated ? 'Updated' : 'Saved'} <strong>{done.count} PAN{done.count === 1 ? '' : 's'}</strong> for <strong>{ipo.name}</strong>.
           The admin will update allotment results after listing.
         </div>
         <Button variant="ghost" onClick={() => setDone(null)}>Edit my application</Button>
@@ -290,7 +319,9 @@ function MemberApply({ ipo, session }) {
         <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 700 }}>Signed in as {session.name}</div>
         <div style={{ fontSize: 16, fontWeight: 800, marginTop: 2 }}>{ipo ? ipo.name : 'Apply'}</div>
         <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 3 }}>
-          Tick the PANs that applied{isSME ? '' : ', pick a category'} and the number of lots.
+          {hasExisting
+            ? 'Your saved application is loaded below — adjust and update.'
+            : <>Tick the PANs that applied{isSME ? '' : ', pick a category'} and the number of lots.</>}
         </div>
       </div>
 
@@ -312,6 +343,11 @@ function MemberApply({ ipo, session }) {
                   <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
                     <Badge tone="neutral" style={{ fontSize: 10 }}>{p.relation}</Badge>
                     <span className="num" style={{ marginLeft: 8, letterSpacing: '.06em' }}>{p.pan_masked}</span>
+                    {appliedIds[p.id] && (
+                      <Badge tone={appliedIds[p.id] === 'allotted' ? 'profit' : 'info'} style={{ fontSize: 10, marginLeft: 8 }}>
+                        {appliedIds[p.id] === 'allotted' ? 'Allotted' : 'Applied'}
+                      </Badge>
+                    )}
                   </div>
                 </div>
               </label>
@@ -344,7 +380,7 @@ function MemberApply({ ipo, session }) {
           </div>
           <Button variant="primary" icon="check" onClick={submit}
             style={{ opacity: saving || !selected.length ? .6 : 1, pointerEvents: saving || !selected.length ? 'none' : 'auto' }}>
-            {saving ? 'Saving…' : 'Submit application'}
+            {saving ? 'Saving…' : (hasExisting ? 'Update application' : 'Submit application')}
           </Button>
         </div>
       </div>

@@ -760,6 +760,11 @@ window.MemberAPI = {
     if (res.error) throw res.error;
     return res.data;   // { name, total_profit, paid_profit, pending_profit, ipos_applied, pans_applied, allotments, ipos:[...] }
   },
+  myIpoApplications: async function (loginPan, ipoId) {
+    var res = await window.sb.rpc('my_ipo_applications', { p_login_pan: loginPan, p_ipo: ipoId });
+    if (res.error) throw res.error;
+    return res.data || [];   // [{ pan_id, category, lots, allot_status }]
+  },
 };
 
 })();
