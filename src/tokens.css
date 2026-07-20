@@ -42,17 +42,22 @@
 
   /* Radii */
   --r-xs: 6px;
-  --r-sm: 8px;
+  --r-sm: 9px;
   --r-md: 12px;
-  --r-lg: 16px;
-  --r-xl: 22px;
+  --r-lg: 18px;
+  --r-xl: 26px;
   --r-pill: 999px;
 
-  /* Shadows */
-  --sh-sm: 0 1px 2px rgba(16,24,40,.05);
-  --sh-md: 0 2px 8px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
-  --sh-lg: 0 12px 32px rgba(16,24,40,.10), 0 2px 8px rgba(16,24,40,.05);
-  --sh-pop: 0 16px 48px rgba(16,24,40,.16);
+  /* Shadows — soft, layered, modern */
+  --sh-sm: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.04);
+  --sh-md: 0 4px 12px rgba(16,24,40,.07), 0 1px 3px rgba(16,24,40,.05);
+  --sh-lg: 0 16px 40px rgba(16,24,40,.11), 0 4px 12px rgba(16,24,40,.06);
+  --sh-pop: 0 24px 64px rgba(16,24,40,.18), 0 8px 20px rgba(16,24,40,.08);
+
+  /* Glass (frosted bars) */
+  --glass: rgba(255,255,255,.78);
+
+  color-scheme: light;
 
   /* Type */
   --font: 'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -93,10 +98,14 @@
   --ink-3: #69748A;
   --ink-inv: #0B0E12;
 
-  --sh-sm: 0 1px 2px rgba(0,0,0,.4);
-  --sh-md: 0 2px 8px rgba(0,0,0,.45);
-  --sh-lg: 0 12px 32px rgba(0,0,0,.55);
-  --sh-pop: 0 16px 48px rgba(0,0,0,.6);
+  --sh-sm: 0 1px 2px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.3);
+  --sh-md: 0 4px 12px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.35);
+  --sh-lg: 0 16px 40px rgba(0,0,0,.5), 0 4px 12px rgba(0,0,0,.4);
+  --sh-pop: 0 24px 64px rgba(0,0,0,.6), 0 8px 20px rgba(0,0,0,.45);
+
+  --glass: rgba(20,24,33,.78);
+
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -120,9 +129,17 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-button { font-family: inherit; cursor: pointer; }
-input, select { font-family: inherit; }
-a { color: inherit; text-decoration: none; }
+button { font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+input, select, textarea { font-family: inherit; }
+a { color: inherit; text-decoration: none; -webkit-tap-highlight-color: transparent; }
+
+/* Modern interaction feel */
+button:active { transform: scale(.975); }
+button, input, select { transition: transform .12s ease, box-shadow .15s ease; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+::selection { background: var(--brand-tint-2); color: var(--ink); }
+:root[data-theme="dark"] ::selection { background: var(--brand-700); color: #fff; }
+img, svg { user-select: none; }
 
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -132,4 +149,8 @@ a { color: inherit; text-decoration: none; }
 @keyframes sweep { from { stroke-dashoffset: var(--circ); } }
 .animate { animation: fadeUp .4s cubic-bezier(.2,.7,.3,1) both; }
 .screen-enter { animation: fadeUp .34s cubic-bezier(.2,.7,.3,1); }
-@media (prefers-reduced-motion: reduce) { .animate, .screen-enter { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .animate, .screen-enter { animation: none; }
+  button:active { transform: none; }
+  * { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}

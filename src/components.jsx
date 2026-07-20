@@ -108,10 +108,11 @@ function Button({ children, variant = 'primary', size = 'md', icon, iconRight, o
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontWeight: 700,
     borderRadius: 'var(--r-md)', border: '1px solid transparent', transition: 'all .15s', whiteSpace: 'nowrap',
     fontSize: size === 'sm' ? 13 : size === 'lg' ? 16 : 14, padding: size === 'sm' ? '7px 13px' : size === 'lg' ? '13px 22px' : '10px 17px',
+    minHeight: size === 'sm' ? 34 : size === 'lg' ? 50 : 42,
     width: full ? '100%' : 'auto', opacity: disabled ? 0.5 : 1, pointerEvents: disabled ? 'none' : 'auto',
   };
   const variants = {
-    primary: { background: h ? 'var(--brand-600)' : 'var(--brand)', color: '#fff', boxShadow: 'var(--sh-sm)' },
+    primary: { background: h ? 'var(--brand-600)' : 'var(--brand)', color: '#fff', boxShadow: h ? 'var(--sh-md)' : 'var(--sh-sm)' },
     dark: { background: h ? '#000' : 'var(--ink)', color: 'var(--surface)' },
     ghost: { background: h ? 'var(--bg)' : 'transparent', color: 'var(--ink)', borderColor: 'var(--border-strong)' },
     soft: { background: h ? 'var(--brand-tint-2)' : 'var(--brand-tint)', color: 'var(--brand)' },
@@ -131,7 +132,7 @@ function Button({ children, variant = 'primary', size = 'md', icon, iconRight, o
 function IconButton({ name, onClick, active, size = 38, tip }) {
   const [h, setH] = useState(false);
   return (
-    <button onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} onClick={onClick} title={tip}
+    <button className="iconbtn" onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} onClick={onClick} title={tip}
       style={{
         width: size, height: size, display: 'grid', placeItems: 'center', borderRadius: 'var(--r-md)',
         border: '1px solid', borderColor: active ? 'var(--brand)' : h ? 'var(--border-strong)' : 'var(--border)',
