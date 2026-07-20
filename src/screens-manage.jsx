@@ -447,6 +447,14 @@ function AdminPanel() {
 
   const pendingAllots = D.allotments.filter(a => a.status === 'pending').length;
 
+  // Recent first: newest-added IPO on top (created_at), falling back to the most
+  // relevant date, then name — so the master list always leads with new IPOs.
+  const ipoSortKey = ip => ip.createdAt || ip.listDate || ip.allotDate || ip.close || ip.open || '';
+  const sortedIpos = [...ipos].sort((a, b) => {
+    const d = String(ipoSortKey(b)).localeCompare(String(ipoSortKey(a)));
+    return d !== 0 ? d : String(a.name).localeCompare(String(b.name));
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
 
@@ -488,31 +496,36 @@ function AdminPanel() {
                     ))}
                   </tr></thead>
                   <tbody>
-                    {ipos.map(ip => (
+                    {sortedIpos.map(ip => (
                       <tr key={ip.id} style={{ borderTop: '1px solid var(--border)' }}>
-                        <td style={{ padding: '11px 18px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <IpoLogo ipo={ip} size={30} />
-                            <div>
-                              <div style={{ fontSize: 13.5, fontWeight: 700 }}>{ip.name}</div>
-                              {ip.short !== ip.name && <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{ip.short}</div>}
+                        <td style={{ padding: '13px 18px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                            <IpoLogo ipo={ip} size={34} />
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{ip.name}</div>
+                              <div style={{ fontSize: 11.5, color: 'var(--ink-3)', display: 'flex', gap: 6, alignItems: 'center', marginTop: 1 }}>
+                                {ip.short !== ip.name && <span>{ip.short}</span>}
+                                {ip.status && <StatusDot tone={ip.status === 'Listed' ? 'profit' : ip.status === 'Open' ? 'info' : 'neutral'} />}
+                                {ip.status && <span>{ip.status}</span>}
+                              </div>
                             </div>
                           </div>
                         </td>
-                        <td style={{ padding: '11px 18px' }}><Badge tone={ip.type === 'SME' ? 'sme' : 'mainboard'}>{ip.type}</Badge></td>
-                        <td className="num" style={{ padding: '11px 18px', fontSize: 13 }}>{ip.bandHigh ? '₹' + Number(ip.bandHigh).toLocaleString('en-IN') : '—'}</td>
-                        <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontSize: 13 }}>{ip.lotSize || '—'}</td>
-                        <td style={{ padding: '11px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          <Button variant="primary" size="sm" icon="allot"
-                            onClick={() => { setViewIpoId(ip.id); setChanges({}); setSaved(false); }}
-                            style={{ marginRight: 6 }}>
-                            Allotments
-                          </Button>
-                          <IconButton name={copiedIpo === ip.id ? 'check' : 'external'} size={30}
-                            tip={copiedIpo === ip.id ? 'Link copied!' : 'Copy apply link'}
-                            onClick={() => copyApplyLink(ip)} />
-                          <IconButton name="edit" size={30} tip="Edit IPO" onClick={() => openEditIpo(ip)} />
-                          <IconButton name="trash" size={30} tip="Delete" onClick={() => deleteIpo(ip.id, ip.short)} />
+                        <td style={{ padding: '13px 18px' }}><Badge tone={ip.type === 'SME' ? 'sme' : 'mainboard'}>{ip.type}</Badge></td>
+                        <td className="num" style={{ padding: '13px 18px', fontSize: 13 }}>{ip.bandHigh ? '₹' + Number(ip.bandHigh).toLocaleString('en-IN') : '—'}</td>
+                        <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontSize: 13 }}>{ip.lotSize || '—'}</td>
+                        <td style={{ padding: '13px 18px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'nowrap' }}>
+                            <Button variant="soft" size="sm" icon="allot"
+                              onClick={() => { setViewIpoId(ip.id); setChanges({}); setSaved(false); }}>
+                              Allotments
+                            </Button>
+                            <IconButton name={copiedIpo === ip.id ? 'check' : 'external'} size={34}
+                              tip={copiedIpo === ip.id ? 'Link copied!' : 'Copy apply link'}
+                              onClick={() => copyApplyLink(ip)} />
+                            <IconButton name="edit" size={34} tip="Edit IPO" onClick={() => openEditIpo(ip)} />
+                            <IconButton name="trash" size={34} tip="Delete" onClick={() => deleteIpo(ip.id, ip.short)} />
+                          </div>
                         </td>
                       </tr>
                     ))}

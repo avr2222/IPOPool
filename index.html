@@ -125,6 +125,17 @@
     }
     .content { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; scroll-behavior: smooth; }
 
+    /* Desktop: fixed app shell so ONLY the content area scrolls (sidebar + top
+       bar stay put) — reliable, app-like scrolling instead of whole-window. */
+    @media (min-width: 901px) {
+      .shell   { height: 100vh; grid-template-rows: 100%; overflow: hidden; }
+      .main    { min-height: 0; }
+      .content { min-height: 0; }
+    }
+    @supports (height: 100dvh) {
+      @media (min-width: 901px) { .shell { height: 100dvh; } }
+    }
+
     /* Frosted glass bars (overrides the solid inline backgrounds) */
     @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
       .topbar, .mobile-topbar {
