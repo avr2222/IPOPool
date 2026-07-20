@@ -154,11 +154,95 @@ BEGIN
 END;
 $$;
 
+-- member_summary(login_pan): the member's own stats — profit to date (= sum of
+-- their settlement amounts, matching the admin ledger exactly), plus applied /
+-- allotment counts and a per-IPO breakdown. Only the caller's own data.
+CREATE OR REPLACE FUNCTION member_summary(p_login_pan text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_member_id uuid;
+  v_name      text;
+  v_result    jsonb;
+BEGIN
+  SELECT pa.member_id INTO v_member_id FROM pan_accounts pa
+    WHERE upper(pa.pan) = upper(btrim(coalesce(p_login_pan, ''))) AND pa.status = 'Active'
+    LIMIT 1;
+  IF v_member_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+  SELECT name INTO v_name FROM members WHERE id = v_member_id;
+
+  WITH my_pans AS (
+    SELECT id FROM pan_accounts WHERE member_id = v_member_id
+  ),
+  my_apps AS (
+    SELECT a.id AS app_id, a.ipo_id, al.status AS allot_status
+    FROM applications a
+    JOIN my_pans mp ON mp.id = a.pan_id
+    LEFT JOIN allotments al ON al.application_id = a.id
+  ),
+  my_settle AS (
+    SELECT pp.ipo_id,
+           sum(s.amount)                                   AS profit,
+           sum(s.amount) FILTER (WHERE s.status = 'Paid')    AS paid,
+           sum(s.amount) FILTER (WHERE s.status = 'Pending') AS pending,
+           bool_or(s.status = 'Paid')    AS any_paid,
+           bool_or(s.status = 'Pending') AS any_pending
+    FROM settlements s
+    JOIN profit_pools pp ON pp.id = s.pool_id
+    WHERE s.member_id = v_member_id
+    GROUP BY pp.ipo_id
+  ),
+  per_ipo AS (
+    SELECT ma.ipo_id,
+           count(*)                                          AS applied,
+           count(*) FILTER (WHERE ma.allot_status = 'allotted') AS allotted
+    FROM my_apps ma
+    GROUP BY ma.ipo_id
+  )
+  SELECT jsonb_build_object(
+    'name',           v_name,
+    'pans_applied',   (SELECT count(*) FROM my_apps),
+    'allotments',     (SELECT count(*) FROM my_apps WHERE allot_status = 'allotted'),
+    'ipos_applied',   (SELECT count(*) FROM per_ipo),
+    'paid_profit',    coalesce((SELECT sum(paid)    FROM my_settle), 0),
+    'pending_profit', coalesce((SELECT sum(pending) FROM my_settle), 0),
+    'total_profit',   coalesce((SELECT sum(profit)  FROM my_settle), 0),
+    'ipos', coalesce((
+      SELECT jsonb_agg(jsonb_build_object(
+        'ipo_id',   i.id,
+        'name',     i.name,
+        'short',    coalesce(i.short_name, split_part(i.name, ' ', 1)),
+        'type',     i.type,
+        'status',   i.status,
+        'applied',  pi.applied,
+        'allotted', pi.allotted,
+        'profit',   coalesce(ms.profit, 0),
+        'settle_status', CASE
+            WHEN ms.any_paid AND NOT coalesce(ms.any_pending, false) THEN 'paid'
+            WHEN ms.any_paid AND ms.any_pending                      THEN 'partly'
+            WHEN ms.any_pending                                      THEN 'pending'
+            WHEN pi.allotted > 0                                     THEN 'awaiting'
+            ELSE '-' END
+      ) ORDER BY i.list_date DESC NULLS LAST, i.open_date DESC NULLS LAST)
+      FROM per_ipo pi
+      JOIN ipos i ON i.id = pi.ipo_id
+      LEFT JOIN my_settle ms ON ms.ipo_id = pi.ipo_id
+    ), '[]'::jsonb)
+  ) INTO v_result;
+
+  RETURN v_result;
+END;
+$$;
+
 -- ── Grants: anon (and authenticated) may EXECUTE these; base tables stay locked ──
 REVOKE ALL ON FUNCTION member_login(text)                      FROM public;
 REVOKE ALL ON FUNCTION get_apply_ipo(uuid)                     FROM public;
 REVOKE ALL ON FUNCTION submit_applications(text, uuid, jsonb)  FROM public;
+REVOKE ALL ON FUNCTION member_summary(text)                    FROM public;
 
 GRANT EXECUTE ON FUNCTION member_login(text)                     TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION get_apply_ipo(uuid)                    TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION submit_applications(text, uuid, jsonb) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION member_summary(text)                   TO anon, authenticated;

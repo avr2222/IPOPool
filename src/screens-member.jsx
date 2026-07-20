@@ -11,6 +11,7 @@ const MEMBER_SESSION_KEY = 'ipopool_member';
 function MemberPortal({ ipoId }) {
   const [ipo,     setIpo]     = useState(null);
   const [ipoErr,  setIpoErr]  = useState('');
+  const [tab,     setTab]     = useState('apply');
   const [session, setSession] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem(MEMBER_SESSION_KEY) || 'null'); }
     catch (e) { return null; }
@@ -54,8 +55,115 @@ function MemberPortal({ ipoId }) {
             </Card>
           : !session
             ? <MemberLogin ipo={ipo} onLogin={onLogin} />
-            : <MemberApply ipo={ipo} session={session} />}
+            : (
+              <>
+                <div style={{ display: 'flex', gap: 6, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 4, marginBottom: 16 }}>
+                  {[['apply', 'Apply'], ['summary', 'My profits']].map(([key, label]) => (
+                    <button key={key} onClick={() => setTab(key)} style={{
+                      flex: 1, border: 'none', borderRadius: 'var(--r-sm)', padding: '9px 12px', cursor: 'pointer',
+                      fontSize: 13.5, fontWeight: 700,
+                      background: tab === key ? 'var(--surface)' : 'transparent',
+                      color: tab === key ? 'var(--brand)' : 'var(--ink-3)',
+                      boxShadow: tab === key ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,.06))' : 'none',
+                    }}>{label}</button>
+                  ))}
+                </div>
+                {tab === 'apply'
+                  ? <MemberApply ipo={ipo} session={session} />
+                  : <MemberSummary session={session} />}
+              </>
+            )}
       </div>
+    </div>
+  );
+}
+
+function MemberSummary({ session }) {
+  const [data,    setData]    = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err,     setErr]     = useState('');
+  const f = (n, o) => (window.fmtINR ? window.fmtINR(n, o) : '₹' + (n || 0));
+
+  useEffect(() => {
+    let alive = true;
+    window.MemberAPI.summary(session.loginPan)
+      .then(d => { if (alive) { setData(d || {}); setLoading(false); } })
+      .catch(() => { if (alive) { setErr('Could not load your profits. Please try again.'); setLoading(false); } });
+    return () => { alive = false; };
+  }, [session.loginPan]);
+
+  if (loading) return <Card pad={28} style={{ textAlign: 'center', color: 'var(--ink-3)', fontSize: 13.5 }}>Loading your profits…</Card>;
+  if (err)     return <Card pad={28} style={{ textAlign: 'center', color: 'var(--loss)', fontSize: 13.5, fontWeight: 600 }}>{err}</Card>;
+
+  const d       = data || {};
+  const ipos    = d.ipos || [];
+  const applied = d.pans_applied || 0;
+  const allot   = d.allotments || 0;
+  const rate    = applied > 0 ? Math.round(allot / applied * 100) : 0;
+  const STATUS  = {
+    paid:     { label: 'Paid',      tone: 'profit' },
+    partly:   { label: 'Part paid', tone: 'info' },
+    pending:  { label: 'Pending',   tone: 'warn' },
+    awaiting: { label: 'Awaiting',  tone: 'neutral' },
+    '-':      { label: '—',         tone: 'neutral' },
+  };
+
+  const Stat = ({ label, value, sub, tone }) => (
+    <Card pad={16} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600 }}>{label}</span>
+      <span className="num" style={{ fontSize: 20, fontWeight: 800, color: tone || 'var(--ink)' }}>{value}</span>
+      {sub && <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{sub}</span>}
+    </Card>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 700 }}>Signed in as {d.name || session.name}</div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Stat label="Profit till date" value={f(d.total_profit, { compact: true })} tone="var(--profit)"
+          sub={(d.pending_profit > 0 ? f(d.pending_profit, { compact: true }) + ' pending' : 'all settled')} />
+        <Stat label="IPOs applied" value={d.ipos_applied || 0} />
+        <Stat label="Allotments" value={allot} sub={applied + ' PAN applications'} />
+        <Stat label="Allotment rate" value={rate + '%'} />
+      </div>
+
+      <Card pad={0}>
+        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', fontSize: 14, fontWeight: 800 }}>Your IPOs</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 420 }}>
+            <thead>
+              <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                {['IPO', 'Applied', 'Allotted', 'Profit', 'Status'].map((h, i) => (
+                  <th key={h} style={{ textAlign: i > 0 ? 'right' : 'left', fontWeight: 700, padding: '10px 16px' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {ipos.map(p => {
+                const st = STATUS[p.settle_status] || STATUS['-'];
+                return (
+                  <tr key={p.ipo_id} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '11px 16px' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{p.short}</div>
+                      <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{p.type}</div>
+                    </td>
+                    <td className="num" style={{ padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.applied}</td>
+                    <td className="num" style={{ padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.allotted || '—'}</td>
+                    <td className="num" style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 700, color: p.profit > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{p.profit > 0 ? f(p.profit, { compact: true }) : '—'}</td>
+                    <td style={{ padding: '11px 16px', textAlign: 'right' }}><Badge tone={st.tone} style={{ fontSize: 10 }}>{st.label}</Badge></td>
+                  </tr>
+                );
+              })}
+              {ipos.length === 0 && (
+                <tr style={{ borderTop: '1px solid var(--border)' }}>
+                  <td colSpan={5} style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No applications yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -244,4 +352,4 @@ function MemberApply({ ipo, session }) {
   );
 }
 
-Object.assign(window, { MemberPortal });
+Object.assign(window, { MemberPortal, MemberSummary });
