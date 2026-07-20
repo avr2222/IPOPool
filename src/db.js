@@ -731,6 +731,10 @@ async function loadDB() {
 
 window.loadDB = loadDB;
 
+// Money formatter exposed globally so the anonymous member portal (which never
+// runs loadDB, so has no window.DB) can format rupees the same way.
+window.fmtINR = fmtINR;
+
 // ── Member self-service API (PAN login, no Supabase session) ──────────────────
 // Thin wrappers over the SECURITY DEFINER RPCs from migration 004. Available
 // WITHOUT loadDB (members are anonymous and never load the full admin dataset).
@@ -750,6 +754,11 @@ window.MemberAPI = {
     var res = await window.sb.rpc('submit_applications', { p_login_pan: loginPan, p_ipo: ipoId, p_rows: rows });
     if (res.error) throw res.error;
     return res.data;   // { ok:true, count:N }
+  },
+  summary: async function (loginPan) {
+    var res = await window.sb.rpc('member_summary', { p_login_pan: loginPan });
+    if (res.error) throw res.error;
+    return res.data;   // { name, total_profit, paid_profit, pending_profit, ipos_applied, pans_applied, allotments, ipos:[...] }
   },
 };
 
