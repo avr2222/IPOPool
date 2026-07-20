@@ -547,7 +547,7 @@ async function loadDB() {
           var row = rows[i];
           var { data: app, error: appErr } = await window.sb.from('applications')
             .upsert(
-              { ipo_id: ipoId, pan_id: row.panId, category: row.category, lots: 1 },
+              { ipo_id: ipoId, pan_id: row.panId, category: row.category, lots: row.lots || 1 },
               { onConflict: 'ipo_id,pan_id' }
             ).select().single();
           if (appErr) throw appErr;
@@ -730,5 +730,27 @@ async function loadDB() {
 }
 
 window.loadDB = loadDB;
+
+// ── Member self-service API (PAN login, no Supabase session) ──────────────────
+// Thin wrappers over the SECURITY DEFINER RPCs from migration 004. Available
+// WITHOUT loadDB (members are anonymous and never load the full admin dataset).
+window.MemberAPI = {
+  login: async function (pan) {
+    var res = await window.sb.rpc('member_login', { p_pan: pan });
+    if (res.error) throw res.error;
+    return res.data;   // { member_id, name, pans:[{id,holder,relation,pan_masked}] } or null
+  },
+  getApplyIpo: async function (ipoId) {
+    var res = await window.sb.rpc('get_apply_ipo', { p_ipo: ipoId });
+    if (res.error) throw res.error;
+    return res.data;   // { id, name, short, type, status, band_*, lot_*, *_date } or null
+  },
+  submitApplications: async function (loginPan, ipoId, rows) {
+    // rows: [{ pan_id, category, lots }]
+    var res = await window.sb.rpc('submit_applications', { p_login_pan: loginPan, p_ipo: ipoId, p_rows: rows });
+    if (res.error) throw res.error;
+    return res.data;   // { ok:true, count:N }
+  },
+};
 
 })();
