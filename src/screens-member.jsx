@@ -58,7 +58,7 @@ function MemberPortal({ ipoId }) {
             : (
               <>
                 <div style={{ display: 'flex', gap: 6, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 4, marginBottom: 16 }}>
-                  {[['apply', 'Apply'], ['summary', 'My profits']].map(([key, label]) => (
+                  {[['apply', 'Apply'], ['summary', session.isHead ? 'My profits' : 'My applications']].map(([key, label]) => (
                     <button key={key} onClick={() => setTab(key)} style={{
                       flex: 1, border: 'none', borderRadius: 'var(--r-sm)', padding: '9px 12px', cursor: 'pointer',
                       fontSize: 13.5, fontWeight: 700,
@@ -95,17 +95,25 @@ function MemberSummary({ session }) {
   if (loading) return <Card pad={28} style={{ textAlign: 'center', color: 'var(--ink-3)', fontSize: 13.5 }}>Loading your profits…</Card>;
   if (err)     return <Card pad={28} style={{ textAlign: 'center', color: 'var(--loss)', fontSize: 13.5, fontWeight: 600 }}>{err}</Card>;
 
-  const d       = data || {};
-  const ipos    = d.ipos || [];
-  const applied = d.pans_applied || 0;
-  const allot   = d.allotments || 0;
-  const rate    = applied > 0 ? Math.round(allot / applied * 100) : 0;
-  const STATUS  = {
+  const d        = data || {};
+  const ipos     = d.ipos || [];
+  const applied  = d.pans_applied || 0;
+  const allot    = d.allotments || 0;
+  const rate     = applied > 0 ? Math.round(allot / applied * 100) : 0;
+  // Family head sees profit; a sub-member sees only their own applications.
+  const isFamily = d.scope ? d.scope === 'family' : !!session.isHead;
+
+  const SETTLE = {
     paid:     { label: 'Paid',      tone: 'profit' },
     partly:   { label: 'Part paid', tone: 'info' },
     pending:  { label: 'Pending',   tone: 'warn' },
     awaiting: { label: 'Awaiting',  tone: 'neutral' },
     '-':      { label: '—',         tone: 'neutral' },
+  };
+  const ALLOT = {
+    allotted:     { label: 'Allotted',     tone: 'profit' },
+    not_allotted: { label: 'Not allotted', tone: 'neutral' },
+    pending:      { label: 'Pending',      tone: 'warn' },
   };
 
   const Stat = ({ label, value, sub, tone }) => (
@@ -116,32 +124,40 @@ function MemberSummary({ session }) {
     </Card>
   );
 
+  const cols = isFamily
+    ? ['IPO', 'Applied', 'Allotted', 'Profit', 'Status']
+    : ['IPO', 'Applied', 'Allotted', 'Status'];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 700 }}>Signed in as {d.name || session.name}</div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <Stat label="Profit till date" value={f(d.total_profit, { compact: true })} tone="var(--profit)"
-          sub={(d.pending_profit > 0 ? f(d.pending_profit, { compact: true }) + ' pending' : 'all settled')} />
+        {isFamily && (
+          <Stat label="Profit till date" value={f(d.total_profit, { compact: true })} tone="var(--profit)"
+            sub={(d.pending_profit > 0 ? f(d.pending_profit, { compact: true }) + ' pending' : 'all settled')} />
+        )}
         <Stat label="IPOs applied" value={d.ipos_applied || 0} />
-        <Stat label="Allotments" value={allot} sub={applied + ' PAN applications'} />
+        <Stat label="Allotments" value={allot} sub={applied + (isFamily ? ' PAN applications' : ' applications')} />
         <Stat label="Allotment rate" value={rate + '%'} />
       </div>
 
       <Card pad={0}>
-        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', fontSize: 14, fontWeight: 800 }}>Your IPOs</div>
+        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', fontSize: 14, fontWeight: 800 }}>
+          {isFamily ? 'Your IPOs' : 'Your applications'}
+        </div>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 420 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: isFamily ? 420 : 340 }}>
             <thead>
               <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                {['IPO', 'Applied', 'Allotted', 'Profit', 'Status'].map((h, i) => (
+                {cols.map((h, i) => (
                   <th key={h} style={{ textAlign: i > 0 ? 'right' : 'left', fontWeight: 700, padding: '10px 16px' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {ipos.map(p => {
-                const st = STATUS[p.settle_status] || STATUS['-'];
+                const st = isFamily ? (SETTLE[p.settle_status] || SETTLE['-']) : (ALLOT[p.allot_state] || ALLOT.pending);
                 return (
                   <tr key={p.ipo_id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '11px 16px' }}>
@@ -150,14 +166,16 @@ function MemberSummary({ session }) {
                     </td>
                     <td className="num" style={{ padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.applied}</td>
                     <td className="num" style={{ padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.allotted || '—'}</td>
-                    <td className="num" style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 700, color: p.profit > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{p.profit > 0 ? f(p.profit, { compact: true }) : '—'}</td>
+                    {isFamily && (
+                      <td className="num" style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 700, color: p.profit > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{p.profit > 0 ? f(p.profit, { compact: true }) : '—'}</td>
+                    )}
                     <td style={{ padding: '11px 16px', textAlign: 'right' }}><Badge tone={st.tone} style={{ fontSize: 10 }}>{st.label}</Badge></td>
                   </tr>
                 );
               })}
               {ipos.length === 0 && (
                 <tr style={{ borderTop: '1px solid var(--border)' }}>
-                  <td colSpan={5} style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No applications yet.</td>
+                  <td colSpan={cols.length} style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No applications yet.</td>
                 </tr>
               )}
             </tbody>
@@ -186,7 +204,7 @@ function MemberLogin({ ipo, onLogin }) {
         setLoading(false);
         return;
       }
-      onLogin({ loginPan: clean, memberId: res.member_id, name: res.name, pans: res.pans || [] });
+      onLogin({ loginPan: clean, memberId: res.member_id, name: res.name, isHead: !!res.is_head, pans: res.pans || [] });
     } catch (e) {
       setErr('Could not verify your PAN. Check your connection and try again.');
       setLoading(false);

@@ -46,21 +46,34 @@ BEGIN
 
   SELECT * INTO v_member FROM members WHERE id = v_pan.member_id;
 
-  SELECT coalesce(jsonb_agg(
-           jsonb_build_object(
-             'id',         pa.id,
-             'holder',     pa.holder_name,
-             'relation',   pa.relation,
-             'pan_masked', mask_pan(pa.pan)
-           ) ORDER BY pa.holder_name), '[]'::jsonb)
-    INTO v_pans
-    FROM pan_accounts pa
-    WHERE pa.member_id = v_member.id AND pa.status = 'Active';
+  -- Head = the "Self" PAN: sees the whole family. Any other PAN is a sub-member
+  -- and is scoped to itself only.
+  IF v_pan.relation = 'Self' THEN
+    SELECT coalesce(jsonb_agg(
+             jsonb_build_object(
+               'id',         pa.id,
+               'holder',     pa.holder_name,
+               'relation',   pa.relation,
+               'pan_masked', mask_pan(pa.pan)
+             ) ORDER BY pa.holder_name), '[]'::jsonb)
+      INTO v_pans
+      FROM pan_accounts pa
+      WHERE pa.member_id = v_member.id AND pa.status = 'Active';
+  ELSE
+    v_pans := jsonb_build_array(jsonb_build_object(
+      'id',         v_pan.id,
+      'holder',     v_pan.holder_name,
+      'relation',   v_pan.relation,
+      'pan_masked', mask_pan(v_pan.pan)
+    ));
+  END IF;
 
   RETURN jsonb_build_object(
-    'member_id', v_member.id,
-    'name',      v_member.name,
-    'pans',      v_pans
+    'member_id',    v_member.id,
+    'name',         v_member.name,
+    'login_pan_id', v_pan.id,
+    'is_head',      (v_pan.relation = 'Self'),
+    'pans',         v_pans
   );
 END;
 $$;
@@ -94,17 +107,21 @@ CREATE OR REPLACE FUNCTION submit_applications(p_login_pan text, p_ipo uuid, p_r
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
-  v_member_id uuid;
-  v_type      text;
-  r           jsonb;
-  v_pan_id    uuid;
-  v_cat       text;
-  v_lots      int;
-  v_app_id    uuid;
-  v_count     int := 0;
+  v_member_id   uuid;
+  v_login_pan   uuid;
+  v_is_head     boolean;
+  v_type        text;
+  r             jsonb;
+  v_pan_id      uuid;
+  v_cat         text;
+  v_lots        int;
+  v_app_id      uuid;
+  v_count       int := 0;
 BEGIN
-  -- resolve acting member from the login PAN
-  SELECT pa.member_id INTO v_member_id FROM pan_accounts pa
+  -- resolve acting member + head/sub from the login PAN
+  SELECT pa.member_id, pa.id, (pa.relation = 'Self')
+    INTO v_member_id, v_login_pan, v_is_head
+    FROM pan_accounts pa
     WHERE upper(pa.pan) = upper(btrim(coalesce(p_login_pan, ''))) AND pa.status = 'Active'
     LIMIT 1;
   IF v_member_id IS NULL THEN
@@ -121,7 +138,12 @@ BEGIN
     v_pan_id := (r->>'pan_id')::uuid;
     v_lots   := greatest(1, coalesce((r->>'lots')::int, 1));
 
-    -- ownership: the PAN must belong to the acting member
+    -- a sub-member (non-Self PAN) may act on their own PAN only
+    IF NOT v_is_head AND v_pan_id <> v_login_pan THEN
+      RAISE EXCEPTION 'You can only apply for your own PAN';
+    END IF;
+
+    -- ownership: the PAN must belong to the acting member's family
     PERFORM 1 FROM pan_accounts
       WHERE id = v_pan_id AND member_id = v_member_id AND status = 'Active';
     IF NOT FOUND THEN
@@ -162,10 +184,14 @@ RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_member_id uuid;
+  v_login_pan uuid;
+  v_is_head   boolean;
   v_name      text;
   v_result    jsonb;
 BEGIN
-  SELECT pa.member_id INTO v_member_id FROM pan_accounts pa
+  SELECT pa.member_id, pa.id, (pa.relation = 'Self')
+    INTO v_member_id, v_login_pan, v_is_head
+    FROM pan_accounts pa
     WHERE upper(pa.pan) = upper(btrim(coalesce(p_login_pan, ''))) AND pa.status = 'Active'
     LIMIT 1;
   IF v_member_id IS NULL THEN
@@ -173,8 +199,11 @@ BEGIN
   END IF;
   SELECT name INTO v_name FROM members WHERE id = v_member_id;
 
+  -- Scope: the family head (Self PAN) sees all family PANs + family profit; a
+  -- sub-member sees only their own PAN's applications and NO profit.
   WITH my_pans AS (
-    SELECT id FROM pan_accounts WHERE member_id = v_member_id
+    SELECT id FROM pan_accounts
+    WHERE (v_is_head AND member_id = v_member_id) OR (NOT v_is_head AND id = v_login_pan)
   ),
   my_apps AS (
     SELECT a.id AS app_id, a.ipo_id, al.status AS allot_status
@@ -183,6 +212,7 @@ BEGIN
     LEFT JOIN allotments al ON al.application_id = a.id
   ),
   my_settle AS (
+    -- profit only for the head; empty for a sub-member
     SELECT pp.ipo_id,
            sum(s.amount)                                   AS profit,
            sum(s.amount) FILTER (WHERE s.status = 'Paid')    AS paid,
@@ -191,18 +221,24 @@ BEGIN
            bool_or(s.status = 'Pending') AS any_pending
     FROM settlements s
     JOIN profit_pools pp ON pp.id = s.pool_id
-    WHERE s.member_id = v_member_id
+    WHERE s.member_id = v_member_id AND v_is_head
     GROUP BY pp.ipo_id
   ),
   per_ipo AS (
     SELECT ma.ipo_id,
            count(*)                                          AS applied,
-           count(*) FILTER (WHERE ma.allot_status = 'allotted') AS allotted
+           count(*) FILTER (WHERE ma.allot_status = 'allotted') AS allotted,
+           CASE
+             WHEN bool_or(ma.allot_status = 'allotted')     THEN 'allotted'
+             WHEN bool_or(ma.allot_status = 'not_allotted') THEN 'not_allotted'
+             ELSE 'pending' END                             AS allot_state
     FROM my_apps ma
     GROUP BY ma.ipo_id
   )
   SELECT jsonb_build_object(
     'name',           v_name,
+    'scope',          CASE WHEN v_is_head THEN 'family' ELSE 'pan' END,
+    'is_head',        v_is_head,
     'pans_applied',   (SELECT count(*) FROM my_apps),
     'allotments',     (SELECT count(*) FROM my_apps WHERE allot_status = 'allotted'),
     'ipos_applied',   (SELECT count(*) FROM per_ipo),
@@ -211,15 +247,16 @@ BEGIN
     'total_profit',   coalesce((SELECT sum(profit)  FROM my_settle), 0),
     'ipos', coalesce((
       SELECT jsonb_agg(jsonb_build_object(
-        'ipo_id',   i.id,
-        'name',     i.name,
-        'short',    coalesce(i.short_name, split_part(i.name, ' ', 1)),
-        'type',     i.type,
-        'status',   i.status,
-        'applied',  pi.applied,
-        'allotted', pi.allotted,
-        'profit',   coalesce(ms.profit, 0),
-        'settle_status', CASE
+        'ipo_id',     i.id,
+        'name',       i.name,
+        'short',      coalesce(i.short_name, split_part(i.name, ' ', 1)),
+        'type',       i.type,
+        'status',     i.status,
+        'applied',    pi.applied,
+        'allotted',   pi.allotted,
+        'allot_state', pi.allot_state,
+        'profit',     CASE WHEN v_is_head THEN coalesce(ms.profit, 0) ELSE NULL END,
+        'settle_status', CASE WHEN NOT v_is_head THEN NULL
             WHEN ms.any_paid AND NOT coalesce(ms.any_pending, false) THEN 'paid'
             WHEN ms.any_paid AND ms.any_pending                      THEN 'partly'
             WHEN ms.any_pending                                      THEN 'pending'
@@ -243,15 +280,20 @@ RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_member_id uuid;
+  v_login_pan uuid;
+  v_is_head   boolean;
   v_result    jsonb;
 BEGIN
-  SELECT pa.member_id INTO v_member_id FROM pan_accounts pa
+  SELECT pa.member_id, pa.id, (pa.relation = 'Self')
+    INTO v_member_id, v_login_pan, v_is_head
+    FROM pan_accounts pa
     WHERE upper(pa.pan) = upper(btrim(coalesce(p_login_pan, ''))) AND pa.status = 'Active'
     LIMIT 1;
   IF v_member_id IS NULL THEN
     RETURN '[]'::jsonb;
   END IF;
 
+  -- head → the family's existing apps; sub-member → only their own PAN's app
   SELECT coalesce(jsonb_agg(jsonb_build_object(
            'pan_id',       a.pan_id,
            'category',     a.category,
@@ -262,7 +304,8 @@ BEGIN
     FROM applications a
     JOIN pan_accounts pa ON pa.id = a.pan_id AND pa.member_id = v_member_id
     LEFT JOIN allotments al ON al.application_id = a.id
-    WHERE a.ipo_id = p_ipo;
+    WHERE a.ipo_id = p_ipo
+      AND (v_is_head OR a.pan_id = v_login_pan);
 
   RETURN v_result;
 END;
