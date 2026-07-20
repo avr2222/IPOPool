@@ -58,7 +58,7 @@ function MemberPortal({ ipoId }) {
             : (
               <>
                 <div style={{ display: 'flex', gap: 6, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 4, marginBottom: 16 }}>
-                  {[['apply', 'Apply'], ['summary', session.isHead ? 'My profits' : 'My applications']].map(([key, label]) => (
+                  {[['apply', 'Apply'], ['summary', 'My profits']].map(([key, label]) => (
                     <button key={key} onClick={() => setTab(key)} style={{
                       flex: 1, border: 'none', borderRadius: 'var(--r-sm)', padding: '9px 12px', cursor: 'pointer',
                       fontSize: 13.5, fontWeight: 700,
@@ -100,7 +100,6 @@ function MemberSummary({ session }) {
   const applied  = d.pans_applied || 0;
   const allot    = d.allotments || 0;
   const rate     = applied > 0 ? Math.round(allot / applied * 100) : 0;
-  // Family head sees profit; a sub-member sees only their own applications.
   const isFamily = d.scope ? d.scope === 'family' : !!session.isHead;
 
   const SETTLE = {
@@ -109,11 +108,6 @@ function MemberSummary({ session }) {
     pending:  { label: 'Pending',   tone: 'warn' },
     awaiting: { label: 'Awaiting',  tone: 'neutral' },
     '-':      { label: '—',         tone: 'neutral' },
-  };
-  const ALLOT = {
-    allotted:     { label: 'Allotted',     tone: 'profit' },
-    not_allotted: { label: 'Not allotted', tone: 'neutral' },
-    pending:      { label: 'Pending',      tone: 'warn' },
   };
 
   const Stat = ({ label, value, sub, tone }) => (
@@ -124,9 +118,7 @@ function MemberSummary({ session }) {
     </Card>
   );
 
-  const cols = isFamily
-    ? ['IPO', 'Applied', 'Allotted', 'Profit', 'Status']
-    : ['IPO', 'Applied', 'Allotted', 'Status'];
+  const cols = ['IPO', 'Applied', 'Allotted', 'Profit', 'Status'];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -136,10 +128,8 @@ function MemberSummary({ session }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        {isFamily && (
-          <Stat label="Profit till date" value={f(d.total_profit, { compact: true })} tone="var(--profit)"
-            sub={(d.pending_profit > 0 ? f(d.pending_profit, { compact: true }) + ' pending' : 'all settled')} />
-        )}
+        <Stat label={isFamily ? 'Profit till date' : 'Your profit'} value={f(d.total_profit, { compact: true })} tone="var(--profit)"
+          sub={(d.pending_profit > 0 ? f(d.pending_profit, { compact: true }) + ' pending' : 'all settled')} />
         <Stat label="IPOs applied" value={d.ipos_applied || 0} />
         <Stat label="Allotments" value={allot} sub={applied + (isFamily ? ' PAN applications' : ' applications')} />
         <Stat label="Allotment rate" value={rate + '%'} />
@@ -150,7 +140,7 @@ function MemberSummary({ session }) {
           {isFamily ? 'Your IPOs' : 'Your applications'}
         </div>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: isFamily ? 420 : 340 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 420 }}>
             <thead>
               <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
                 {cols.map((h, i) => (
@@ -160,7 +150,7 @@ function MemberSummary({ session }) {
             </thead>
             <tbody>
               {ipos.map(p => {
-                const st = isFamily ? (SETTLE[p.settle_status] || SETTLE['-']) : (ALLOT[p.allot_state] || ALLOT.pending);
+                const st = SETTLE[p.settle_status] || SETTLE['-'];
                 return (
                   <tr key={p.ipo_id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '11px 16px' }}>
@@ -169,9 +159,7 @@ function MemberSummary({ session }) {
                     </td>
                     <td className="num" style={{ padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.applied}</td>
                     <td className="num" style={{ padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.allotted || '—'}</td>
-                    {isFamily && (
-                      <td className="num" style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 700, color: p.profit > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{p.profit > 0 ? f(p.profit, { compact: true }) : '—'}</td>
-                    )}
+                    <td className="num" style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 700, color: p.profit > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{p.profit > 0 ? f(p.profit, { compact: true }) : '—'}</td>
                     <td style={{ padding: '11px 16px', textAlign: 'right' }}><Badge tone={st.tone} style={{ fontSize: 10 }}>{st.label}</Badge></td>
                   </tr>
                 );
