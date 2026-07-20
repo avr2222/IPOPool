@@ -118,6 +118,57 @@
       .login-mobile-logo { display: block !important; }
     }
 
+    /* ── Modern app feel ─────────────────────────────────── */
+    /* Dynamic viewport: keep layout stable as the mobile URL bar collapses */
+    @supports (height: 100dvh) {
+      #root, .shell { min-height: 100dvh; }
+    }
+    .content { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; scroll-behavior: smooth; }
+
+    /* Frosted glass bars (overrides the solid inline backgrounds) */
+    @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+      .topbar, .mobile-topbar {
+        background: var(--glass) !important;
+        -webkit-backdrop-filter: saturate(1.5) blur(16px);
+        backdrop-filter: saturate(1.5) blur(16px);
+      }
+      .bottomnav {
+        background: var(--glass) !important;
+        -webkit-backdrop-filter: saturate(1.5) blur(16px);
+        backdrop-filter: saturate(1.5) blur(16px);
+        box-shadow: 0 -4px 24px rgba(16,24,40,.06);
+      }
+    }
+
+    /* Screen transitions */
+    .screen-enter { animation: fadeUp .32s cubic-bezier(.2,.7,.3,1); }
+
+    /* ── Mobile ergonomics (≤ 900px) ─────────────────────── */
+    @media (max-width: 900px) {
+      /* 16px inputs stop iOS Safari from zooming the page on focus */
+      input, select, textarea { font-size: 16px !important; }
+      /* Comfortable touch targets without breaking compact square icon buttons */
+      .content button:not(.iconbtn) { min-height: 40px; }
+      /* Cards breathe a little less on small screens */
+      .kpi-grid { gap: 10px !important; }
+    }
+
+    /* ── Bottom-sheet modals on phones ───────────────────── */
+    @media (max-width: 640px) {
+      .modal-overlay {
+        place-items: end stretch !important;
+        padding: 0 !important;
+      }
+      .modal-card {
+        max-width: 100% !important;
+        border-radius: 22px 22px 0 0 !important;
+        max-height: 92dvh !important;
+        overflow-y: auto !important;
+        animation: slideUp .28s cubic-bezier(.2,.7,.3,1) !important;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+      }
+    }
+
     /* ── More drawer (mobile) ───────────────────────────── */
     .more-overlay {
       position: fixed; inset: 0; background: rgba(0,0,0,.45);

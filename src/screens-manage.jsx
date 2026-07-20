@@ -30,8 +30,8 @@ function friendlyDbError(e) {
 // ── Shared modal wrapper ──────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 16 }}>
-      <div style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 460, boxShadow: '0 24px 64px rgba(0,0,0,.2)', overflow: 'hidden' }}>
+    <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 16 }}>
+      <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 460, boxShadow: 'var(--sh-pop)', overflow: 'hidden', animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 15, fontWeight: 800 }}>{title}</div>
           <IconButton name="x" size={32} onClick={onClose} />
@@ -66,8 +66,8 @@ function ConfirmDialog({ dlg, onClose }) {
     ? { background: 'var(--loss)', color: '#fff', border: 'none', borderRadius: 'var(--r-md)', padding: '10px 18px', fontWeight: 700, fontSize: 14, cursor: 'pointer' }
     : {};
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 70, display: 'grid', placeItems: 'center', padding: 16 }}>
-      <div style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 380, boxShadow: '0 24px 64px rgba(0,0,0,.25)', overflow: 'hidden' }}>
+    <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 70, display: 'grid', placeItems: 'center', padding: 16 }}>
+      <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 380, boxShadow: 'var(--sh-pop)', overflow: 'hidden', animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
         <div style={{ padding: '18px 22px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
           {dlg.danger && <div style={{ width: 34, height: 34, borderRadius: 10, background: 'rgba(239,68,68,.12)', display: 'grid', placeItems: 'center', flexShrink: 0 }}><Icon name="trash" size={16} color="var(--loss)" /></div>}
           <div style={{ fontSize: 15, fontWeight: 800 }}>{dlg.title}</div>
@@ -959,8 +959,8 @@ function AdminPanel() {
           return n;
         });
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 12 }}>
-            <div style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 680, boxShadow: '0 24px 64px rgba(0,0,0,.25)', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}>
+          <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 12 }}>
+            <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 680, boxShadow: 'var(--sh-pop)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
 
               {/* Header */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>

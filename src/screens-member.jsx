@@ -37,8 +37,8 @@ function MemberPortal({ ipoId }) {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'grid', placeItems: 'center', padding: '32px 16px' }}>
-      <div style={{ width: '100%', maxWidth: 460 }}>
+    <div style={{ minHeight: '100vh', background: 'radial-gradient(1100px 480px at 50% -8%, var(--brand-tint), transparent 62%), var(--bg)', display: 'grid', placeItems: 'center', padding: '28px 14px calc(28px + env(safe-area-inset-bottom, 0px))' }}>
+      <div className="animate" style={{ width: '100%', maxWidth: 460 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <Logo size={26} />
           {session && (

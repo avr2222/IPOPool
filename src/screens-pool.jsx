@@ -351,8 +351,8 @@ function ProfitPooling({ navigate, id }) {
 
       {/* Confirm finalize dialog */}
       {confirmFinal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 70, display: 'grid', placeItems: 'center', padding: 16 }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 400, padding: 24, boxShadow: '0 24px 64px rgba(0,0,0,.25)', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 70, display: 'grid', placeItems: 'center', padding: 16 }}>
+          <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 400, padding: 24, boxShadow: 'var(--sh-pop)', display: 'flex', flexDirection: 'column', gap: 14, animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
             <div style={{ fontSize: 16, fontWeight: 800 }}>Finalize payouts?</div>
             <div style={{ fontSize: 13.5, color: 'var(--ink-2)', lineHeight: 1.6 }}>
               This will create settlement records for <strong>{catData.reduce((s, d) => s + Object.keys(d.memberShares).length, 0)} members</strong> totalling <strong>{f(totalNet)}</strong>. This cannot be easily undone.

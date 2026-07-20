@@ -361,7 +361,7 @@ function App() {
         <Topbar route={route} navigate={navigate} dark={t.dark} setDark={(v) => setTweak('dark', v)} />
         <MobileTopbar route={route} dark={t.dark} setDark={(v) => setTweak('dark', v)} />
         <div className="content" style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-          <div style={{ maxWidth: 1240, margin: '0 auto' }} key={route + (params.id || '') + '#' + dataVersion}>
+          <div className="screen-enter" style={{ maxWidth: 1240, margin: '0 auto' }} key={route + (params.id || '') + '#' + dataVersion}>
             {screen()}
           </div>
         </div>
