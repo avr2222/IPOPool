@@ -48,7 +48,7 @@ BEGIN
 
   -- Head = the "Self" PAN: sees the whole family. Any other PAN is a sub-member
   -- and is scoped to itself only.
-  IF v_pan.relation = 'Self' THEN
+  IF lower(btrim(v_pan.relation)) = 'self' THEN
     SELECT coalesce(jsonb_agg(
              jsonb_build_object(
                'id',         pa.id,
@@ -72,7 +72,8 @@ BEGIN
     'member_id',    v_member.id,
     'name',         v_member.name,
     'login_pan_id', v_pan.id,
-    'is_head',      (v_pan.relation = 'Self'),
+    'login_holder', v_pan.holder_name,
+    'is_head',      (lower(btrim(v_pan.relation)) = 'self'),
     'pans',         v_pans
   );
 END;
@@ -119,7 +120,7 @@ DECLARE
   v_count       int := 0;
 BEGIN
   -- resolve acting member + head/sub from the login PAN
-  SELECT pa.member_id, pa.id, (pa.relation = 'Self')
+  SELECT pa.member_id, pa.id, (lower(btrim(pa.relation)) = 'self')
     INTO v_member_id, v_login_pan, v_is_head
     FROM pan_accounts pa
     WHERE upper(pa.pan) = upper(btrim(coalesce(p_login_pan, ''))) AND pa.status = 'Active'
@@ -183,14 +184,15 @@ CREATE OR REPLACE FUNCTION member_summary(p_login_pan text)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
-  v_member_id uuid;
-  v_login_pan uuid;
-  v_is_head   boolean;
-  v_name      text;
-  v_result    jsonb;
+  v_member_id    uuid;
+  v_login_pan    uuid;
+  v_login_holder text;
+  v_is_head      boolean;
+  v_name         text;
+  v_result       jsonb;
 BEGIN
-  SELECT pa.member_id, pa.id, (pa.relation = 'Self')
-    INTO v_member_id, v_login_pan, v_is_head
+  SELECT pa.member_id, pa.id, pa.holder_name, (lower(btrim(pa.relation)) = 'self')
+    INTO v_member_id, v_login_pan, v_login_holder, v_is_head
     FROM pan_accounts pa
     WHERE upper(pa.pan) = upper(btrim(coalesce(p_login_pan, ''))) AND pa.status = 'Active'
     LIMIT 1;
@@ -237,6 +239,7 @@ BEGIN
   )
   SELECT jsonb_build_object(
     'name',           v_name,
+    'login_holder',   v_login_holder,
     'scope',          CASE WHEN v_is_head THEN 'family' ELSE 'pan' END,
     'is_head',        v_is_head,
     'pans_applied',   (SELECT count(*) FROM my_apps),
@@ -284,7 +287,7 @@ DECLARE
   v_is_head   boolean;
   v_result    jsonb;
 BEGIN
-  SELECT pa.member_id, pa.id, (pa.relation = 'Self')
+  SELECT pa.member_id, pa.id, (lower(btrim(pa.relation)) = 'self')
     INTO v_member_id, v_login_pan, v_is_head
     FROM pan_accounts pa
     WHERE upper(pa.pan) = upper(btrim(coalesce(p_login_pan, ''))) AND pa.status = 'Active'
