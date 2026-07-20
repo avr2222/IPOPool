@@ -130,7 +130,10 @@ function MemberSummary({ session }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 700 }}>Signed in as {d.name || session.name}</div>
+      <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 700 }}>
+        Signed in as {session.holder || d.login_holder || d.name || session.name}
+        {(() => { const pool = d.name || session.name; const who = session.holder || d.login_holder; return pool && who && pool !== who ? <span style={{ fontWeight: 600, color: 'var(--ink-4, var(--ink-3))' }}> · {pool}'s pool</span> : null; })()}
+      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         {isFamily && (
@@ -204,7 +207,7 @@ function MemberLogin({ ipo, onLogin }) {
         setLoading(false);
         return;
       }
-      onLogin({ loginPan: clean, memberId: res.member_id, name: res.name, isHead: !!res.is_head, pans: res.pans || [] });
+      onLogin({ loginPan: clean, memberId: res.member_id, name: res.name, holder: res.login_holder || '', isHead: !!res.is_head, pans: res.pans || [] });
     } catch (e) {
       setErr('Could not verify your PAN. Check your connection and try again.');
       setLoading(false);
@@ -334,7 +337,10 @@ function MemberApply({ ipo, session }) {
   return (
     <Card pad={0}>
       <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 700 }}>Signed in as {session.name}</div>
+        <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 700 }}>
+          Signed in as {session.holder || session.name}
+          {session.holder && session.name && session.name !== session.holder && <span style={{ fontWeight: 600, color: 'var(--ink-4, var(--ink-3))' }}> · {session.name}'s pool</span>}
+        </div>
         <div style={{ fontSize: 16, fontWeight: 800, marginTop: 2 }}>{ipo ? ipo.name : 'Apply'}</div>
         <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 3 }}>
           {hasExisting
