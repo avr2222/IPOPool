@@ -629,6 +629,16 @@ async function loadDB() {
       async saveAllotmentChanges(changes) {
         for (var i = 0; i < changes.length; i++) {
           var c = changes[i];
+          // Category lives on the application, not the allotment — update it there
+          // when the admin re-categorised the applicant (e.g. Retail → sHNI).
+          if (c.category != null && c.appId) {
+            var prev = _allotments.find(function(x){ return x.id === c.id; });
+            if (!prev || prev.category !== c.category) {
+              var catRes = await window.sb.from('applications').update({ category: c.category }).eq('id', c.appId).select();
+              if (catRes.error) throw catRes.error;
+              if (!catRes.data || catRes.data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
+            }
+          }
           var upd = { status: c.status, shares: c.shares || 0, gain: c.gain || 0, checked_at: new Date().toISOString() };
           if (c.sellPrice != null) upd.sell_price = c.sellPrice;
           var { data, error } = await window.sb.from('allotments').update(upd).eq('id', c.id).select();
