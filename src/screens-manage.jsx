@@ -449,13 +449,29 @@ function AdminPanel() {
 
   const pendingAllots = D.allotments.filter(a => a.status === 'pending').length;
 
-  // Recent first: newest-added IPO on top (created_at), falling back to the most
-  // relevant date, then name — so the master list always leads with new IPOs.
+  // Rows carry their applied/allotted counts so those columns are sortable too.
+  const ipoRows = ipos.map(ip => ({
+    ...ip,
+    applied:  D.allotments.filter(a => a.ipo === ip.id).length,
+    allotted: D.allotments.filter(a => a.ipo === ip.id && a.status === 'allotted').length,
+  }));
+  // Default (no active sort): newest-added IPO on top (created_at), falling back
+  // to the most relevant date, then name — so the master list leads with new IPOs.
   const ipoSortKey = ip => ip.createdAt || ip.listDate || ip.allotDate || ip.close || ip.open || '';
-  const sortedIpos = [...ipos].sort((a, b) => {
+  const recentFirst = [...ipoRows].sort((a, b) => {
     const d = String(ipoSortKey(b)).localeCompare(String(ipoSortKey(a)));
     return d !== 0 ? d : String(a.name).localeCompare(String(b.name));
   });
+  const ipoCols = [
+    { key: 'name',     label: 'IPO',      align: 'left'  },
+    { key: 'type',     label: 'Board',    align: 'left'  },
+    { key: 'bandHigh', label: 'Price',    align: 'right', get: r => r.bandHigh || 0, defDir: 'desc' },
+    { key: 'lotSize',  label: 'Lot size', align: 'right', get: r => r.lotSize || 0, defDir: 'desc' },
+    { key: 'applied',  label: 'Applied',  align: 'right', defDir: 'desc' },
+    { key: 'allotted', label: 'Allotted', align: 'right', defDir: 'desc' },
+  ];
+  const [ipoSort, onIpoSort] = useSortState(null);
+  const sortedIpos = ipoSort.key ? sortRows(ipoRows, ipoSort, ipoCols) : recentFirst;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -493,14 +509,13 @@ function AdminPanel() {
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 820 }}>
                   <thead><tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                    {['IPO', 'Board', 'Price', 'Lot size', 'Applied', 'Allotted', ''].map((h, i) => (
-                      <th key={i} style={{ textAlign: i > 1 ? 'right' : 'left', fontWeight: 700, padding: '10px 18px' }}>{h}</th>
-                    ))}
+                    {ipoCols.map(c => <SortTh key={c.key} col={c} sort={ipoSort} onSort={onIpoSort} style={{ padding: '10px 18px' }} />)}
+                    <th style={{ padding: '10px 18px' }}></th>
                   </tr></thead>
                   <tbody>
                     {sortedIpos.map(ip => {
-                      const applied  = D.allotments.filter(a => a.ipo === ip.id).length;
-                      const allotted = D.allotments.filter(a => a.ipo === ip.id && a.status === 'allotted').length;
+                      const applied  = ip.applied;
+                      const allotted = ip.allotted;
                       return (
                       <tr key={ip.id} style={{ borderTop: '1px solid var(--border)' }}>
                         <td style={{ padding: '13px 18px' }}>

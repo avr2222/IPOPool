@@ -219,4 +219,57 @@ function Meter({ value = 0, max = 1, color = 'var(--brand)', style = {} }) {
   );
 }
 
-Object.assign(window, { Icon, Card, Badge, Button, IconButton, Avatar, IpoLogo, SectionTitle, StatusDot, Segmented, Meter });
+// ---------- Sortable tables ----------
+// Shared helpers so every data table sorts the same way. A column config is
+// { key, label, align, get, defDir, ... }; `get(row)` returns the sort value
+// (falls back to row[key]). Nulls always sort last regardless of direction.
+function useSortState(initialKey, initialDir) {
+  const [sort, setSort] = React.useState({ key: initialKey || null, dir: initialDir || 'asc' });
+  const onSort = (key, defDir) =>
+    setSort(s => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: defDir || 'asc' }));
+  return [sort, onSort];
+}
+
+function sortRows(rows, sort, cols) {
+  const arr = (rows || []).slice();
+  if (!sort || !sort.key) return arr;
+  const col = (cols || []).find(c => c.key === sort.key);
+  const get = (col && col.get) || (r => r[sort.key]);
+  const mul = sort.dir === 'desc' ? -1 : 1;
+  return arr.sort((a, b) => {
+    let va = get(a), vb = get(b);
+    const na = va == null || va === '', nb = vb == null || vb === '';
+    if (na && nb) return 0;
+    if (na) return 1;            // nulls/blanks last
+    if (nb) return -1;
+    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * mul;
+    return String(va).localeCompare(String(vb), undefined, { numeric: true }) * mul;
+  });
+}
+
+function SortCaret({ dir }) {
+  return (
+    <span aria-hidden style={{ fontSize: 8.5, lineHeight: 1, marginTop: 1, opacity: dir ? 0.95 : 0.32 }}>
+      {dir === 'asc' ? '▲' : dir === 'desc' ? '▼' : '↕'}
+    </span>
+  );
+}
+
+// Sortable <th>. Drop into a <thead><tr> in place of a plain <th>.
+function SortTh({ col, sort, onSort, style = {} }) {
+  const align = col.align || 'left';
+  const active = sort && sort.key === col.key;
+  return (
+    <th
+      onClick={() => onSort(col.key, col.defDir)}
+      title="Sort"
+      style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', textAlign: align, fontWeight: 700, ...style }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexDirection: align === 'right' ? 'row-reverse' : 'row' }}>
+        <span style={{ color: active ? 'var(--ink)' : undefined }}>{col.label}</span>
+        <SortCaret dir={active ? sort.dir : null} />
+      </span>
+    </th>
+  );
+}
+
+Object.assign(window, { Icon, Card, Badge, Button, IconButton, Avatar, IpoLogo, SectionTitle, StatusDot, Segmented, Meter, useSortState, sortRows, SortCaret, SortTh });

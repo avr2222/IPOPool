@@ -130,7 +130,17 @@ function SettlementLedger({ navigate, id }) {
   const pendingPayout  = pendingRows.reduce((s, r) => s + r.amount, 0);
   const paidPayout     = paidRows.reduce((s, r) => s + r.amount, 0);
   const settledCount   = paidRows.length;
-  const filtered       = tab === 'All' ? rows : tab === 'Pending' ? pendingRows : paidRows;
+  const filteredBase   = tab === 'All' ? rows : tab === 'Pending' ? pendingRows : paidRows;
+  const ledgerCols = [
+    { key: 'member',   label: 'Member',   align: 'left',  get: r => (D.member(r.member) || {}).name || '' },
+    { key: 'category', label: 'Category', align: 'left',  get: r => r.category || '' },
+    { key: 'pans',     label: 'PANs',     align: 'right', get: r => r.pans || 0, defDir: 'desc' },
+    { key: 'amount',   label: 'Amount',   align: 'right', get: r => r.amount || 0, defDir: 'desc' },
+    { key: 'status',   label: 'Status',   align: 'right', get: r => r.status || '' },
+    { key: 'date',     label: 'Date',     align: 'right', get: r => r.date || '', defDir: 'desc' },
+  ];
+  const [ledgerSort, onLedgerSort] = useSortState(null);
+  const filtered       = sortRows(filteredBase, ledgerSort, ledgerCols);
 
   // Fully settled: the pool is marked Settled, or every generated row is Paid.
   // When settled the ledger is read-only (no mark actions) and a banner shows.
@@ -323,9 +333,7 @@ function SettlementLedger({ navigate, id }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
             <thead>
               <tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                {['Member', 'Category', 'PANs', 'Amount', 'Status', 'Date'].map((h, i) => (
-                  <th key={i} style={{ textAlign: i >= 2 ? 'right' : 'left', fontWeight: 700, padding: '11px 18px' }}>{h}</th>
-                ))}
+                {ledgerCols.map(c => <SortTh key={c.key} col={c} sort={ledgerSort} onSort={onLedgerSort} style={{ padding: '11px 18px' }} />)}
               </tr>
             </thead>
             <tbody>

@@ -17,7 +17,17 @@ function IpoDetails({ id, navigate }) {
   const D = window.DB;
   const ipo = D.ipo(id);
   const f = (n, o) => D.fmtINR(n, o);
-  const allots = D.allotments.filter(a => a.ipo === id);
+  const allotsBase = D.allotments.filter(a => a.ipo === id);
+  const applicantCols = [
+    { key: 'holder',   label: 'PAN holder',   align: 'left',  get: a => { const p = D.pans.find(x => x.id === a.pan); return p ? p.holder : ''; } },
+    { key: 'category', label: 'Category',     align: 'left',  get: a => a.category || '' },
+    { key: 'status',   label: 'Status',       align: 'right', get: a => a.status || '' },
+    { key: 'shares',   label: 'Shares',       align: 'right', get: a => a.shares || 0, defDir: 'desc' },
+    { key: 'invest',   label: 'Invested',     align: 'right', get: a => a.invest || 0, defDir: 'desc' },
+    { key: 'gain',     label: 'Listing gain', align: 'right', get: a => a.gain || 0, defDir: 'desc' },
+  ];
+  const [applicantSort, onApplicantSort] = useSortState(null);
+  const allots = sortRows(allotsBase, applicantSort, applicantCols);
   const pool = D.pools.find(p => p.ipo === id);
   const poolNetProfit = (() => {
     const stcg = parseFloat(localStorage.getItem('stcg') || '15');
@@ -124,9 +134,7 @@ function IpoDetails({ id, navigate }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
             <thead>
               <tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                {['PAN holder', 'Category', 'Status', 'Shares', 'Invested', 'Listing gain'].map((h, i) => (
-                  <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', fontWeight: 700, padding: '11px 20px' }}>{h}</th>
-                ))}
+                {applicantCols.map(c => <SortTh key={c.key} col={c} sort={applicantSort} onSort={onApplicantSort} style={{ padding: '11px 20px' }} />)}
               </tr>
             </thead>
             <tbody>
