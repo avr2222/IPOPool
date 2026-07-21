@@ -338,7 +338,7 @@ function AdminPanel() {
   // ── Members state ──
   const [members, setMembers] = useState(D.members);
   const [showAddMember, setShowAddMember] = useState(false);
-  const [memberForm, setMemberForm] = useState({ name: '', email: '', phone: '', pan: '', bank: '' });
+  const [memberForm, setMemberForm] = useState({ name: '', email: '', phone: '', upi: '', pan: '', bank: '' });
   const [memberSaving, setMemberSaving] = useState(false);
   const [memberErr, setMemberErr] = useState('');
 
@@ -357,7 +357,7 @@ function AdminPanel() {
     }
     setMemberSaving(true); setMemberErr('');
     try {
-      const added = await D.mutations.addMember({ ...memberForm, avatarHue: Math.floor(Math.random() * 360) });
+      const added = await D.mutations.addMember({ ...memberForm, upiId: memberForm.upi, avatarHue: Math.floor(Math.random() * 360) });
       if (memberForm.pan) {
         try {
           await D.mutations.addPan({ memberId: added.id, pan: memberForm.pan, holderName: memberForm.name, relation: 'Self', bank: memberForm.bank || null });
@@ -370,7 +370,7 @@ function AdminPanel() {
       }
       setMembers([...window.DB.members]);
       setShowAddMember(false);
-      setMemberForm({ name: '', email: '', phone: '', pan: '', bank: '' });
+      setMemberForm({ name: '', email: '', phone: '', upi: '', pan: '', bank: '' });
     } catch(e) { setMemberErr(friendlyDbError(e)); }
     setMemberSaving(false);
   };
@@ -415,7 +415,7 @@ function AdminPanel() {
   const [editMemberSaving, setEditMemberSaving] = useState(false);
   const [editMemberErr, setEditMemberErr]   = useState('');
 
-  const openEditMember = (m) => { setEditMember(m); setEditMemberForm({ name: m.name, email: m.email || '', phone: m.phone || '' }); setEditMemberErr(''); };
+  const openEditMember = (m) => { setEditMember(m); setEditMemberForm({ name: m.name, email: m.email || '', phone: m.phone || '', upiId: m.upiId || '' }); setEditMemberErr(''); };
 
   const saveEditMember = async () => {
     if (!editMemberForm.name) { setEditMemberErr('Name is required.'); return; }
@@ -588,6 +588,9 @@ function AdminPanel() {
                             <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 1 }}>
                               {contact && <span>{contact} · </span>}
                               <span style={{ fontWeight: 600 }}>{mPans.length} PAN{mPans.length !== 1 ? 's' : ''}</span>
+                              {m.upiId
+                                ? <span> · <span className="num" style={{ color: 'var(--profit)', fontWeight: 600 }}>{m.upiId}</span></span>
+                                : <button onClick={() => openEditMember(m)} style={{ marginLeft: 6, border: 'none', background: 'none', color: 'var(--warn)', fontWeight: 700, fontSize: 11.5, cursor: 'pointer', padding: 0 }}>+ Add UPI ID</button>}
                             </div>
                           </div>
                         </div>
@@ -788,9 +791,14 @@ function AdminPanel() {
           <Field label="Email">
             <input style={inputSt} type="email" value={memberForm.email} onChange={e => setMemberForm(p => ({ ...p, email: e.target.value }))} placeholder="priya@example.com" />
           </Field>
-          <Field label="Phone">
-            <input style={inputSt} value={memberForm.phone} onChange={e => setMemberForm(p => ({ ...p, phone: e.target.value }))} placeholder="+91 98765 43210" />
-          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Phone">
+              <input style={inputSt} value={memberForm.phone} onChange={e => setMemberForm(p => ({ ...p, phone: e.target.value }))} placeholder="+91 98765 43210" />
+            </Field>
+            <Field label="UPI ID">
+              <input style={inputSt} value={memberForm.upi} onChange={e => setMemberForm(p => ({ ...p, upi: e.target.value.trim() }))} placeholder="name@okhdfcbank" autoCapitalize="none" spellCheck={false} />
+            </Field>
+          </div>
           {memberErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{memberErr}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <Button variant="ghost" onClick={() => { setShowAddMember(false); setMemberErr(''); setMemberForm({ name: '', email: '', phone: '', pan: '', bank: '' }); }}>Cancel</Button>
@@ -895,9 +903,14 @@ function AdminPanel() {
           <Field label="Email">
             <input style={inputSt} type="email" value={editMemberForm.email} onChange={e => setEditMemberForm(p => ({ ...p, email: e.target.value }))} />
           </Field>
-          <Field label="Phone">
-            <input style={inputSt} value={editMemberForm.phone} onChange={e => setEditMemberForm(p => ({ ...p, phone: e.target.value }))} />
-          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Phone">
+              <input style={inputSt} value={editMemberForm.phone} onChange={e => setEditMemberForm(p => ({ ...p, phone: e.target.value }))} />
+            </Field>
+            <Field label="UPI ID">
+              <input style={inputSt} value={editMemberForm.upiId} onChange={e => setEditMemberForm(p => ({ ...p, upiId: e.target.value.trim() }))} placeholder="name@okhdfcbank" autoCapitalize="none" spellCheck={false} />
+            </Field>
+          </div>
           {editMemberErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{editMemberErr}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <Button variant="ghost" onClick={() => { setEditMember(null); setEditMemberErr(''); }}>Cancel</Button>

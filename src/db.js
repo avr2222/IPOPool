@@ -43,6 +43,7 @@ function txMembers(rows) {
       name:       r.name,
       email:      r.email  || '',
       phone:      r.phone  || '',
+      upiId:      r.upi_id || '',
       avatarHue:  r.avatar_hue || 200,
       isAdmin:    r.is_admin  || false,
       role:       r.is_admin  ? 'Admin' : 'Member',
@@ -477,6 +478,7 @@ async function loadDB() {
           name:       fields.name,
           email:      fields.email      || null,
           phone:      fields.phone      || null,
+          upi_id:     fields.upiId       || null,
           avatar_hue: fields.avatarHue  || Math.floor(Math.random() * 360),
           is_admin:   fields.isAdmin    || false,
         }).select().single();
@@ -496,7 +498,7 @@ async function loadDB() {
 
       async updateMember(id, fields) {
         var { data, error } = await window.sb.from('members')
-          .update({ name: fields.name, email: fields.email || null, phone: fields.phone || null })
+          .update({ name: fields.name, email: fields.email || null, phone: fields.phone || null, upi_id: fields.upiId || null })
           .eq('id', id).select().single();
         if (error) throw error;
         var idx = _members.findIndex(function(m){ return m.id === id; });
@@ -819,6 +821,35 @@ window.loadDB = loadDB;
 // Money formatter exposed globally so the anonymous member portal (which never
 // runs loadDB, so has no window.DB) can format rupees the same way.
 window.fmtINR = fmtINR;
+
+// ── Settlement payment helpers ────────────────────────────────────────────────
+// Build a UPI deep link (upi://pay?...) that pre-fills the payee VPA, name,
+// amount and note. Opens GPay / PhonePe / Paytm etc. on a phone. `am` is omitted
+// for non-positive amounts (some apps reject am=0). Every value is URL-encoded.
+function buildUpiUri(opts) {
+  opts = opts || {};
+  var vpa = (opts.vpa || '').trim();
+  if (!vpa) return '';
+  var parts = ['pa=' + encodeURIComponent(vpa)];
+  if (opts.name) parts.push('pn=' + encodeURIComponent(opts.name));
+  var amt = Number(opts.amount);
+  if (amt > 0) parts.push('am=' + encodeURIComponent(amt.toFixed(2)));
+  parts.push('cu=INR');
+  if (opts.note) parts.push('tn=' + encodeURIComponent(opts.note));
+  return 'upi://pay?' + parts.join('&');
+}
+
+// Build a WhatsApp click-to-chat link for a phone number with a prefilled text.
+// Keeps only digits; assumes a 10-digit Indian number gets a 91 country code.
+function waReminder(phone, text) {
+  var digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 10) digits = '91' + digits;
+  return 'https://wa.me/' + digits + (text ? '?text=' + encodeURIComponent(text) : '');
+}
+
+window.buildUpiUri = buildUpiUri;
+window.waReminder  = waReminder;
 
 // ── Member self-service API (PAN login, no Supabase session) ──────────────────
 // Thin wrappers over the SECURITY DEFINER RPCs from migration 004. Available
