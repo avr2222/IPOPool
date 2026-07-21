@@ -248,13 +248,17 @@ function computeKpis() {
     return s + (ip ? ip.lotValue : 0);
   }, 0);
   var pendingSettlements = _settlements.filter(function(s){ return s.status === 'Pending'; });
-  var uniqueIpos = new Set(_allotments.map(function(a){ return a.ipo; })).size;
+  // Counts are IPO-level, not PAN-level: an IPO counts as "applied" if any PAN
+  // applied to it, and as "allotted" if at least one PAN got an allotment there.
+  var appliedIpos  = new Set(_allotments.map(function(a){ return a.ipo; }));
+  var allottedIpos = new Set(allotted.map(function(a){ return a.ipo; }));
   return {
-    applied:       uniqueIpos,
+    applied:       appliedIpos.size,
     applications:  _allotments.length,
-    allotments:    allotted.length,
-    allotRate:     _allotments.length > 0
-                     ? +((allotted.length / _allotments.length * 100).toFixed(1))
+    allotments:    allottedIpos.size,
+    allotmentRows: allotted.length,
+    allotRate:     appliedIpos.size > 0
+                     ? +((allottedIpos.size / appliedIpos.size * 100).toFixed(1))
                      : 0,
     invested:      invested,
     profit:        totalNet,

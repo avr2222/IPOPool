@@ -275,7 +275,7 @@ function Dashboard({ navigate, tweaks }) {
               <div className="num" style={{ fontSize: 44, fontWeight: 800, letterSpacing: '-.02em', margin: '6px 0' }}>{f(D.kpis.profit)}</div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {D.kpis.roi > 0 && <Badge tone="neutral" icon="arrowUp"><span style={{ color: '#fff' }}>+{D.kpis.roi}% ROI</span></Badge>}
-                <span style={{ background: 'rgba(255,255,255,.16)', borderRadius: 999, padding: '3px 11px', fontSize: 12, fontWeight: 700 }}>{D.kpis.allotments} allotments</span>
+                <span style={{ background: 'rgba(255,255,255,.16)', borderRadius: 999, padding: '3px 11px', fontSize: 12, fontWeight: 700 }}>{D.kpis.allotments} IPOs allotted</span>
                 {D.kpis.pendingAmount > 0 && <span style={{ background: 'rgba(255,255,255,.16)', borderRadius: 999, padding: '3px 11px', fontSize: 12, fontWeight: 700 }}>{f(D.kpis.pendingAmount, { compact: true })} pending</span>}
               </div>
             </div>
