@@ -93,6 +93,26 @@ function txIpos(rows) {
   });
 }
 
+// Live IPO status. The stored ipos.status is left at its 'Upcoming' default and
+// never maintained, so we compute the real phase from actual activity first
+// (allotment results marked or a profit pool exists ⇒ it has listed), then fall
+// back to the calendar dates, and only to the stored value when nothing is known.
+function deriveIpoStatus(ipo, allots, pools) {
+  var hasPool = pools.some(function(p){ return p.ipo === ipo.id; });
+  var marked  = allots.some(function(a){ return a.ipo === ipo.id && (a.status === 'allotted' || a.status === 'not_allotted'); });
+  if (hasPool || marked) return 'Listed';
+
+  var toDate = function(s){ if (!s) return null; var d = new Date(s); return isNaN(d.getTime()) ? null : d; };
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+  var open = toDate(ipo.open), close = toDate(ipo.close), list = toDate(ipo.listDate);
+
+  if (list  && today >= list)  return 'Listed';
+  if (close && today >  close)  return 'Closed';   // applications closed, awaiting listing
+  if (open  && today >= open)   return 'Open';      // open for applications
+  if (open  && today <  open)   return 'Upcoming';
+  return ipo.status || 'Upcoming';                  // no dates set — keep the stored value
+}
+
 function txAllotments(rows) {
   // rows joined: allotments.*, applications!inner(ipo_id, pan_id, category)
   return rows.map(function(r) {
@@ -228,13 +248,17 @@ function computeKpis() {
     return s + (ip ? ip.lotValue : 0);
   }, 0);
   var pendingSettlements = _settlements.filter(function(s){ return s.status === 'Pending'; });
-  var uniqueIpos = new Set(_allotments.map(function(a){ return a.ipo; })).size;
+  // Counts are IPO-level, not PAN-level: an IPO counts as "applied" if any PAN
+  // applied to it, and as "allotted" if at least one PAN got an allotment there.
+  var appliedIpos  = new Set(_allotments.map(function(a){ return a.ipo; }));
+  var allottedIpos = new Set(allotted.map(function(a){ return a.ipo; }));
   return {
-    applied:       uniqueIpos,
+    applied:       appliedIpos.size,
     applications:  _allotments.length,
-    allotments:    allotted.length,
-    allotRate:     _allotments.length > 0
-                     ? +((allotted.length / _allotments.length * 100).toFixed(1))
+    allotments:    allottedIpos.size,
+    allotmentRows: allotted.length,
+    allotRate:     appliedIpos.size > 0
+                     ? +((allottedIpos.size / appliedIpos.size * 100).toFixed(1))
                      : 0,
     invested:      invested,
     profit:        totalNet,
@@ -383,6 +407,12 @@ async function loadDB() {
   _allotments  = txAllotments (allotRes.data    || []);
   _pools       = txPools      (poolsRes.data    || []);
   _settlements = txSettlements(settleRes.data   || []);
+
+  // The stored ipos.status is never advanced past its 'Upcoming' default, so
+  // derive a live status from the IPO's dates and real activity instead.
+  _ipos = _ipos.map(function(ipo) {
+    return Object.assign({}, ipo, { status: deriveIpoStatus(ipo, _allotments, _pools) });
+  });
 
   var charts = computeCharts();
 

@@ -489,14 +489,17 @@ function AdminPanel() {
               <div style={{ padding: '32px 18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No IPOs yet. Add one above.</div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 680 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 820 }}>
                   <thead><tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                    {['IPO', 'Board', 'Price', 'Lot size', ''].map((h, i) => (
-                      <th key={i} style={{ textAlign: i > 2 ? 'right' : 'left', fontWeight: 700, padding: '10px 18px' }}>{h}</th>
+                    {['IPO', 'Board', 'Price', 'Lot size', 'Applied', 'Allotted', ''].map((h, i) => (
+                      <th key={i} style={{ textAlign: i > 1 ? 'right' : 'left', fontWeight: 700, padding: '10px 18px' }}>{h}</th>
                     ))}
                   </tr></thead>
                   <tbody>
-                    {sortedIpos.map(ip => (
+                    {sortedIpos.map(ip => {
+                      const applied  = D.allotments.filter(a => a.ipo === ip.id).length;
+                      const allotted = D.allotments.filter(a => a.ipo === ip.id && a.status === 'allotted').length;
+                      return (
                       <tr key={ip.id} style={{ borderTop: '1px solid var(--border)' }}>
                         <td style={{ padding: '13px 18px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
@@ -514,6 +517,8 @@ function AdminPanel() {
                         <td style={{ padding: '13px 18px' }}><Badge tone={ip.type === 'SME' ? 'sme' : 'mainboard'}>{ip.type}</Badge></td>
                         <td className="num" style={{ padding: '13px 18px', fontSize: 13 }}>{ip.bandHigh ? '₹' + Number(ip.bandHigh).toLocaleString('en-IN') : '—'}</td>
                         <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontSize: 13 }}>{ip.lotSize || '—'}</td>
+                        <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontSize: 13, color: 'var(--ink-2)' }}>{applied || '—'}</td>
+                        <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: allotted > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{allotted || '—'}</td>
                         <td style={{ padding: '13px 18px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'nowrap' }}>
                             <Button variant="soft" size="sm" icon="allot"
@@ -528,7 +533,8 @@ function AdminPanel() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

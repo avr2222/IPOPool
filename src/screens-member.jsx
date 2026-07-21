@@ -8,6 +8,18 @@
 const MEMBER_CATS = ['Retail', 'sHNI', 'bHNI'];
 const MEMBER_SESSION_KEY = 'ipopool_member';
 
+// Minimum application value (in ₹) a category must EXCEED. Retail has no floor
+// (starts at 1 lot); the HNI buckets need enough lots to cross their threshold.
+const CAT_FLOOR = { sHNI: 200000, bHNI: 1000000 };
+
+// Smallest number of lots that qualifies for a category, given one lot's value
+// (lot_size × cut-off price). e.g. lot value ₹15,000 → sHNI needs ⌊2L/15k⌋+1 = 14 lots.
+function catMinLots(cat, lotValue) {
+  const floor = CAT_FLOOR[cat];
+  if (!floor || !lotValue) return 1;
+  return Math.floor(floor / lotValue) + 1;
+}
+
 function MemberPortal({ ipoId }) {
   const [ipo,     setIpo]     = useState(null);
   const [ipoErr,  setIpoErr]  = useState('');
@@ -246,6 +258,13 @@ function MemberLogin({ ipo, onLogin }) {
 function MemberApply({ ipo, session }) {
   const isSME = ipo && ipo.type === 'SME';
   const pans  = session.pans || [];
+  const f = (n, o) => (window.fmtINR ? window.fmtINR(n, o) : '₹' + (n || 0));
+
+  // Shares per lot, and one lot's rupee value, used to show share counts and the
+  // per-category default lots. Fall back to lot_size × cut-off price if lot_value
+  // wasn't captured on the IPO.
+  const lotSize  = Number(ipo && ipo.lot_size)  || 0;
+  const lotValue = Number(ipo && ipo.lot_value) || (lotSize * (Number(ipo && ipo.band_high) || 0)) || 0;
 
   // Per-PAN application state: { [panId]: { on, category, lots } }
   const [rows, setRows] = useState(() => {
@@ -335,6 +354,19 @@ function MemberApply({ ipo, session }) {
             ? 'Your saved application is loaded below — adjust and update.'
             : <>Tick the PANs that applied{isSME ? '' : ', pick a category'} and the number of lots.</>}
         </div>
+        {!isSME && lotValue > 0 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+            {MEMBER_CATS.map(c => {
+              const m = catMinLots(c, lotValue);
+              return (
+                <span key={c} style={{ fontSize: 11, fontWeight: 700, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 999, padding: '3px 10px', color: 'var(--ink-2)' }}>
+                  {c} · {m} lot{m === 1 ? '' : 's'}
+                  <span style={{ color: 'var(--ink-3)', fontWeight: 600 }}> · {(m * lotSize).toLocaleString('en-IN')} sh</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -364,12 +396,20 @@ function MemberApply({ ipo, session }) {
                 </div>
               </label>
 
-              {r.on && (
-                <div style={{ display: 'flex', gap: 10, marginTop: 11, marginLeft: 29, flexWrap: 'wrap' }}>
+              {r.on && (() => {
+                const lots   = Math.max(1, parseInt(r.lots, 10) || 1);
+                const shares = lots * lotSize;
+                const amount = lots * lotValue;
+                return (
+                <div style={{ display: 'flex', gap: 10, marginTop: 11, marginLeft: 29, flexWrap: 'wrap', alignItems: 'center' }}>
                   {!isSME && (
-                    <select value={r.category} onChange={e => setRow(p.id, { category: e.target.value })}
+                    <select value={r.category}
+                      onChange={e => { const cat = e.target.value; setRow(p.id, { category: cat, lots: catMinLots(cat, lotValue) }); }}
                       style={{ border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 13, fontWeight: 600, background: 'var(--surface)', color: 'var(--ink)' }}>
-                      {MEMBER_CATS.map(c => <option key={c} value={c}>{c}</option>)}
+                      {MEMBER_CATS.map(c => {
+                        const m = catMinLots(c, lotValue);
+                        return <option key={c} value={c}>{c}{m > 1 ? ' · min ' + m + ' lots' : ''}</option>;
+                      })}
                     </select>
                   )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -377,8 +417,15 @@ function MemberApply({ ipo, session }) {
                     <input type="number" min="1" value={r.lots} onChange={e => setRow(p.id, { lots: e.target.value })}
                       style={{ width: 64, border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 13, fontWeight: 700, background: 'var(--surface)', color: 'var(--ink)' }} />
                   </div>
+                  {lotSize > 0 && (
+                    <span style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 600 }}>
+                      = <strong style={{ color: 'var(--ink-2)' }}>{shares.toLocaleString('en-IN')}</strong> shares
+                      {amount > 0 && <span> · {f(amount, { compact: true })}</span>}
+                    </span>
+                  )}
                 </div>
-              )}
+                );
+              })()}
             </div>
           );
         })}
