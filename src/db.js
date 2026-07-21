@@ -326,6 +326,36 @@ function computeCharts() {
   };
 }
 
+// Per-category breakdown (Retail / sHNI / bHNI / SME) across every IPO, for the
+// dashboard's category charts and report. Same PoolMath net as everywhere else
+// (grouped per ipo+category via groupNetProfit), so the category nets sum to the
+// pool's total profit. Only categories with at least one application appear.
+function computeCategoryStats() {
+  var CATS = ['Retail', 'sHNI', 'bHNI', 'SME'];
+  return CATS.map(function(cat) {
+    var apps     = _allotments.filter(function(a){ return a.category === cat; });
+    var allotted = apps.filter(function(a){ return a.status === 'allotted'; });
+    var ipos     = new Set(apps.map(function(a){ return a.ipo; }));
+    var gross    = allotted.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
+    var invested = allotted.reduce(function(s, a) {
+      var ip = _ipos.find(function(i){ return i.id === a.ipo; });
+      return s + (ip ? (ip.lotValue || 0) : 0);
+    }, 0);
+    var net = groupNetProfit(apps);
+    return {
+      cat:      cat,
+      ipos:     ipos.size,
+      applied:  apps.length,
+      allotted: allotted.length,
+      allotRate: apps.length > 0 ? +((allotted.length / apps.length) * 100).toFixed(1) : 0,
+      gross:    gross,
+      net:      net,
+      invested: invested,
+      roi:      invested > 0 ? +(((net) / invested) * 100).toFixed(1) : 0,
+    };
+  }).filter(function(c){ return c.applied > 0; });
+}
+
 // Per-member profit totalled across EVERY IPO, ranked highest first. Reuses the
 // same PoolMath.memberShares split the Profit Pool screen uses, and the same
 // rate resolution (finalized pool rates when present, else the local defaults),
@@ -430,6 +460,7 @@ async function loadDB() {
     smeVsMain:    charts.smeVsMain,
     allotHistory: charts.allotHistory,
     profitByIpo:  charts.profitByIpo,
+    categoryStats: computeCategoryStats(),
     memberProfits: computeMemberProfits(),
 
     me:     _members.find(function(m){ return m.you; }) || null,

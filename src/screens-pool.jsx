@@ -13,6 +13,51 @@ const CAT_META = {
   bHNI:   { label: 'bHNI',   tone: 'warn',    desc: 'Above ₹10L application', textColor: 'var(--warn)' },
 };
 
+// Sortable member-shares table for one category pool.
+function MemberSharesTable({ D, shares, f }) {
+  const rows = Object.entries(shares || {})
+    .map(([mid, row]) => ({ mid, m: D.member(mid), pans: row.pans, share: row.share }))
+    .filter(r => r.m);
+  const cols = [
+    { key: 'member', label: 'Member', align: 'left',   get: r => r.m.name || '' },
+    { key: 'pans',   label: 'PANs',   align: 'center', get: r => r.pans || 0, defDir: 'desc' },
+    { key: 'share',  label: 'Share',  align: 'right',  get: r => r.share || 0, defDir: 'desc' },
+  ];
+  const [sort, onSort] = useSortState('share', 'desc');
+  const sorted = sortRows(rows, sort, cols);
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <thead>
+        <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+          <SortTh col={cols[0]} sort={sort} onSort={onSort} style={{ padding: '6px 20px' }} />
+          <SortTh col={cols[1]} sort={sort} onSort={onSort} style={{ padding: '6px 8px' }} />
+          <SortTh col={cols[2]} sort={sort} onSort={onSort} style={{ padding: '6px 20px' }} />
+        </tr>
+      </thead>
+      <tbody>
+        {sorted.map(({ mid, m, pans, share }) => (
+          <tr key={mid} style={{ borderTop: '1px solid var(--border)', background: m.you ? 'var(--brand-tint)' : 'transparent' }}>
+            <td style={{ padding: '10px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Avatar name={m.name} hue={m.avatarHue} size={28} you={m.you} />
+                <span style={{ fontSize: 13, fontWeight: 700 }}>{m.name.split(' ')[0]}{m.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}</span>
+              </div>
+            </td>
+            <td style={{ textAlign: 'center', padding: '10px 8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 3 }}>
+                {Array.from({ length: pans }).map((_, i) => (
+                  <div key={i} style={{ width: 9, height: 9, borderRadius: '50%', background: `hsl(${m.avatarHue} 55% 52%)` }} />
+                ))}
+              </div>
+            </td>
+            <td className="num" style={{ padding: '10px 20px', textAlign: 'right', fontSize: 14, fontWeight: 800, color: m.you ? 'var(--brand)' : 'var(--profit)' }}>{f(share)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function ProfitPooling({ navigate, id }) {
   const D = window.DB;
   const f = (n, o) => D.fmtINR(n, o);
@@ -262,39 +307,7 @@ function ProfitPooling({ navigate, id }) {
                 {/* Member shares in this category */}
                 <div>
                   <div style={{ padding: '16px 20px 10px', fontSize: 13, fontWeight: 800 }}>Member shares ({meta.label})</div>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                        <th style={{ textAlign: 'left', fontWeight: 700, padding: '6px 20px' }}>Member</th>
-                        <th style={{ textAlign: 'center', fontWeight: 700, padding: '6px 8px' }}>PANs</th>
-                        <th style={{ textAlign: 'right', fontWeight: 700, padding: '6px 20px' }}>Share</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(d.memberShares).map(([mid, row]) => {
-                        const m = D.member(mid);
-                        if (!m) return null;
-                        return (
-                          <tr key={mid} style={{ borderTop: '1px solid var(--border)', background: m.you ? 'var(--brand-tint)' : 'transparent' }}>
-                            <td style={{ padding: '10px 20px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <Avatar name={m.name} hue={m.avatarHue} size={28} you={m.you} />
-                                <span style={{ fontSize: 13, fontWeight: 700 }}>{m.name.split(' ')[0]}{m.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}</span>
-                              </div>
-                            </td>
-                            <td style={{ textAlign: 'center', padding: '10px 8px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'center', gap: 3 }}>
-                                {Array.from({ length: row.pans }).map((_, i) => (
-                                  <div key={i} style={{ width: 9, height: 9, borderRadius: '50%', background: `hsl(${m.avatarHue} 55% 52%)` }} />
-                                ))}
-                              </div>
-                            </td>
-                            <td className="num" style={{ padding: '10px 20px', textAlign: 'right', fontSize: 14, fontWeight: 800, color: m.you ? 'var(--brand)' : 'var(--profit)' }}>{f(row.share)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                  <MemberSharesTable D={D} shares={d.memberShares} f={f} />
                 </div>
               </div>
             )}

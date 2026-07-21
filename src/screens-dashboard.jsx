@@ -52,6 +52,165 @@ function Legend({ items }) {
   );
 }
 
+// Category → badge tone + bar colour, shared by the category card.
+const CAT_TONE = { Retail: 'info', sHNI: 'brand', bHNI: 'warn', SME: 'sme' };
+const CAT_COLOR = { Retail: 'var(--info)', sHNI: 'var(--brand)', bHNI: 'var(--warn)', SME: 'var(--sme)' };
+
+// Sortable "Profit by IPO" table (net profit per IPO + combined total row).
+function ProfitByIpoCard({ D, navigate, f }) {
+  const cols = [
+    { key: 'short',    label: 'IPO',        align: 'left'  },
+    { key: 'type',     label: 'Board',      align: 'left'  },
+    { key: 'applied',  label: 'Applied',    align: 'right', defDir: 'desc' },
+    { key: 'allotted', label: 'Allotted',   align: 'right', defDir: 'desc' },
+    { key: 'gross',    label: 'Gross gain', align: 'right', defDir: 'desc' },
+    { key: 'net',      label: 'Net profit', align: 'right', defDir: 'desc' },
+  ];
+  const [sort, onSort] = useSortState(null);
+  const rows = sortRows(D.profitByIpo || [], sort, cols);
+  const tot = (D.profitByIpo || []).reduce((s, p) => ({
+    gross: s.gross + p.gross, net: s.net + p.net, applied: s.applied + p.applied, allotted: s.allotted + p.allotted,
+  }), { gross: 0, net: 0, applied: 0, allotted: 0 });
+
+  return (
+    <Card pad={0}>
+      <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 14.5, fontWeight: 800 }}>Profit by IPO</div>
+        <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 2 }}>Net profit per IPO and combined total · tap a heading to sort</div>
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+          <thead>
+            <tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+              {cols.map(c => <SortTh key={c.key} col={c} sort={sort} onSort={onSort} style={{ padding: '11px 18px' }} />)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(p => (
+              <tr key={p.id} onClick={() => navigate('ipo', { id: p.id })} style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-2)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                <td style={{ padding: '12px 18px', fontWeight: 700, fontSize: 13.5 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                    {p.short}
+                    {D.pools.some(pl => pl.ipo === p.id && pl.status === 'Settled') && <Badge tone="profit">Settled</Badge>}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 18px' }}><Badge tone={p.type === 'SME' ? 'sme' : 'mainboard'}>{p.type}</Badge></td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.applied}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.allotted}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.gross > 0 ? f(p.gross, { compact: true }) : '—'}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 700, color: p.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{p.net > 0 ? f(p.net, { compact: true }) : '—'}</td>
+              </tr>
+            ))}
+            {rows.length > 0 && (
+              <tr style={{ borderTop: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
+                <td style={{ padding: '12px 18px', fontWeight: 800, fontSize: 13.5 }}>All IPOs together</td>
+                <td style={{ padding: '12px 18px' }} />
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.applied}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.allotted}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.gross > 0 ? f(tot.gross, { compact: true }) : '—'}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: 'var(--profit)' }}>{tot.net > 0 ? f(tot.net, { compact: true }) : '—'}</td>
+              </tr>
+            )}
+            {rows.length === 0 && (
+              <tr style={{ borderTop: '1px solid var(--border)' }}>
+                <td colSpan={cols.length} style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No applications yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+// Per-category KPI chart + sortable report (Retail / sHNI / bHNI / SME).
+function CategoryCard({ D, f }) {
+  const cats = D.categoryStats || [];
+  const cols = [
+    { key: 'cat',       label: 'Category', align: 'left'  },
+    { key: 'ipos',      label: 'IPOs',     align: 'right', defDir: 'desc' },
+    { key: 'applied',   label: 'Applied',  align: 'right', defDir: 'desc' },
+    { key: 'allotted',  label: 'Allotted', align: 'right', defDir: 'desc' },
+    { key: 'allotRate', label: 'Rate',     align: 'right', defDir: 'desc' },
+    { key: 'gross',     label: 'Gross',    align: 'right', defDir: 'desc' },
+    { key: 'net',       label: 'Net',      align: 'right', defDir: 'desc' },
+  ];
+  const [sort, onSort] = useSortState('net', 'desc');
+  const rows = sortRows(cats, sort, cols);
+  const tot = cats.reduce((s, c) => ({
+    ipos: s.ipos + c.ipos, applied: s.applied + c.applied, allotted: s.allotted + c.allotted, gross: s.gross + c.gross, net: s.net + c.net,
+  }), { ipos: 0, applied: 0, allotted: 0, gross: 0, net: 0 });
+  const barData = cats.map(c => ({ m: c.cat, applied: c.applied, allot: c.allotted }));
+
+  return (
+    <Card pad={0}>
+      <div style={{ padding: '16px 18px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 14.5, fontWeight: 800 }}>By category</div>
+          <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 2 }}>Applications, allotments & net profit per category</div>
+        </div>
+        <Legend items={[{ label: 'Applied', color: 'var(--border-strong)' }, { label: 'Allotted', color: 'var(--brand)' }]} />
+      </div>
+
+      {cats.length === 0 ? (
+        <div style={{ padding: '26px 18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No applications yet.</div>
+      ) : (
+        <>
+          {/* Net profit per category — coloured meters */}
+          <div style={{ padding: '14px 18px', display: 'grid', gap: 10, borderBottom: '1px solid var(--border)' }}>
+            {(() => { const maxNet = Math.max(1, ...cats.map(c => c.net)); return cats.map(c => (
+              <div key={c.cat} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 58, flexShrink: 0 }}><Badge tone={CAT_TONE[c.cat] || 'neutral'}>{c.cat}</Badge></div>
+                <div style={{ flex: 1, minWidth: 0 }}><Meter value={c.net} max={maxNet} color={CAT_COLOR[c.cat] || 'var(--brand)'} style={{ height: 8 }} /></div>
+                <div className="num" style={{ width: 72, textAlign: 'right', fontSize: 13, fontWeight: 800, color: c.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{c.net > 0 ? f(c.net, { compact: true }) : '—'}</div>
+              </div>
+            )); })()}
+          </div>
+
+          {/* Applied vs allotted bars */}
+          <div style={{ padding: '14px 18px 4px' }}>
+            <BarChart data={barData} keys={['applied', 'allot']} colors={['var(--border-strong)', 'var(--brand)']} h={150} />
+          </div>
+
+          {/* Sortable report */}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
+              <thead>
+                <tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                  {cols.map(c => <SortTh key={c.key} col={c} sort={sort} onSort={onSort} style={{ padding: '10px 18px' }} />)}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(c => (
+                  <tr key={c.cat} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '11px 18px' }}><Badge tone={CAT_TONE[c.cat] || 'neutral'}>{c.cat}</Badge></td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{c.ipos}</td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{c.applied}</td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{c.allotted}</td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{c.allotRate}%</td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{c.gross > 0 ? f(c.gross, { compact: true }) : '—'}</td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 700, color: c.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{c.net > 0 ? f(c.net, { compact: true }) : '—'}</td>
+                  </tr>
+                ))}
+                <tr style={{ borderTop: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
+                  <td style={{ padding: '11px 18px', fontWeight: 800 }}>All</td>
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.ipos}</td>
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.applied}</td>
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.allotted}</td>
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.applied > 0 ? Math.round(tot.allotted / tot.applied * 100) : 0}%</td>
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.gross > 0 ? f(tot.gross, { compact: true }) : '—'}</td>
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800, color: 'var(--profit)' }}>{tot.net > 0 ? f(tot.net, { compact: true }) : '—'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function Dashboard({ navigate, tweaks }) {
   const D = window.DB;
   const layout = (tweaks && tweaks.dashLayout) || 'kpi';
@@ -101,64 +260,8 @@ function Dashboard({ navigate, tweaks }) {
     </ChartCard>
   );
 
-  const ProfitByIpo = (
-    <Card pad={0}>
-      <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 14.5, fontWeight: 800 }}>Profit by IPO</div>
-        <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 2 }}>Net profit per IPO and combined total</div>
-      </div>
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
-          <thead>
-            <tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-              {['IPO', 'Board', 'Applied', 'Allotted', 'Gross gain', 'Net profit'].map((h, i) => (
-                <th key={h} style={{ textAlign: i > 1 ? 'right' : 'left', fontWeight: 700, padding: '11px 18px' }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {(D.profitByIpo || []).map(p => (
-              <tr key={p.id} onClick={() => navigate('ipo', { id: p.id })} style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}
-                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-2)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                <td style={{ padding: '12px 18px', fontWeight: 700, fontSize: 13.5 }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                    {p.short}
-                    {D.pools.some(pl => pl.ipo === p.id && pl.status === 'Settled') && <Badge tone="profit">Settled</Badge>}
-                  </span>
-                </td>
-                <td style={{ padding: '12px 18px' }}><Badge tone={p.type === 'SME' ? 'sme' : 'mainboard'}>{p.type}</Badge></td>
-                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.applied}</td>
-                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.allotted}</td>
-                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.gross > 0 ? f(p.gross, { compact: true }) : '—'}</td>
-                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 700, color: p.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{p.net > 0 ? f(p.net, { compact: true }) : '—'}</td>
-              </tr>
-            ))}
-            {(D.profitByIpo || []).length > 0 && (() => {
-              const totGross = D.profitByIpo.reduce((s, p) => s + p.gross, 0);
-              const totNet   = D.profitByIpo.reduce((s, p) => s + p.net, 0);
-              const totApp   = D.profitByIpo.reduce((s, p) => s + p.applied, 0);
-              const totAllot = D.profitByIpo.reduce((s, p) => s + p.allotted, 0);
-              return (
-                <tr style={{ borderTop: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
-                  <td style={{ padding: '12px 18px', fontWeight: 800, fontSize: 13.5 }}>All IPOs together</td>
-                  <td style={{ padding: '12px 18px' }} />
-                  <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{totApp}</td>
-                  <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{totAllot}</td>
-                  <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{totGross > 0 ? f(totGross, { compact: true }) : '—'}</td>
-                  <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: 'var(--profit)' }}>{totNet > 0 ? f(totNet, { compact: true }) : '—'}</td>
-                </tr>
-              );
-            })()}
-            {(D.profitByIpo || []).length === 0 && (
-              <tr style={{ borderTop: '1px solid var(--border)' }}>
-                <td colSpan={6} style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No applications yet.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  );
+  const ProfitByIpo = <ProfitByIpoCard D={D} navigate={navigate} f={f} />;
+  const ByCategory  = <CategoryCard D={D} f={f} />;
 
   // Recent activity = IPOs the pool actually applied to (any status), newest
   // first. Built from D.profitByIpo so the Profit column uses the shared PoolMath
@@ -309,6 +412,8 @@ function Dashboard({ navigate, tweaks }) {
           </div>
         </>
       )}
+
+      {ByCategory}
 
       {ProfitByIpo}
 

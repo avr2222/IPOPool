@@ -130,7 +130,15 @@ function MemberSummary({ session }) {
     </Card>
   );
 
-  const cols = ['IPO', 'Applied', 'Allotted', 'Profit', 'Status'];
+  const cols = [
+    { key: 'short',         label: 'IPO',      align: 'left',  get: p => p.short || '' },
+    { key: 'applied',       label: 'Applied',  align: 'right', get: p => p.applied || 0, defDir: 'desc' },
+    { key: 'allotted',      label: 'Allotted', align: 'right', get: p => p.allotted || 0, defDir: 'desc' },
+    { key: 'profit',        label: 'Profit',   align: 'right', get: p => p.profit || 0, defDir: 'desc' },
+    { key: 'settle_status', label: 'Status',   align: 'right', get: p => p.settle_status || '' },
+  ];
+  const [iposSort, onIposSort] = useSortState('profit', 'desc');
+  const sortedIpos = sortRows(ipos, iposSort, cols);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -155,13 +163,11 @@ function MemberSummary({ session }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 420 }}>
             <thead>
               <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                {cols.map((h, i) => (
-                  <th key={h} style={{ textAlign: i > 0 ? 'right' : 'left', fontWeight: 700, padding: '10px 16px' }}>{h}</th>
-                ))}
+                {cols.map(c => <SortTh key={c.key} col={c} sort={iposSort} onSort={onIposSort} style={{ padding: '10px 16px' }} />)}
               </tr>
             </thead>
             <tbody>
-              {ipos.map(p => {
+              {sortedIpos.map(p => {
                 const st = SETTLE[p.settle_status] || SETTLE['-'];
                 return (
                   <tr key={p.ipo_id} style={{ borderTop: '1px solid var(--border)' }}>
