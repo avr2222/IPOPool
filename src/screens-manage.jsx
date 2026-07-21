@@ -300,6 +300,8 @@ function AdminPanel() {
           const computedGain = sp > 0 && bandHigh > 0 ? Math.max(0, Math.round((sp - bandHigh) * sh)) : parseFloat(c.gain ?? a.gain) || 0;
           return {
             id:        a.id,
+            appId:     a.appId,
+            category:  c.category ?? a.category,
             status:    c.status ?? a.status,
             shares:    sh,
             gain:      computedGain,
@@ -308,7 +310,7 @@ function AdminPanel() {
         })
         .filter((r, i) => {
           const a = viewRows[i];
-          return r.status !== a.status || r.shares !== a.shares || r.gain !== a.gain || r.sellPrice !== a.sellPrice;
+          return r.category !== a.category || r.status !== a.status || r.shares !== a.shares || r.gain !== a.gain || r.sellPrice !== a.sellPrice;
         });
       if (dirty.length === 0) { setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000); return; }
       await D.mutations.saveAllotmentChanges(dirty);
@@ -933,6 +935,8 @@ function AdminPanel() {
       {/* ── IPO applicants modal (view + mark allotments) ── */}
       {viewIpoId && (() => {
         const vIpo    = D.ipo(viewIpoId);
+        const vIsSME  = vIpo?.type === 'SME';
+        const vCats   = vIsSME ? ['SME'] : ['Retail', 'sHNI', 'bHNI'];
         const vAllots = D.allotments.filter(a => a.ipo === viewIpoId);
         const countBy = s => vAllots.filter(a => (changes[a.id]?.status ?? a.status) === s).length;
         const allotted = countBy('allotted'), notAllot = countBy('not_allotted'), pending = countBy('pending');
@@ -1048,7 +1052,7 @@ function AdminPanel() {
                       {vAllots.map(a => {
                         const panObj  = D.pan(a.pan);
                         const mem     = panObj ? D.member(panObj.member) : null;
-                        const catMeta = (window.CAT_META || {})[a.category] || { label: a.category, tone: 'neutral' };
+                        const category  = changes[a.id]?.category  ?? a.category;
                         const status    = changes[a.id]?.status    ?? a.status;
                         const shares    = changes[a.id]?.shares    ?? a.shares;
                         const gain      = changes[a.id]?.gain      ?? a.gain;
@@ -1062,7 +1066,17 @@ function AdminPanel() {
                               <div style={{ fontSize: 13, fontWeight: 700 }}>{panObj?.holder || '—'}</div>
                               <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{mem?.name}{panObj?.pan ? ' · ' + panObj.pan : ''}</div>
                             </td>
-                            <td style={{ padding: '10px 8px' }}><Badge tone={catMeta.tone}>{catMeta.label}</Badge></td>
+                            <td style={{ padding: '10px 8px' }}>
+                              {vIsSME ? (
+                                <Badge tone="sme">SME</Badge>
+                              ) : (
+                                <select value={category}
+                                  onChange={e => setChange(a.id, 'category', e.target.value)}
+                                  style={{ ...inputSt, padding: '5px 6px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+                                  {vCats.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                              )}
+                            </td>
                             <td style={{ padding: '10px 8px', textAlign: 'center' }}>
                               <div style={{ display: 'inline-flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 3, gap: 2 }}>
                                 {[['allotted', '✓', 'var(--profit)', 'var(--profit-soft)'], ['not_allotted', '✗', 'var(--loss)', 'var(--loss-soft)'], ['pending', '—', 'var(--ink-2)', 'var(--surface-2)']].map(([val, lbl, col, bg]) => (
