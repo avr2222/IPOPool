@@ -55,10 +55,23 @@
       .bottomnav          { display: flex !important; }
       .mobile-topbar      { display: flex !important; }
 
+      /* THE PAGE scrolls on mobile — not an inner overflow container.
+         An overflow:auto .content (with overscroll-behavior:contain) is a
+         scroll container that, when it has nothing of its own to scroll,
+         swallows touch drags and refuses to chain them to the page on iOS,
+         leaving the screen "stuck". So on phones the content is normal flow
+         and the document scrolls, with the topbar sticky + bottom nav fixed. */
+      .shell   { min-height: 100dvh; }
+      .content {
+        overflow: visible !important;
+        overscroll-behavior: auto !important;
+        flex: 0 0 auto !important;
+      }
+
       /* Paddings + safe areas */
       .content {
         padding: 14px !important;
-        padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+        padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)) !important;
       }
       .bottomnav {
         height: calc(60px + env(safe-area-inset-bottom, 0px)) !important;
@@ -234,6 +247,7 @@
 
   <!-- Supabase client config + data layer (plain JS, no babel needed) -->
   <script src="src/supabase-client.js"></script>
+  <script src="src/qrcode.js"></script>
   <script src="src/db.js"></script>
 
   <!-- Tweaks + UI -->

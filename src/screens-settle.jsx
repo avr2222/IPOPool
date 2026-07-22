@@ -4,6 +4,46 @@
    Profit = perPan × memberPanCount (for each member who applied).
    ============================================================ */
 
+// Pay-a-settlement control: opens the receiver's UPI app pre-filled with the
+// amount, shows a scannable QR (desktop / another phone), a Copy-UPI fallback,
+// and an optional WhatsApp reminder to the payer. Needs receiver.upiId (VPA).
+function UpiPay({ receiver, amount, payer, note }) {
+  const [showQr, setShowQr] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const f = (n) => (window.DB ? window.DB.fmtINR(n) : '₹' + n);
+  const vpa = receiver && receiver.upiId;
+
+  if (!vpa) {
+    return <span style={{ fontSize: 11.5, color: 'var(--warn)', fontWeight: 600 }}>No UPI ID — add in Members</span>;
+  }
+
+  const uri = window.buildUpiUri({ vpa: vpa, name: receiver.name, amount: amount, note: note || 'IPO settlement' });
+  const copy = () => { try { navigator.clipboard.writeText(vpa); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (e) {} };
+  const waLink = payer && payer.phone
+    ? window.waReminder(payer.phone, `Please pay ${f(amount)} to ${receiver.name} · UPI: ${vpa} (IPO settlement)`)
+    : '';
+
+  const btn = { border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', padding: '5px 10px', fontSize: 12, fontWeight: 700, background: 'var(--surface)', color: 'var(--ink-2)', cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5 };
+  const payBtn = { ...btn, border: '1px solid var(--profit)', background: 'var(--profit-soft)', color: 'var(--profit)' };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <a href={uri} style={payBtn}>↗ Pay via UPI</a>
+        <button onClick={() => setShowQr(s => !s)} style={{ ...btn, background: showQr ? 'var(--surface-2)' : 'var(--surface)' }}>▤ QR</button>
+        <button onClick={copy} style={btn}>{copied ? '✓ Copied' : '⧉ Copy UPI'}</button>
+        {waLink && <a href={waLink} target="_blank" rel="noopener noreferrer" style={btn}>Remind</a>}
+      </div>
+      {showQr && (
+        <div style={{ background: '#fff', padding: 10, borderRadius: 10, border: '1px solid var(--border)' }}>
+          <div style={{ width: 140, height: 140 }} dangerouslySetInnerHTML={{ __html: (window.qrToSvg ? window.qrToSvg(uri) : '') }} />
+          <div style={{ fontSize: 10.5, color: '#555', textAlign: 'center', marginTop: 4 }}>{f(amount)} → {receiver.name}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettlementLedger({ navigate, id }) {
   const D = window.DB;
   const f = (n, o) => D.fmtINR(n, o);
@@ -374,12 +414,15 @@ function SettlementLedger({ navigate, id }) {
                       ) : isSettled ? (
                         <span style={{ fontSize: 13, color: 'var(--ink-3)', fontWeight: 600 }}>Pending</span>
                       ) : (
-                        <button
-                          onClick={() => markPaid(r.id)}
-                          disabled={marking === r.id}
-                          style={{ border: '1px solid var(--profit)', borderRadius: 'var(--r-sm)', padding: '5px 12px', background: 'var(--profit-soft)', color: 'var(--profit)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', opacity: marking === r.id ? .6 : 1 }}>
-                          {marking === r.id ? '…' : '✓ Mark paid'}
-                        </button>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+                          <UpiPay receiver={m} amount={r.amount} />
+                          <button
+                            onClick={() => markPaid(r.id)}
+                            disabled={marking === r.id}
+                            style={{ border: '1px solid var(--profit)', borderRadius: 'var(--r-sm)', padding: '5px 12px', background: 'var(--profit-soft)', color: 'var(--profit)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', opacity: marking === r.id ? .6 : 1 }}>
+                            {marking === r.id ? '…' : '✓ Mark paid'}
+                          </button>
+                        </div>
                       )}
                     </td>
                     <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-3)', fontSize: 13 }}>{r.date || '—'}</td>
@@ -432,7 +475,7 @@ function SettlementLedger({ navigate, id }) {
                       <div style={{ fontSize: 16, color: 'var(--ink-3)', lineHeight: 1, padding: '0 4px' }}>→</div>
                       <div style={{ flex: 1, height: 2, background: 'var(--brand)', opacity: .5 }} />
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>bank transfer</div>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>UPI / bank</div>
                   </div>
 
                   {/* Receiver */}
@@ -442,6 +485,11 @@ function SettlementLedger({ navigate, id }) {
                       <div style={{ fontSize: 13, fontWeight: 700 }}>{receiver.name}</div>
                       <div style={{ fontSize: 11.5, color: 'var(--profit)', fontWeight: 600 }}>Receives</div>
                     </div>
+                  </div>
+
+                  {/* Pay action (wraps to its own line) */}
+                  <div style={{ flexBasis: '100%', display: 'flex', justifyContent: 'flex-end' }}>
+                    <UpiPay receiver={receiver} payer={payer} amount={t.amount} />
                   </div>
                 </div>
               );

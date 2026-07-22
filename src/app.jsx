@@ -140,8 +140,14 @@ function BottomNav({ route, navigate }) {
       {items.map(([r, label, icon]) => {
         const active = route === r;
         return (
-          <button key={r} onClick={() => navigate(r)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, border: 'none', background: 'none', color: active ? 'var(--brand)' : 'var(--ink-3)', fontWeight: 700, fontSize: 10.5, padding: '6px 12px', flex: 1, minHeight: 44 }}>
-            <Icon name={icon} size={21} stroke={active ? 2.3 : 2} />
+          <button key={r} onClick={() => navigate(r)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, border: 'none', background: 'none', color: active ? 'var(--brand)' : 'var(--ink-3)', fontWeight: 700, fontSize: 10.5, padding: '6px 4px', flex: 1, minHeight: 48 }}>
+            <span style={{
+              display: 'grid', placeItems: 'center', width: 46, height: 30, borderRadius: 999,
+              background: active ? 'var(--brand-tint)' : 'transparent',
+              transition: 'background .2s, transform .2s', transform: active ? 'translateY(-1px)' : 'none',
+            }}>
+              <Icon name={icon} size={21} stroke={active ? 2.4 : 2} />
+            </span>
             {label}
           </button>
         );
