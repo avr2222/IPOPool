@@ -29,13 +29,29 @@ function IpoDetails({ id, navigate }) {
   const [applicantSort, onApplicantSort] = useSortState(null);
   const allots = sortRows(allotsBase, applicantSort, applicantCols);
   const pool = D.pools.find(p => p.ipo === id);
-  const poolNetProfit = (() => {
-    const stcg = parseFloat(localStorage.getItem('stcg') || '15');
-    const brok = parseFloat(localStorage.getItem('brokerage') || '0');
-    const gross = allots.reduce((s, a) => s + (a.gain || 0), 0);
-    return Math.max(0, gross - Math.round(gross * stcg / 100) - brok);
-  })();
+  // Same shared math the dashboard, profit pool and ledger use, so every screen
+  // reports the same rupees for the same IPO. This used to price the pool from
+  // the browser's local settings (ignoring the rates a finalized pool captured)
+  // and deduct brokerage once for the whole IPO instead of per category, which
+  // gave this page a different net profit than the Profit Pool screen.
+  const poolNetProfit = window.groupNetProfit(allotsBase);
   const allottedCount = allots.filter(a => a.status === 'allotted').length;
+
+  // Mirrors the ledger's CSV export. The button existed with no handler.
+  const exportCSV = () => {
+    const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+    const header = ['PAN holder', 'PAN', 'Category', 'Status', 'Lots', 'Shares', 'Invested', 'Sell price', 'Gain'];
+    const lines = allots.map(a => {
+      const p = D.pan(a.pan);
+      return [p?.holder || '', p?.pan || '', a.category || '', a.status || '',
+        a.lots || 1, a.shares || 0, a.invest || 0, a.sellPrice ?? '', a.gain || 0].map(esc).join(',');
+    });
+    const csv = [header.map(esc).join(','), ...lines].join('\n');
+    const el = document.createElement('a');
+    el.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    el.download = `applicants-${ipo.short || ipo.name}.csv`;
+    el.click();
+  };
   const timeline = [
     ['Open', ipo.open, true], ['Close', ipo.close, true], ['Allotment', ipo.allotDate, ipo.status === 'Listed' || ipo.status === 'Closed'],
     ['Listing', ipo.listDate, ipo.status === 'Listed'],
@@ -64,7 +80,7 @@ function IpoDetails({ id, navigate }) {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             {ipo.status === 'Open' && <Button variant="primary" icon="check" onClick={() => navigate('admin')}>Track applicants</Button>}
             {ipo.status === 'Listed' && <Button variant="primary" icon="trend" onClick={() => navigate('pooling', { id })}>View profit pool</Button>}
-            <IconButton name="download" tip="Export" />
+            <IconButton name="download" tip="Export applicants CSV" onClick={exportCSV} />
           </div>
         </div>
 

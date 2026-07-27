@@ -13,11 +13,24 @@ function parseApplyLink() {
   } catch (e) { return null; }
 }
 
+// #/me — the standalone member entry point. Without it a member has to dig out
+// an old apply link to see what they are owed, since the bare URL shows the
+// admin login they can never get past.
+function isMemberHome() {
+  try { return /#\/me\/?$/.test(location.hash || ''); } catch (e) { return false; }
+}
+
 // Build the shareable apply link for an IPO (posted by the admin in the group).
 function applyLinkFor(ipoId) {
   return location.origin + location.pathname + '#/apply/' + encodeURIComponent(ipoId);
 }
 window.applyLinkFor = applyLinkFor;
+
+// Link a member can bookmark to check their own profits at any time.
+function memberHomeLink() {
+  return location.origin + location.pathname + '#/me';
+}
+window.memberHomeLink = memberHomeLink;
 
 const ACCENTS = {
   Emerald: ['#0B8A4B', '#0A7A42', '#086B3A', '#E8F5EE', '#D6EEE0'],
@@ -110,10 +123,6 @@ function Topbar({ route, navigate, dark, setDark }) {
         <div className="topbar-sub" style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>{sub}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div className="topbar-search" title="Search coming soon" style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '8px 13px', width: 220, opacity: .5, cursor: 'not-allowed' }}>
-          <Icon name="search" size={16} color="var(--ink-3)" />
-          <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>Search coming soon…</span>
-        </div>
         {window.DB?.kpis?.profit > 0 && (
           <div className="topbar-profit" style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'var(--profit-soft)', borderRadius: 'var(--r-md)', padding: '7px 12px' }}>
             <Icon name="trend" size={15} color="var(--profit)" />
@@ -121,7 +130,6 @@ function Topbar({ route, navigate, dark, setDark }) {
           </div>
         )}
         <IconButton name={dark ? 'sun' : 'moon'} onClick={() => setDark(!dark)} tip="Toggle theme" />
-        <IconButton name="bell" tip="No notifications" onClick={() => {}} />
       </div>
     </header>
   );
@@ -166,7 +174,6 @@ function MobileTopbar({ route, dark, setDark }) {
       </div>
       <div style={{ display: 'flex', gap: 4 }}>
         <IconButton name={dark ? 'sun' : 'moon'} size={36} onClick={() => setDark(!dark)} tip="Toggle theme" />
-        <IconButton name="bell" size={36} />
       </div>
     </header>
   );
@@ -231,16 +238,24 @@ function App() {
   const [params, setParams] = useState({});
   const [dataVersion, setDataVersion] = useState(0);  // bumps when data changes externally
   const [memberApplyIpo] = useState(parseApplyLink);  // non-null when opened via the shared apply link
+  const [memberHome]     = useState(isMemberHome);    // true at #/me — member profits, no IPO
 
   // Check for existing session on mount
   useEffectA(() => {
-    if (memberApplyIpo) { setBooting(false); return; }   // anonymous member portal — no admin session
+    // Anonymous member portal (apply link or #/me) — no admin session needed.
+    if (memberApplyIpo || memberHome) { setBooting(false); return; }
     window.sb.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
         setAuthed(true);   // session is valid; a load failure is not a sign-out
         try { await window.loadDB(); setDbReady(true); }
         catch(e) { console.error(e); setDbError(e.message || 'Failed to load data.'); }
       }
+      setBooting(false);
+    }).catch(e => {
+      // Without this the app sits on "Loading your pool…" forever when the
+      // session check fails (offline, or Supabase unreachable).
+      console.error(e);
+      setDbError(e.message || 'Could not reach the server.');
       setBooting(false);
     });
 
@@ -355,6 +370,7 @@ function App() {
   // portal instead of the admin app. It talks only to MemberAPI RPCs, so no
   // Supabase session / loadDB is needed — short-circuit before the admin gate.
   if (memberApplyIpo) return <MemberPortal ipoId={memberApplyIpo} />;
+  if (memberHome)     return <MemberPortal ipoId={null} />;
 
   if (booting)           return <LoadingScreen />;
   if (authed && dbError) return <ErrorScreen message={dbError} retrying={retrying} onRetry={retryLoad} onLogout={() => { setDbError(null); navigate('logout'); }} />;

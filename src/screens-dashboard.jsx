@@ -354,7 +354,7 @@ function Dashboard({ navigate, tweaks }) {
                 <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {m.name}{m.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
                 </div>
-                <div style={{ marginTop: 5 }}><Meter value={m.profit} max={topProfit} color="var(--profit)" h={6} /></div>
+                <div style={{ marginTop: 5 }}><Meter value={m.profit} max={topProfit} color="var(--profit)" style={{ height: 6 }} /></div>
               </div>
               <div className="num" style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>{f(m.profit, { compact: true })}</div>
             </div>

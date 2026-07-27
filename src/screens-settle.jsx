@@ -79,15 +79,17 @@ function SettlementLedger({ navigate, id }) {
   // Net profit per category — uses the rates captured on the pool at finalize
   // time (falling back to local settings for legacy pools) via the shared
   // PoolMath, so the ledger matches what the Profit Pool screen computed.
-  const stcgRate     = pool.stcgRate  != null ? pool.stcgRate  : parseFloat(localStorage.getItem('stcg')      || '15');
-  const brokerageAmt = pool.brokerage != null ? pool.brokerage : parseFloat(localStorage.getItem('brokerage')  || '0');
+  const rates        = window.ratesForIpo(selIpo);
+  const stcgRate     = rates.stcg;
+  const brokerageAmt = rates.brok;
   const ipoAllots    = D.allotments.filter(a => a.ipo === selIpo);
   const CAT_ORDER    = ['SME', 'Retail', 'sHNI', 'bHNI'];
   const categories   = CAT_ORDER.filter(c => ipoAllots.some(a => a.category === c));
   const panToMember  = (panId) => { const p = D.pan(panId); return p ? p.member : null; };
   const catSummaries = categories.map(cat => {
     const ca = ipoAllots.filter(a => a.category === cat);
-    const m  = window.PoolMath.category(ca, stcgRate, brokerageAmt);
+    const cr = window.ratesForCategory(selIpo, cat);
+    const m  = window.PoolMath.category(ca, cr.stcg, cr.brok);
     return { cat, net: m.net, perPan: m.perPan, total: m.total };
   });
   const totalNet = catSummaries.reduce((s, d) => s + d.net, 0);
@@ -96,12 +98,38 @@ function SettlementLedger({ navigate, id }) {
   // Your retained share (exact, summed across all categories)
   const myShare = categories.reduce((sum, cat) => {
     const ca = ipoAllots.filter(a => a.category === cat);
-    const shares = window.PoolMath.memberShares(ca, stcgRate, brokerageAmt, panToMember);
+    const cr = window.ratesForCategory(selIpo, cat);
+    const shares = window.PoolMath.memberShares(ca, cr.stcg, cr.brok, panToMember);
     return sum + (shares[me?.id]?.share || 0);
   }, 0);
 
   // Settlement rows for this IPO
   const [rows, setRows] = useState(D.settlements.filter(s => s.ipo === selIpo));
+
+  // A settlement row is a snapshot taken at Finalize. Editing allotments
+  // afterwards — a corrected sell price, a category change, a PAN that turned
+  // out not to be allotted — changes what the pool math produces but leaves the
+  // ledger untouched, so the amounts here can quietly stop matching the data
+  // they came from. Rather than trust a flag, recompute the split and compare:
+  // it catches every route by which the two can diverge.
+  const ledgerStale = useMemo(() => {
+    if (!rows.length) return false;
+    const expected = {};
+    categories.forEach(cat => {
+      const cr = window.ratesForCategory(selIpo, cat);
+      const shares = window.PoolMath.memberShares(
+        ipoAllots.filter(a => a.category === cat), cr.stcg, cr.brok, panToMember);
+      Object.keys(shares).forEach(mid => { expected[mid + '|' + cat] = shares[mid].share; });
+    });
+    const seen = new Set();
+    for (const r of rows) {
+      const k = r.member + '|' + r.category;
+      seen.add(k);
+      if (expected[k] === undefined || expected[k] !== r.amount) return true;
+    }
+    // A member who now qualifies but has no ledger row is equally stale.
+    return Object.keys(expected).some(k => !seen.has(k));
+  }, [rows, ipoAllots, categories, selIpo]);
 
   // ── Net position per member (single source for both the transfer plan and the
   // net-position display, so the two can never drift) ───────────────────────────
@@ -126,7 +154,8 @@ function SettlementLedger({ navigate, id }) {
     // gives net = gross − STCG − brokerage, so (gross − net) is exactly the cost.
     let grossTotal = 0, costTotal = 0;
     categories.forEach(cat => {
-      const m = window.PoolMath.category(ipoAllots.filter(a => a.category === cat), stcgRate, brokerageAmt);
+      const cr = window.ratesForCategory(selIpo, cat);
+      const m = window.PoolMath.category(ipoAllots.filter(a => a.category === cat), cr.stcg, cr.brok);
       grossTotal += m.gross; costTotal += (m.gross - m.net);
     });
 
@@ -196,8 +225,13 @@ function SettlementLedger({ navigate, id }) {
     D.mutations.markPoolSettled(pool.ipo).catch(e => console.warn('[IPOPool] auto-settle failed', e));
   }, [pool?.ipo, pool?.status, rows]);
 
+  // Surfaced, not swallowed: markSettlementPaid throws a useful
+  // "check admin permissions" message that used to go only to the console,
+  // leaving the row silently Pending with no explanation.
+  const [payErr, setPayErr] = useState('');
+
   const markPaid = async (settlementId) => {
-    setMarking(settlementId);
+    setMarking(settlementId); setPayErr('');
     try {
       await D.mutations.markSettlementPaid(settlementId);
       const updated = D.settlements.filter(s => s.ipo === selIpo);
@@ -205,7 +239,7 @@ function SettlementLedger({ navigate, id }) {
       if (updated.length > 0 && updated.every(s => s.status === 'Paid')) {
         await D.mutations.markPoolSettled(selIpo);
       }
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error(e); setPayErr(e.message || 'Could not mark this payment as paid.'); }
     setMarking(null);
   };
 
@@ -213,7 +247,7 @@ function SettlementLedger({ navigate, id }) {
   const markAllPaid = async () => {
     const pending = rows.filter(r => r.status === 'Pending');
     if (!pending.length) return;
-    setMarkingAll(true);
+    setMarkingAll(true); setPayErr('');
     try {
       for (const r of pending) {
         await D.mutations.markSettlementPaid(r.id);
@@ -223,7 +257,7 @@ function SettlementLedger({ navigate, id }) {
       if (updated.length > 0 && updated.every(s => s.status === 'Paid')) {
         await D.mutations.markPoolSettled(selIpo);
       }
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error(e); setPayErr(e.message || 'Could not mark these payments as paid.'); }
     setMarkingAll(false);
   };
 
@@ -272,6 +306,33 @@ function SettlementLedger({ navigate, id }) {
           </Button>
         )}
       </div>
+
+      {/* Payment failure. markSettlementPaid throws a specific reason (usually
+          "check admin permissions") that previously reached only the console,
+          leaving the row Pending with no explanation on screen. */}
+      {payErr && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 20px', background: 'var(--loss-soft)', borderRadius: 'var(--r-lg)', border: '1px solid var(--loss)' }}>
+          <Icon name="x" size={18} color="var(--loss)" />
+          <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: 'var(--loss)' }}>{payErr}</div>
+          <button onClick={() => setPayErr('')} style={{ border: 'none', background: 'none', color: 'var(--ink-3)', fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}>Dismiss</button>
+        </div>
+      )}
+
+      {/* Stale-ledger warning. Deliberately does NOT rewrite the amounts: some
+          of these rows may already have been paid, so correcting them silently
+          would be worse than saying so and letting the admin re-finalize. */}
+      {ledgerStale && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 20px', background: 'var(--loss-soft)', borderRadius: 'var(--r-lg)', border: '1px solid var(--loss)' }}>
+          <Icon name="refresh" size={18} color="var(--loss)" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--loss)' }}>This ledger is out of date</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+              Allotments for this IPO changed after payouts were finalized, so the amounts below no longer match the profit pool. Re-finalize on the Profit Pool screen to bring them back in step.
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" style={{ flexShrink: 0 }} onClick={() => navigate('pooling', { id: selIpo })}>Profit Pool</Button>
+        </div>
+      )}
 
       {/* Settled completion banner */}
       {isSettled && rows.length > 0 && (

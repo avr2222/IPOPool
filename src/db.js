@@ -125,10 +125,21 @@ function txAllotments(rows) {
       ipo:       ipoId,
       pan:       r.applications.pan_id,
       category:  r.applications.category,
+      // Lots the member said they applied for. Without this the admin cannot
+      // see that an sHNI applied for 14 lots and has to retype every HNI share
+      // count by hand.
+      lots:      r.applications.lots || 1,
       status:    r.status,
       shares:    r.shares || 0,
       gain:      r.gain   || 0,
-      invest:    ipo ? (ipo.lotValue || 0) : 0,
+      // Capital actually tied up: the shares allotted at the cut-off price.
+      // A flat "one lot" understated every HNI row (an sHNI allotted 14 lots
+      // reported one), and multiplying lots applied would overstate a partial
+      // allotment, since ASBA releases the unallotted portion. Falls back to
+      // one lot's value when shares are not recorded yet.
+      invest:    (r.shares > 0 && ipo && ipo.bandHigh)
+                   ? Math.round(r.shares * ipo.bandHigh)
+                   : (ipo ? (ipo.lotValue || 0) : 0),
       sellPrice: r.sell_price != null ? parseFloat(r.sell_price) : null,
     };
   });
@@ -161,6 +172,77 @@ function txSettlements(rows) {
   });
 }
 
+// Realised gain for a single allotment row, and the one place that decides it.
+//
+// Two rules, both learned the hard way:
+//  1. A row that is not `allotted` has no gain. The admin flow is "✓ All got"
+//     (which fills a sell price on every row) followed by correcting the few
+//     PANs that missed out — so a stale sell price left on a "✗" row used to
+//     keep producing profit and was distributed to every member.
+//  2. The result is NOT clamped at zero. A listing below the issue price is a
+//     real loss and has to be visible; flooring it here would report a genuine
+//     loss as "no profit". The floor belongs on the pool's distributable net
+//     (PoolMath.category), not on the truth of what a PAN actually made.
+function rowGain(status, sellPrice, issuePrice, shares) {
+  if (status !== 'allotted') return 0;
+  var sp = parseFloat(sellPrice)  || 0;
+  var ip = parseFloat(issuePrice) || 0;
+  var sh = parseInt(shares, 10)   || 0;
+  if (sp <= 0 || ip <= 0 || sh <= 0) return 0;
+  return Math.round((sp - ip) * sh);
+}
+window.rowGain = rowGain;
+
+// Parse allotment results pasted from a registrar, so the admin stops typing
+// every row by hand on listing day.
+//
+// One row per line: the PAN somewhere in the line, and the share count. Any of
+// comma / tab / semicolon / pipe / whitespace separates them, since what comes
+// off a registrar site or a spreadsheet varies. Lines without a PAN-shaped
+// token (5 letters, 4 digits, 1 letter) are ignored, which drops headers and
+// blurb without the admin having to clean the text up first. A missing or zero
+// share count means "not allotted" — that is the registrar's own convention.
+//
+// Returns { rows: [{ pan, shares }], skipped: [line] } and never throws; the
+// caller previews it before anything is written.
+function parseAllotmentPaste(text) {
+  var PAN_RE = /\b([A-Z]{5}[0-9]{4}[A-Z])\b/i;
+  var rows = [], skipped = [], seen = {};
+  String(text || '').split(/\r?\n/).forEach(function(line) {
+    var raw = line.trim();
+    if (!raw) return;
+    var m = raw.match(PAN_RE);
+    if (!m) { skipped.push(raw); return; }
+    var pan = m[1].toUpperCase();
+    // Share count. Strip thousands separators first (1,200 is one number, not
+    // two), then prefer a number AFTER the PAN — registrar rows read
+    // "<name> <PAN> <shares>", and a leading serial number or date would
+    // otherwise win. Fall back to a number before the PAN.
+    var norm = function(s) { return s.replace(/(\d),(?=\d\d\d\b)/g, '$1').replace(/[,\t;|]/g, ' '); };
+    var after  = norm(raw.slice(m.index + m[1].length)).match(/\d+/);
+    var before = norm(raw.slice(0, m.index)).match(/\d+/);
+    var num = after || before;
+    var shares = num ? parseInt(num[0], 10) : 0;
+    if (isNaN(shares) || shares < 0) shares = 0;
+    if (seen[pan]) { skipped.push(raw); return; }   // first mention wins
+    seen[pan] = true;
+    rows.push({ pan: pan, shares: shares });
+  });
+  return { rows: rows, skipped: skipped };
+}
+window.parseAllotmentPaste = parseAllotmentPaste;
+
+// Price of one lot = lot size × cut-off price. Derived in the db layer rather
+// than in the form, because the form forgetting to send it is exactly how
+// lot_value stayed NULL on every IPO and left the dashboard reporting a total
+// investment of ₹0 and 0% ROI. Mirrors the fallback buildApplyMessage uses.
+function deriveLotValue(lotSize, bandHigh) {
+  var ls = parseFloat(lotSize)  || 0;
+  var bh = parseFloat(bandHigh) || 0;
+  return ls > 0 && bh > 0 ? Math.round(ls * bh) : null;
+}
+window.deriveLotValue = deriveLotValue;
+
 // ── Shared pool math (single source of truth for profit distribution) ─────────
 // Every screen that splits profit — dashboard KPIs, charts, the Profit Pool
 // screen and the Settlement ledger — goes through PoolMath so the numbers
@@ -169,9 +251,19 @@ function txSettlements(rows) {
 // to the category's net profit (no unallocated/over-allocated paise).
 var PoolMath = {
   // Base math for one category's allotments (same IPO, same category).
+  //
+  // `gross` counts ONLY allotted rows — an application that got nothing cannot
+  // contribute profit. `total` deliberately counts EVERY applicant, allotted or
+  // not: pooling exists so the winners' profit is split across everyone who
+  // applied. That asymmetry is the point of the pool, not a bug.
   category: function(catAllots, stcgRate, brokerageAmt) {
-    var gross     = catAllots.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
-    var stcgAmt   = Math.round(gross * stcgRate / 100);
+    var gross     = catAllots.reduce(function(s, a){
+      return a.status === 'allotted' ? s + (a.gain || 0) : s;
+    }, 0);
+    // No tax on a loss-making pool.
+    var stcgAmt   = gross > 0 ? Math.round(gross * stcgRate / 100) : 0;
+    // A pool never distributes a negative amount: losses are visible per PAN
+    // (see rowGain) but nobody is ever asked to pay money back in.
     var net       = Math.max(0, gross - stcgAmt - brokerageAmt);
     var total     = catAllots.length;
     var perPan    = total > 0 ? Math.floor(net / total) : 0;
@@ -208,6 +300,7 @@ var PoolMath = {
   },
 };
 window.PoolMath = PoolMath;
+// groupNetProfit is exported below, once it is defined.
 
 // Rate resolution used by EVERY profit aggregate. Once a pool is finalized it
 // carries the STCG/brokerage rates used at that moment, so the dashboard, ledger
@@ -222,9 +315,59 @@ function ratesForIpo(ipoId) {
   };
 }
 
+// Brokerage is ONE flat charge per IPO — Settings calls it "flat amount
+// deducted per IPO sell" — but profit is pooled per category. The flat amount
+// used to be handed to every category in full, so a Mainboard IPO with Retail,
+// sHNI and bHNI paid it three times over.
+//
+// Splitting it pro-rata by each category's gross deducts it exactly once,
+// whatever the category count, and charges it where the money actually was.
+// The parts sum EXACTLY to the flat amount: the last category absorbs the
+// rounding, the same technique panAmounts uses for per-PAN remainders.
+function brokerageByCategory(ipoId, brokerageAmt) {
+  var brok  = Number(brokerageAmt) || 0;
+  var gross = {};
+  _allotments.forEach(function(a) {
+    if (a.ipo !== ipoId) return;
+    if (gross[a.category] == null) gross[a.category] = 0;
+    if (a.status === 'allotted') gross[a.category] += (a.gain || 0);
+  });
+
+  var cats = Object.keys(gross);
+  var out  = {};
+  if (!cats.length) return out;
+
+  // Only categories that actually made money can carry a share of the charge.
+  // If none did, spread it evenly — every net floors at 0 either way.
+  var basis = cats.filter(function(c){ return gross[c] > 0; });
+  if (!basis.length) basis = cats;
+
+  var totalGross = basis.reduce(function(s, c){ return s + Math.max(0, gross[c]); }, 0);
+  var assigned   = 0;
+  basis.forEach(function(c, i) {
+    var share = (i === basis.length - 1)
+      ? brok - assigned
+      : (totalGross > 0 ? Math.round(brok * gross[c] / totalGross)
+                        : Math.floor(brok / basis.length));
+    out[c]   = share;
+    assigned += share;
+  });
+  cats.forEach(function(c){ if (out[c] == null) out[c] = 0; });
+  return out;
+}
+
+// Rates to price ONE category of one IPO: that IPO's STCG rate, plus this
+// category's share of its single flat brokerage charge. Every per-category
+// PoolMath call should resolve its rates through here rather than passing the
+// raw flat brokerage, which is what caused the multiple-charge bug.
+function ratesForCategory(ipoId, category) {
+  var r = ratesForIpo(ipoId);
+  return { stcg: r.stcg, brok: brokerageByCategory(ipoId, r.brok)[category] || 0 };
+}
+
 // Total net profit across a set of allotments, grouped by (ipo, category) so
 // STCG and brokerage are applied per category exactly as the pool screen does.
-// Each group is priced with its own IPO's finalized rates via ratesForIpo.
+// Each group is priced with its own IPO's finalized rates via ratesForCategory.
 function groupNetProfit(allots) {
   var groups = {};
   allots.forEach(function(a) {
@@ -232,10 +375,15 @@ function groupNetProfit(allots) {
     (groups[key] = groups[key] || []).push(a);
   });
   return Object.keys(groups).reduce(function(sum, k) {
-    var r = ratesForIpo(groups[k][0].ipo);
+    var head = groups[k][0];
+    var r = ratesForCategory(head.ipo, head.category);
     return sum + PoolMath.category(groups[k], r.stcg, r.brok).net;
   }, 0);
 }
+window.groupNetProfit     = groupNetProfit;
+window.ratesForIpo        = ratesForIpo;
+window.ratesForCategory   = ratesForCategory;
+window.brokerageByCategory = brokerageByCategory;
 
 // ── Computed aggregates ───────────────────────────────────────────────────────
 
@@ -243,11 +391,10 @@ function computeKpis() {
   var allotted  = _allotments.filter(function(a){ return a.status === 'allotted'; });
   var totalNet   = groupNetProfit(_allotments);
   // Invested = capital actually deployed. Only allotted applications tie up money;
-  // non-allotted ASBA applications are refunded, so they don't count.
-  var invested   = allotted.reduce(function(s, a) {
-    var ip = _ipos.find(function(i){ return i.id === a.ipo; });
-    return s + (ip ? ip.lotValue : 0);
-  }, 0);
+  // non-allotted ASBA applications are refunded, so they don't count. Uses the
+  // row's own invest (shares x cut-off price) rather than a flat lot value, so
+  // an HNI allotted 14 lots is not counted as one.
+  var invested   = allotted.reduce(function(s, a){ return s + (a.invest || 0); }, 0);
   var pendingSettlements = _settlements.filter(function(s){ return s.status === 'Pending'; });
   // Counts are IPO-level, not PAN-level: an IPO counts as "applied" if any PAN
   // applied to it, and as "allotted" if at least one PAN got an allotment there.
@@ -338,10 +485,7 @@ function computeCategoryStats() {
     var allotted = apps.filter(function(a){ return a.status === 'allotted'; });
     var ipos     = new Set(apps.map(function(a){ return a.ipo; }));
     var gross    = allotted.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
-    var invested = allotted.reduce(function(s, a) {
-      var ip = _ipos.find(function(i){ return i.id === a.ipo; });
-      return s + (ip ? (ip.lotValue || 0) : 0);
-    }, 0);
+    var invested = allotted.reduce(function(s, a){ return s + (a.invest || 0); }, 0);
     var net = groupNetProfit(apps);
     return {
       cat:      cat,
@@ -371,11 +515,11 @@ function computeMemberProfits() {
   _ipos.forEach(function(ipo) {
     var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
     if (!ipoAllots.length) return;
-    var r = ratesForIpo(ipo.id);
 
     var cats = {};
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
     Object.keys(cats).forEach(function(cat) {
+      var r = ratesForCategory(ipo.id, cat);
       var shares = PoolMath.memberShares(cats[cat], r.stcg, r.brok, panToMember);
       Object.keys(shares).forEach(function(mid) {
         if (!totals[mid]) totals[mid] = { profit: 0, pans: 0 };
@@ -417,7 +561,7 @@ async function loadDB() {
     sb.from('members').select('*').order('name'),
     sb.from('pan_accounts').select('*').order('holder_name'),
     sb.from('ipos').select('*').order('open_date', { ascending: false }),
-    sb.from('allotments').select('*, applications!inner(ipo_id, pan_id, category)'),
+    sb.from('allotments').select('*, applications!inner(ipo_id, pan_id, category, lots)'),
     sb.from('profit_pools').select('*'),
     sb.from('settlements').select('*, profit_pools!inner(ipo_id)').order('created_at', { ascending: false }),
   ]);
@@ -552,7 +696,7 @@ async function loadDB() {
           band_low:      fields.bandLow   || null,
           band_high:     fields.bandHigh  || null,
           lot_size:      fields.lotSize   || null,
-          lot_value:     fields.lotValue  || null,
+          lot_value:     fields.lotValue  || deriveLotValue(fields.lotSize, fields.bandHigh),
           open_date:     fields.openDate  || null,
           close_date:    fields.closeDate || null,
           allot_date:    fields.allotDate || null,
@@ -576,6 +720,16 @@ async function loadDB() {
         if (fields.type          != null) updates.type          = fields.type;
         if (fields.bandHigh      != null) updates.band_high     = fields.bandHigh;
         if (fields.lotSize       != null) updates.lot_size      = fields.lotSize;
+        // Keep lot_value in step with its two inputs, so correcting a price or
+        // lot size on an existing IPO also repairs invested/ROI.
+        if (fields.lotValue != null) {
+          updates.lot_value = fields.lotValue;
+        } else if (fields.lotSize != null || fields.bandHigh != null) {
+          var cur = _ipos.find(function(i){ return i.id === id; }) || {};
+          var lv  = deriveLotValue(fields.lotSize  != null ? fields.lotSize  : cur.lotSize,
+                                   fields.bandHigh != null ? fields.bandHigh : cur.bandHigh);
+          if (lv != null) updates.lot_value = lv;
+        }
         if (fields.status        != null) updates.status        = fields.status;
         if (fields.listPrice     != null) updates.list_price    = fields.listPrice;
         if (fields.listGain      != null) updates.list_gain_pct = fields.listGain;
@@ -897,6 +1051,12 @@ function buildApplyMessage(ip) {
   lines.push('');
   lines.push('👉 Once you apply in your Demat, open this link and fill in your application details:');
   lines.push(url);
+  // Members had no way back into the app once an apply link went stale, so
+  // hand them a bookmarkable link to their own profits every time.
+  if (window.memberHomeLink) {
+    lines.push('');
+    lines.push('💰 Check your profits any time: ' + window.memberHomeLink());
+  }
   return lines.join('\n');
 }
 

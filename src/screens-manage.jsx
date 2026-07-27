@@ -301,6 +301,9 @@ function AdminPanel() {
   const [changes, setChanges] = useState({});
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
+  // Bulk paste of registrar results (see parseAllotmentPaste in db.js)
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
 
   const setChange = (id, field, val) =>
     setChanges(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: val } }));
@@ -311,19 +314,25 @@ function AdminPanel() {
       const dirty = viewRows
         .map(a => {
           const c  = changes[a.id] || {};
-          const sh = parseInt(c.shares ?? a.shares) || 0;
+          const status = c.status ?? a.status;
           const rawSp = c.sellPrice ?? (a.sellPrice != null ? String(a.sellPrice) : '');
           const sp = parseFloat(rawSp) || 0;
           const bandHigh = window.DB.ipo(a.ipo)?.bandHigh || 0;
-          const computedGain = sp > 0 && bandHigh > 0 ? Math.max(0, Math.round((sp - bandHigh) * sh)) : parseFloat(c.gain ?? a.gain) || 0;
+          // Anything not allotted carries no shares, gain or sell price — an
+          // application that got nothing must not survive as profit.
+          const allotted = status === 'allotted';
+          const sh = allotted ? (parseInt(c.shares ?? a.shares) || 0) : 0;
+          const computedGain = sp > 0 && bandHigh > 0
+            ? window.rowGain(status, sp, bandHigh, sh)
+            : (allotted ? parseFloat(c.gain ?? a.gain) || 0 : 0);
           return {
             id:        a.id,
             appId:     a.appId,
             category:  c.category ?? a.category,
-            status:    c.status ?? a.status,
+            status:    status,
             shares:    sh,
             gain:      computedGain,
-            sellPrice: sp > 0 ? sp : null,
+            sellPrice: allotted && sp > 0 ? sp : null,
           };
         })
         .filter((r, i) => {
@@ -1018,34 +1027,35 @@ function AdminPanel() {
         const countBy = s => vAllots.filter(a => (changes[a.id]?.status ?? a.status) === s).length;
         const allotted = countBy('allotted'), notAllot = countBy('not_allotted'), pending = countBy('pending');
         const hasDirty = vAllots.some(a => changes[a.id]);
-        const closeView = () => { setViewIpoId(null); setChanges({}); setSaved(false); setViewListPrice(''); };
+        const closeView = () => { setViewIpoId(null); setChanges({}); setSaved(false); setViewListPrice(''); setPasteOpen(false); setPasteText(''); };
         const lp = parseFloat(viewListPrice) || 0;
         const issuePrice = vIpo?.bandHigh || 0;
-        const autoGain = (sharesVal) => lp > 0 && issuePrice > 0 ? Math.max(0, Math.round((lp - issuePrice) * sharesVal)) : null;
+        const autoGain = (sharesVal) => lp > 0 && issuePrice > 0 ? window.rowGain('allotted', lp, issuePrice, sharesVal) : null;
         const markStatus = (a, val) => {
           if (val === 'allotted') {
             const cur = parseInt(changes[a.id]?.shares ?? a.shares) || 0;
-            const sh  = cur > 0 ? cur : (vIpo?.lotSize || 0);
+            const sh  = cur > 0 ? cur : ((vIpo?.lotSize || 0) * (a.lots || 1));
             const g   = autoGain(sh);
             setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), status: val, shares: sh, ...(g !== null ? { gain: g } : {}) } }));
           } else {
-            setChange(a.id, 'status', val);
+            // Clear the money as well as the flag. "✓ All got" fills a sell
+            // price on every row, so correcting one PAN to ✗/pending must drop
+            // that row's shares, gain and sell price or it keeps paying out.
+            setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), status: val, shares: 0, gain: 0, sellPrice: '' } }));
           }
         };
         const updateShares = (a, val) => {
           const sh  = parseInt(val) || 0;
           const st  = changes[a.id]?.status ?? a.status;
           const rsp = parseFloat(changes[a.id]?.sellPrice) || lp; // row sell price or global
-          const g   = st === 'allotted' && rsp > 0 && issuePrice > 0
-            ? Math.max(0, Math.round((rsp - issuePrice) * sh))
-            : autoGain(sh);
-          setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), shares: val, ...(g !== null ? { gain: g } : {}) } }));
+          const g   = st === 'allotted' ? window.rowGain(st, rsp, issuePrice, sh) : 0;
+          setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), shares: val, gain: g } }));
         };
         const markAllotted = () => setChanges(prev => {
           const n = { ...prev };
           vAllots.forEach(a => {
             const cur = parseInt(n[a.id]?.shares ?? a.shares) || 0;
-            const sh  = cur > 0 ? cur : (vIpo?.lotSize || 0);
+            const sh  = cur > 0 ? cur : ((vIpo?.lotSize || 0) * (a.lots || 1));
             const g   = autoGain(sh);
             n[a.id]   = { ...(n[a.id] || {}), status: 'allotted', shares: sh,
               ...(lp > 0 ? { sellPrice: String(lp) } : {}),
@@ -1055,9 +1065,39 @@ function AdminPanel() {
         });
         const markNone = () => setChanges(prev => {
           const n = { ...prev };
-          vAllots.forEach(a => { n[a.id] = { ...(n[a.id] || {}), status: 'not_allotted' }; });
+          vAllots.forEach(a => { n[a.id] = { ...(n[a.id] || {}), status: 'not_allotted', shares: 0, gain: 0, sellPrice: '' }; });
           return n;
         });
+
+        // ── Bulk paste of registrar results ──────────────────────────────────
+        // Parsed live so the admin sees what will happen before committing, and
+        // applied into `changes` rather than straight to the database: the
+        // normal review-then-Save path already handles status, gain and sell
+        // price consistently, so the paste gets those guarantees for free.
+        const pasteParsed = window.parseAllotmentPaste(pasteText);
+        const panIndex = {};
+        vAllots.forEach(a => { const p = D.pan(a.pan); if (p?.pan) panIndex[String(p.pan).toUpperCase()] = a; });
+        const pasteMatched = pasteParsed.rows.filter(r => panIndex[r.pan]);
+        const pasteUnknown = pasteParsed.rows.filter(r => !panIndex[r.pan]);
+        const pasteGot     = pasteMatched.filter(r => r.shares > 0).length;
+        const applyPaste = () => {
+          const next = {};
+          pasteMatched.forEach(r => {
+            const a = panIndex[r.pan];
+            if (r.shares > 0) {
+              const cur = changes[a.id]?.sellPrice ?? (a.sellPrice != null ? String(a.sellPrice) : '');
+              const sp  = parseFloat(cur) || lp;
+              next[a.id] = { ...(changes[a.id] || {}), status: 'allotted', shares: r.shares,
+                sellPrice: sp > 0 ? String(sp) : '',
+                gain: window.rowGain('allotted', sp, issuePrice, r.shares) };
+            } else {
+              next[a.id] = { ...(changes[a.id] || {}), status: 'not_allotted', shares: 0, gain: 0, sellPrice: '' };
+            }
+          });
+          setChanges(prev => ({ ...prev, ...next }));
+          setPasteOpen(false); setPasteText('');
+        };
+
         return (
           <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 12 }}>
             <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 680, boxShadow: 'var(--sh-pop)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
@@ -1113,8 +1153,53 @@ function AdminPanel() {
                     )}
                   </div>
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                    <button onClick={() => setPasteOpen(o => !o)} style={{ border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', padding: '4px 10px', fontSize: 12, fontWeight: 700, background: pasteOpen ? 'var(--bg)' : 'transparent', color: 'var(--ink-2)', cursor: 'pointer' }}>⇥ Paste results</button>
                     <button onClick={markAllotted} style={{ border: '1px solid var(--profit)', borderRadius: 'var(--r-sm)', padding: '4px 10px', fontSize: 12, fontWeight: 700, background: 'var(--profit-soft)', color: 'var(--profit)', cursor: 'pointer' }}>✓ All got</button>
                     <button onClick={markNone}     style={{ border: '1px solid var(--loss)',   borderRadius: 'var(--r-sm)', padding: '4px 10px', fontSize: 12, fontWeight: 700, background: 'var(--loss-soft)',   color: 'var(--loss)',   cursor: 'pointer' }}>✗ None got</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Bulk paste panel */}
+              {pasteOpen && vAllots.length > 0 && (
+                <div style={{ padding: '12px 20px', background: 'var(--bg)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink-2)' }}>Paste the registrar's allotment results</div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, marginBottom: 8 }}>
+                    One PAN per line with the shares allotted — commas, tabs or spaces all work. Zero or no number means not allotted. Headings and totals are ignored.
+                  </div>
+                  <textarea value={pasteText} onChange={e => setPasteText(e.target.value)} rows={5}
+                    placeholder={'ABCDE1234F\t30\nFGHIJ5678K\t0'}
+                    style={{ ...inputSt, width: '100%', fontSize: 12.5, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', resize: 'vertical' }} />
+                  {pasteText.trim() && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 600, flex: 1, minWidth: 200 }}>
+                        {pasteMatched.length === 0 ? (
+                          <span style={{ color: 'var(--loss)' }}>No pasted PAN matches an applicant for this IPO.</span>
+                        ) : (
+                          <>
+                            <strong>{pasteMatched.length}</strong> of {vAllots.length} applicants matched
+                            {' · '}<span style={{ color: 'var(--profit)', fontWeight: 700 }}>✓ {pasteGot}</span>
+                            {' · '}<span style={{ color: 'var(--loss)', fontWeight: 700 }}>✗ {pasteMatched.length - pasteGot}</span>
+                            {pasteUnknown.length > 0 && (
+                              <div style={{ color: 'var(--warn)', fontSize: 11, fontWeight: 600, marginTop: 3 }}>
+                                {pasteUnknown.length} PAN{pasteUnknown.length !== 1 ? 's' : ''} not in this IPO — skipped: {pasteUnknown.slice(0, 3).map(r => r.pan).join(', ')}{pasteUnknown.length > 3 ? '…' : ''}
+                              </div>
+                            )}
+                            {pasteParsed.skipped.length > 0 && (
+                              <div style={{ color: 'var(--ink-3)', fontSize: 11, marginTop: 2 }}>
+                                {pasteParsed.skipped.length} line{pasteParsed.skipped.length !== 1 ? 's' : ''} without a PAN ignored
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      <Button variant="primary" size="sm" disabled={pasteMatched.length === 0} onClick={applyPaste}>
+                        Fill {pasteMatched.length} row{pasteMatched.length !== 1 ? 's' : ''}
+                      </Button>
+                    </div>
+                  )}
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>
+                    Nothing is saved yet — review the table below, then click Save changes.
                   </div>
                 </div>
               )}
@@ -1151,7 +1236,7 @@ function AdminPanel() {
                         const sellPrice = changes[a.id]?.sellPrice ?? (a.sellPrice != null ? String(a.sellPrice) : '');
                         const rowBg     = status === 'allotted' ? 'var(--profit-soft)' : status === 'not_allotted' ? 'var(--loss-soft)' : 'transparent';
                         const sp = parseFloat(sellPrice) || 0;
-                        const computedGain = sp > 0 && issuePrice > 0 ? Math.max(0, Math.round((sp - issuePrice) * (parseInt(shares) || 0))) : gain;
+                        const computedGain = sp > 0 && issuePrice > 0 ? window.rowGain(status, sp, issuePrice, shares) : gain;
                         return (
                           <tr key={a.id} style={{ borderTop: '1px solid var(--border)', background: rowBg }}>
                             <td style={{ padding: '10px 8px 10px 16px' }}>
@@ -1185,6 +1270,11 @@ function AdminPanel() {
                               <input type="number" min="0" value={shares}
                                 onChange={e => updateShares(a, e.target.value)}
                                 style={{ ...inputSt, width: 74, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
+                              {a.lots > 1 && (
+                                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
+                                  applied {a.lots} lots{vIpo?.lotSize ? ` · ${(a.lots * vIpo.lotSize).toLocaleString('en-IN')} sh` : ''}
+                                </div>
+                              )}
                             </td>
                             <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                               {status === 'allotted' ? (
@@ -1193,14 +1283,14 @@ function AdminPanel() {
                                     onChange={e => {
                                       const sp = parseFloat(e.target.value) || 0;
                                       const sh = parseInt(changes[a.id]?.shares ?? a.shares) || 0;
-                                      const g  = sp > 0 && issuePrice > 0 ? Math.max(0, Math.round((sp - issuePrice) * sh)) : 0;
+                                      const g  = window.rowGain(status, sp, issuePrice, sh);
                                       setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), sellPrice: e.target.value, gain: g } }));
                                     }}
                                     placeholder={lp > 0 ? String(lp) : 'e.g. 415.00'}
                                     style={{ ...inputSt, width: 104, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
-                                  {computedGain > 0 && (
-                                    <div className="num" style={{ fontSize: 11.5, color: 'var(--profit)', fontWeight: 700, marginTop: 2 }}>
-                                      = +{D.fmtINR(computedGain, { compact: true })} gain
+                                  {computedGain !== 0 && (
+                                    <div className="num" style={{ fontSize: 11.5, color: computedGain > 0 ? 'var(--profit)' : 'var(--loss)', fontWeight: 700, marginTop: 2 }}>
+                                      = {computedGain > 0 ? '+' : '−'}{D.fmtINR(Math.abs(computedGain), { compact: true })} {computedGain > 0 ? 'gain' : 'loss'}
                                     </div>
                                   )}
                                 </>
