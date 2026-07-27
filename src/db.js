@@ -161,6 +161,27 @@ function txSettlements(rows) {
   });
 }
 
+// Realised gain for a single allotment row, and the one place that decides it.
+//
+// Two rules, both learned the hard way:
+//  1. A row that is not `allotted` has no gain. The admin flow is "✓ All got"
+//     (which fills a sell price on every row) followed by correcting the few
+//     PANs that missed out — so a stale sell price left on a "✗" row used to
+//     keep producing profit and was distributed to every member.
+//  2. The result is NOT clamped at zero. A listing below the issue price is a
+//     real loss and has to be visible; flooring it here would report a genuine
+//     loss as "no profit". The floor belongs on the pool's distributable net
+//     (PoolMath.category), not on the truth of what a PAN actually made.
+function rowGain(status, sellPrice, issuePrice, shares) {
+  if (status !== 'allotted') return 0;
+  var sp = parseFloat(sellPrice)  || 0;
+  var ip = parseFloat(issuePrice) || 0;
+  var sh = parseInt(shares, 10)   || 0;
+  if (sp <= 0 || ip <= 0 || sh <= 0) return 0;
+  return Math.round((sp - ip) * sh);
+}
+window.rowGain = rowGain;
+
 // ── Shared pool math (single source of truth for profit distribution) ─────────
 // Every screen that splits profit — dashboard KPIs, charts, the Profit Pool
 // screen and the Settlement ledger — goes through PoolMath so the numbers
@@ -169,9 +190,19 @@ function txSettlements(rows) {
 // to the category's net profit (no unallocated/over-allocated paise).
 var PoolMath = {
   // Base math for one category's allotments (same IPO, same category).
+  //
+  // `gross` counts ONLY allotted rows — an application that got nothing cannot
+  // contribute profit. `total` deliberately counts EVERY applicant, allotted or
+  // not: pooling exists so the winners' profit is split across everyone who
+  // applied. That asymmetry is the point of the pool, not a bug.
   category: function(catAllots, stcgRate, brokerageAmt) {
-    var gross     = catAllots.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
-    var stcgAmt   = Math.round(gross * stcgRate / 100);
+    var gross     = catAllots.reduce(function(s, a){
+      return a.status === 'allotted' ? s + (a.gain || 0) : s;
+    }, 0);
+    // No tax on a loss-making pool.
+    var stcgAmt   = gross > 0 ? Math.round(gross * stcgRate / 100) : 0;
+    // A pool never distributes a negative amount: losses are visible per PAN
+    // (see rowGain) but nobody is ever asked to pay money back in.
     var net       = Math.max(0, gross - stcgAmt - brokerageAmt);
     var total     = catAllots.length;
     var perPan    = total > 0 ? Math.floor(net / total) : 0;

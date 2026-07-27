@@ -311,19 +311,25 @@ function AdminPanel() {
       const dirty = viewRows
         .map(a => {
           const c  = changes[a.id] || {};
-          const sh = parseInt(c.shares ?? a.shares) || 0;
+          const status = c.status ?? a.status;
           const rawSp = c.sellPrice ?? (a.sellPrice != null ? String(a.sellPrice) : '');
           const sp = parseFloat(rawSp) || 0;
           const bandHigh = window.DB.ipo(a.ipo)?.bandHigh || 0;
-          const computedGain = sp > 0 && bandHigh > 0 ? Math.max(0, Math.round((sp - bandHigh) * sh)) : parseFloat(c.gain ?? a.gain) || 0;
+          // Anything not allotted carries no shares, gain or sell price — an
+          // application that got nothing must not survive as profit.
+          const allotted = status === 'allotted';
+          const sh = allotted ? (parseInt(c.shares ?? a.shares) || 0) : 0;
+          const computedGain = sp > 0 && bandHigh > 0
+            ? window.rowGain(status, sp, bandHigh, sh)
+            : (allotted ? parseFloat(c.gain ?? a.gain) || 0 : 0);
           return {
             id:        a.id,
             appId:     a.appId,
             category:  c.category ?? a.category,
-            status:    c.status ?? a.status,
+            status:    status,
             shares:    sh,
             gain:      computedGain,
-            sellPrice: sp > 0 ? sp : null,
+            sellPrice: allotted && sp > 0 ? sp : null,
           };
         })
         .filter((r, i) => {
@@ -1021,7 +1027,7 @@ function AdminPanel() {
         const closeView = () => { setViewIpoId(null); setChanges({}); setSaved(false); setViewListPrice(''); };
         const lp = parseFloat(viewListPrice) || 0;
         const issuePrice = vIpo?.bandHigh || 0;
-        const autoGain = (sharesVal) => lp > 0 && issuePrice > 0 ? Math.max(0, Math.round((lp - issuePrice) * sharesVal)) : null;
+        const autoGain = (sharesVal) => lp > 0 && issuePrice > 0 ? window.rowGain('allotted', lp, issuePrice, sharesVal) : null;
         const markStatus = (a, val) => {
           if (val === 'allotted') {
             const cur = parseInt(changes[a.id]?.shares ?? a.shares) || 0;
@@ -1029,17 +1035,18 @@ function AdminPanel() {
             const g   = autoGain(sh);
             setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), status: val, shares: sh, ...(g !== null ? { gain: g } : {}) } }));
           } else {
-            setChange(a.id, 'status', val);
+            // Clear the money as well as the flag. "✓ All got" fills a sell
+            // price on every row, so correcting one PAN to ✗/pending must drop
+            // that row's shares, gain and sell price or it keeps paying out.
+            setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), status: val, shares: 0, gain: 0, sellPrice: '' } }));
           }
         };
         const updateShares = (a, val) => {
           const sh  = parseInt(val) || 0;
           const st  = changes[a.id]?.status ?? a.status;
           const rsp = parseFloat(changes[a.id]?.sellPrice) || lp; // row sell price or global
-          const g   = st === 'allotted' && rsp > 0 && issuePrice > 0
-            ? Math.max(0, Math.round((rsp - issuePrice) * sh))
-            : autoGain(sh);
-          setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), shares: val, ...(g !== null ? { gain: g } : {}) } }));
+          const g   = st === 'allotted' ? window.rowGain(st, rsp, issuePrice, sh) : 0;
+          setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), shares: val, gain: g } }));
         };
         const markAllotted = () => setChanges(prev => {
           const n = { ...prev };
@@ -1055,7 +1062,7 @@ function AdminPanel() {
         });
         const markNone = () => setChanges(prev => {
           const n = { ...prev };
-          vAllots.forEach(a => { n[a.id] = { ...(n[a.id] || {}), status: 'not_allotted' }; });
+          vAllots.forEach(a => { n[a.id] = { ...(n[a.id] || {}), status: 'not_allotted', shares: 0, gain: 0, sellPrice: '' }; });
           return n;
         });
         return (
@@ -1151,7 +1158,7 @@ function AdminPanel() {
                         const sellPrice = changes[a.id]?.sellPrice ?? (a.sellPrice != null ? String(a.sellPrice) : '');
                         const rowBg     = status === 'allotted' ? 'var(--profit-soft)' : status === 'not_allotted' ? 'var(--loss-soft)' : 'transparent';
                         const sp = parseFloat(sellPrice) || 0;
-                        const computedGain = sp > 0 && issuePrice > 0 ? Math.max(0, Math.round((sp - issuePrice) * (parseInt(shares) || 0))) : gain;
+                        const computedGain = sp > 0 && issuePrice > 0 ? window.rowGain(status, sp, issuePrice, shares) : gain;
                         return (
                           <tr key={a.id} style={{ borderTop: '1px solid var(--border)', background: rowBg }}>
                             <td style={{ padding: '10px 8px 10px 16px' }}>
@@ -1193,14 +1200,14 @@ function AdminPanel() {
                                     onChange={e => {
                                       const sp = parseFloat(e.target.value) || 0;
                                       const sh = parseInt(changes[a.id]?.shares ?? a.shares) || 0;
-                                      const g  = sp > 0 && issuePrice > 0 ? Math.max(0, Math.round((sp - issuePrice) * sh)) : 0;
+                                      const g  = window.rowGain(status, sp, issuePrice, sh);
                                       setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), sellPrice: e.target.value, gain: g } }));
                                     }}
                                     placeholder={lp > 0 ? String(lp) : 'e.g. 415.00'}
                                     style={{ ...inputSt, width: 104, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
-                                  {computedGain > 0 && (
-                                    <div className="num" style={{ fontSize: 11.5, color: 'var(--profit)', fontWeight: 700, marginTop: 2 }}>
-                                      = +{D.fmtINR(computedGain, { compact: true })} gain
+                                  {computedGain !== 0 && (
+                                    <div className="num" style={{ fontSize: 11.5, color: computedGain > 0 ? 'var(--profit)' : 'var(--loss)', fontWeight: 700, marginTop: 2 }}>
+                                      = {computedGain > 0 ? '+' : '−'}{D.fmtINR(Math.abs(computedGain), { compact: true })} {computedGain > 0 ? 'gain' : 'loss'}
                                     </div>
                                   )}
                                 </>
