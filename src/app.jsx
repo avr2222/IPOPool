@@ -123,10 +123,6 @@ function Topbar({ route, navigate, dark, setDark }) {
         <div className="topbar-sub" style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>{sub}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div className="topbar-search" title="Search coming soon" style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '8px 13px', width: 220, opacity: .5, cursor: 'not-allowed' }}>
-          <Icon name="search" size={16} color="var(--ink-3)" />
-          <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>Search coming soon…</span>
-        </div>
         {window.DB?.kpis?.profit > 0 && (
           <div className="topbar-profit" style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'var(--profit-soft)', borderRadius: 'var(--r-md)', padding: '7px 12px' }}>
             <Icon name="trend" size={15} color="var(--profit)" />
@@ -134,7 +130,6 @@ function Topbar({ route, navigate, dark, setDark }) {
           </div>
         )}
         <IconButton name={dark ? 'sun' : 'moon'} onClick={() => setDark(!dark)} tip="Toggle theme" />
-        <IconButton name="bell" tip="No notifications" onClick={() => {}} />
       </div>
     </header>
   );
@@ -179,7 +174,6 @@ function MobileTopbar({ route, dark, setDark }) {
       </div>
       <div style={{ display: 'flex', gap: 4 }}>
         <IconButton name={dark ? 'sun' : 'moon'} size={36} onClick={() => setDark(!dark)} tip="Toggle theme" />
-        <IconButton name="bell" size={36} />
       </div>
     </header>
   );

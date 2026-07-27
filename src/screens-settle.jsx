@@ -225,8 +225,13 @@ function SettlementLedger({ navigate, id }) {
     D.mutations.markPoolSettled(pool.ipo).catch(e => console.warn('[IPOPool] auto-settle failed', e));
   }, [pool?.ipo, pool?.status, rows]);
 
+  // Surfaced, not swallowed: markSettlementPaid throws a useful
+  // "check admin permissions" message that used to go only to the console,
+  // leaving the row silently Pending with no explanation.
+  const [payErr, setPayErr] = useState('');
+
   const markPaid = async (settlementId) => {
-    setMarking(settlementId);
+    setMarking(settlementId); setPayErr('');
     try {
       await D.mutations.markSettlementPaid(settlementId);
       const updated = D.settlements.filter(s => s.ipo === selIpo);
@@ -234,7 +239,7 @@ function SettlementLedger({ navigate, id }) {
       if (updated.length > 0 && updated.every(s => s.status === 'Paid')) {
         await D.mutations.markPoolSettled(selIpo);
       }
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error(e); setPayErr(e.message || 'Could not mark this payment as paid.'); }
     setMarking(null);
   };
 
@@ -242,7 +247,7 @@ function SettlementLedger({ navigate, id }) {
   const markAllPaid = async () => {
     const pending = rows.filter(r => r.status === 'Pending');
     if (!pending.length) return;
-    setMarkingAll(true);
+    setMarkingAll(true); setPayErr('');
     try {
       for (const r of pending) {
         await D.mutations.markSettlementPaid(r.id);
@@ -252,7 +257,7 @@ function SettlementLedger({ navigate, id }) {
       if (updated.length > 0 && updated.every(s => s.status === 'Paid')) {
         await D.mutations.markPoolSettled(selIpo);
       }
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error(e); setPayErr(e.message || 'Could not mark these payments as paid.'); }
     setMarkingAll(false);
   };
 
@@ -301,6 +306,17 @@ function SettlementLedger({ navigate, id }) {
           </Button>
         )}
       </div>
+
+      {/* Payment failure. markSettlementPaid throws a specific reason (usually
+          "check admin permissions") that previously reached only the console,
+          leaving the row Pending with no explanation on screen. */}
+      {payErr && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 20px', background: 'var(--loss-soft)', borderRadius: 'var(--r-lg)', border: '1px solid var(--loss)' }}>
+          <Icon name="x" size={18} color="var(--loss)" />
+          <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: 'var(--loss)' }}>{payErr}</div>
+          <button onClick={() => setPayErr('')} style={{ border: 'none', background: 'none', color: 'var(--ink-3)', fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}>Dismiss</button>
+        </div>
+      )}
 
       {/* Stale-ledger warning. Deliberately does NOT rewrite the amounts: some
           of these rows may already have been paid, so correcting them silently

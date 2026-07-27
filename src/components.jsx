@@ -78,7 +78,7 @@ function Card({ children, pad = 18, className = '', style = {}, hover = false, o
 }
 
 // ---------- Badge / Pill ----------
-function Badge({ children, tone = 'neutral', size = 'sm', icon }) {
+function Badge({ children, tone = 'neutral', size = 'sm', icon, style = {} }) {
   const tones = {
     neutral: ['var(--ink-2)', 'var(--bg)'],
     profit: ['var(--profit)', 'var(--profit-soft)'],
@@ -94,7 +94,7 @@ function Badge({ children, tone = 'neutral', size = 'sm', icon }) {
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 4, color: c, background: bg,
       fontWeight: 700, fontSize: size === 'sm' ? 11.5 : 13, padding: size === 'sm' ? '3px 9px' : '5px 12px',
-      borderRadius: 999, lineHeight: 1.3, whiteSpace: 'nowrap',
+      borderRadius: 999, lineHeight: 1.3, whiteSpace: 'nowrap', ...style,
     }}>
       {icon && <Icon name={icon} size={size === 'sm' ? 12 : 14} stroke={2.4} />}
       {children}

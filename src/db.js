@@ -391,11 +391,10 @@ function computeKpis() {
   var allotted  = _allotments.filter(function(a){ return a.status === 'allotted'; });
   var totalNet   = groupNetProfit(_allotments);
   // Invested = capital actually deployed. Only allotted applications tie up money;
-  // non-allotted ASBA applications are refunded, so they don't count.
-  var invested   = allotted.reduce(function(s, a) {
-    var ip = _ipos.find(function(i){ return i.id === a.ipo; });
-    return s + (ip ? ip.lotValue : 0);
-  }, 0);
+  // non-allotted ASBA applications are refunded, so they don't count. Uses the
+  // row's own invest (shares x cut-off price) rather than a flat lot value, so
+  // an HNI allotted 14 lots is not counted as one.
+  var invested   = allotted.reduce(function(s, a){ return s + (a.invest || 0); }, 0);
   var pendingSettlements = _settlements.filter(function(s){ return s.status === 'Pending'; });
   // Counts are IPO-level, not PAN-level: an IPO counts as "applied" if any PAN
   // applied to it, and as "allotted" if at least one PAN got an allotment there.
@@ -486,10 +485,7 @@ function computeCategoryStats() {
     var allotted = apps.filter(function(a){ return a.status === 'allotted'; });
     var ipos     = new Set(apps.map(function(a){ return a.ipo; }));
     var gross    = allotted.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
-    var invested = allotted.reduce(function(s, a) {
-      var ip = _ipos.find(function(i){ return i.id === a.ipo; });
-      return s + (ip ? (ip.lotValue || 0) : 0);
-    }, 0);
+    var invested = allotted.reduce(function(s, a){ return s + (a.invest || 0); }, 0);
     var net = groupNetProfit(apps);
     return {
       cat:      cat,
