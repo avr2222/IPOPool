@@ -125,10 +125,21 @@ function txAllotments(rows) {
       ipo:       ipoId,
       pan:       r.applications.pan_id,
       category:  r.applications.category,
+      // Lots the member said they applied for. Without this the admin cannot
+      // see that an sHNI applied for 14 lots and has to retype every HNI share
+      // count by hand.
+      lots:      r.applications.lots || 1,
       status:    r.status,
       shares:    r.shares || 0,
       gain:      r.gain   || 0,
-      invest:    ipo ? (ipo.lotValue || 0) : 0,
+      // Capital actually tied up: the shares allotted at the cut-off price.
+      // A flat "one lot" understated every HNI row (an sHNI allotted 14 lots
+      // reported one), and multiplying lots applied would overstate a partial
+      // allotment, since ASBA releases the unallotted portion. Falls back to
+      // one lot's value when shares are not recorded yet.
+      invest:    (r.shares > 0 && ipo && ipo.bandHigh)
+                   ? Math.round(r.shares * ipo.bandHigh)
+                   : (ipo ? (ipo.lotValue || 0) : 0),
       sellPrice: r.sell_price != null ? parseFloat(r.sell_price) : null,
     };
   });
@@ -181,6 +192,45 @@ function rowGain(status, sellPrice, issuePrice, shares) {
   return Math.round((sp - ip) * sh);
 }
 window.rowGain = rowGain;
+
+// Parse allotment results pasted from a registrar, so the admin stops typing
+// every row by hand on listing day.
+//
+// One row per line: the PAN somewhere in the line, and the share count. Any of
+// comma / tab / semicolon / pipe / whitespace separates them, since what comes
+// off a registrar site or a spreadsheet varies. Lines without a PAN-shaped
+// token (5 letters, 4 digits, 1 letter) are ignored, which drops headers and
+// blurb without the admin having to clean the text up first. A missing or zero
+// share count means "not allotted" — that is the registrar's own convention.
+//
+// Returns { rows: [{ pan, shares }], skipped: [line] } and never throws; the
+// caller previews it before anything is written.
+function parseAllotmentPaste(text) {
+  var PAN_RE = /\b([A-Z]{5}[0-9]{4}[A-Z])\b/i;
+  var rows = [], skipped = [], seen = {};
+  String(text || '').split(/\r?\n/).forEach(function(line) {
+    var raw = line.trim();
+    if (!raw) return;
+    var m = raw.match(PAN_RE);
+    if (!m) { skipped.push(raw); return; }
+    var pan = m[1].toUpperCase();
+    // Share count. Strip thousands separators first (1,200 is one number, not
+    // two), then prefer a number AFTER the PAN — registrar rows read
+    // "<name> <PAN> <shares>", and a leading serial number or date would
+    // otherwise win. Fall back to a number before the PAN.
+    var norm = function(s) { return s.replace(/(\d),(?=\d\d\d\b)/g, '$1').replace(/[,\t;|]/g, ' '); };
+    var after  = norm(raw.slice(m.index + m[1].length)).match(/\d+/);
+    var before = norm(raw.slice(0, m.index)).match(/\d+/);
+    var num = after || before;
+    var shares = num ? parseInt(num[0], 10) : 0;
+    if (isNaN(shares) || shares < 0) shares = 0;
+    if (seen[pan]) { skipped.push(raw); return; }   // first mention wins
+    seen[pan] = true;
+    rows.push({ pan: pan, shares: shares });
+  });
+  return { rows: rows, skipped: skipped };
+}
+window.parseAllotmentPaste = parseAllotmentPaste;
 
 // Price of one lot = lot size × cut-off price. Derived in the db layer rather
 // than in the form, because the form forgetting to send it is exactly how
@@ -515,7 +565,7 @@ async function loadDB() {
     sb.from('members').select('*').order('name'),
     sb.from('pan_accounts').select('*').order('holder_name'),
     sb.from('ipos').select('*').order('open_date', { ascending: false }),
-    sb.from('allotments').select('*, applications!inner(ipo_id, pan_id, category)'),
+    sb.from('allotments').select('*, applications!inner(ipo_id, pan_id, category, lots)'),
     sb.from('profit_pools').select('*'),
     sb.from('settlements').select('*, profit_pools!inner(ipo_id)').order('created_at', { ascending: false }),
   ]);
@@ -1005,6 +1055,12 @@ function buildApplyMessage(ip) {
   lines.push('');
   lines.push('👉 Once you apply in your Demat, open this link and fill in your application details:');
   lines.push(url);
+  // Members had no way back into the app once an apply link went stale, so
+  // hand them a bookmarkable link to their own profits every time.
+  if (window.memberHomeLink) {
+    lines.push('');
+    lines.push('💰 Check your profits any time: ' + window.memberHomeLink());
+  }
   return lines.join('\n');
 }
 

@@ -23,18 +23,22 @@ function catMinLots(cat, lotValue) {
   return Math.floor(floor / lotValue) + 1;
 }
 
+// ipoId is null when opened at #/me — the standalone "my profits" entry point.
+// Members previously had to dig out an old apply link to check what they were
+// owed, because the bare URL shows an admin login they can never get past.
 function MemberPortal({ ipoId }) {
+  const applyMode = !!ipoId;
   const [ipo,     setIpo]     = useState(null);
   const [ipoErr,  setIpoErr]  = useState('');
-  const [tab,     setTab]     = useState('apply');
+  const [tab,     setTab]     = useState(applyMode ? 'apply' : 'summary');
   const [session, setSession] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem(MEMBER_SESSION_KEY) || 'null'); }
     catch (e) { return null; }
   });
 
-  // Load the linked IPO once (works pre-login).
+  // Load the linked IPO once (works pre-login). Nothing to load at #/me.
   useEffect(() => {
-    if (!ipoId) { setIpoErr('This link is missing an IPO.'); return; }
+    if (!applyMode) return;
     let alive = true;
     window.MemberAPI.getApplyIpo(ipoId)
       .then(d => { if (alive) { if (d) setIpo(d); else setIpoErr('This IPO could not be found.'); } })
@@ -72,18 +76,21 @@ function MemberPortal({ ipoId }) {
             ? <MemberLogin ipo={ipo} onLogin={onLogin} />
             : (
               <>
-                <div style={{ display: 'flex', gap: 6, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 4, marginBottom: 16 }}>
-                  {[['apply', 'Apply'], ['summary', 'My profits']].map(([key, label]) => (
-                    <button key={key} onClick={() => setTab(key)} style={{
-                      flex: 1, border: 'none', borderRadius: 'var(--r-sm)', padding: '9px 12px', cursor: 'pointer',
-                      fontSize: 13.5, fontWeight: 700,
-                      background: tab === key ? 'var(--surface)' : 'transparent',
-                      color: tab === key ? 'var(--brand)' : 'var(--ink-3)',
-                      boxShadow: tab === key ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,.06))' : 'none',
-                    }}>{label}</button>
-                  ))}
-                </div>
-                {tab === 'apply'
+                {/* No tab bar at #/me — there is no IPO to apply to. */}
+                {applyMode && (
+                  <div style={{ display: 'flex', gap: 6, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 4, marginBottom: 16 }}>
+                    {[['apply', 'Apply'], ['summary', 'My profits']].map(([key, label]) => (
+                      <button key={key} onClick={() => setTab(key)} style={{
+                        flex: 1, border: 'none', borderRadius: 'var(--r-sm)', padding: '9px 12px', cursor: 'pointer',
+                        fontSize: 13.5, fontWeight: 700,
+                        background: tab === key ? 'var(--surface)' : 'transparent',
+                        color: tab === key ? 'var(--brand)' : 'var(--ink-3)',
+                        boxShadow: tab === key ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,.06))' : 'none',
+                      }}>{label}</button>
+                    ))}
+                  </div>
+                )}
+                {applyMode && tab === 'apply'
                   ? <MemberApply ipo={ipo} session={session} />
                   : <MemberSummary session={session} />}
               </>

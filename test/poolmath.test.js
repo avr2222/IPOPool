@@ -87,6 +87,35 @@ section('STCG on a profitable pool');
   check('net = gross - stcg', m.net === 85000, 'net=' + m.net);
 }
 
+// ── registrar paste parser ──────────────────────────────────────────────────
+section('parseAllotmentPaste (bulk allotment import)');
+{
+  const p = win.parseAllotmentPaste;
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  check('tab-separated, header ignored',
+    eq(p('PAN\tShares\nABCDE1234F\t30\nFGHIJ5678K\t0').rows,
+       [{ pan: 'ABCDE1234F', shares: 30 }, { pan: 'FGHIJ5678K', shares: 0 }]));
+  check('comma-separated', eq(p('ABCDE1234F,30').rows, [{ pan: 'ABCDE1234F', shares: 30 }]));
+  check('pipe-separated',  eq(p('ABCDE1234F|30|allotted').rows, [{ pan: 'ABCDE1234F', shares: 30 }]));
+  check('lower-case PAN is normalised',
+    eq(p('abcde1234f 15').rows, [{ pan: 'ABCDE1234F', shares: 15 }]));
+  check('thousands separator is one number, not two',
+    eq(p('Rao ABCDE1234F 1,200 Allotted').rows, [{ pan: 'ABCDE1234F', shares: 1200 }]));
+  check('a leading serial or date does not win over the share count',
+    eq(p('1  12/05/2026  ABCDE1234F  1,200').rows, [{ pan: 'ABCDE1234F', shares: 1200 }]));
+  check('shares before the PAN still parse',
+    eq(p('30 ABCDE1234F').rows, [{ pan: 'ABCDE1234F', shares: 30 }]));
+  check('no number means not allotted',
+    eq(p('ABCDE1234F Not Allotted').rows, [{ pan: 'ABCDE1234F', shares: 0 }]));
+  check('lines without a PAN are skipped, not guessed at',
+    eq(p('Allotment Status\n\nABCDE1234F 30\nTotal: 30 shares').rows,
+       [{ pan: 'ABCDE1234F', shares: 30 }]));
+  check('a repeated PAN is reported once (first wins)',
+    eq(p('ABCDE1234F 30\nABCDE1234F 60').rows, [{ pan: 'ABCDE1234F', shares: 30 }]));
+  check('empty input is empty output', eq(p('').rows, []) && eq(p(null).rows, []));
+}
+
 // ── 1.4  brokerage is charged exactly once per IPO ──────────────────────────
 section('1.4  brokerage charged once per IPO, not once per category');
 {
