@@ -106,6 +106,31 @@ function SettlementLedger({ navigate, id }) {
   // Settlement rows for this IPO
   const [rows, setRows] = useState(D.settlements.filter(s => s.ipo === selIpo));
 
+  // A settlement row is a snapshot taken at Finalize. Editing allotments
+  // afterwards — a corrected sell price, a category change, a PAN that turned
+  // out not to be allotted — changes what the pool math produces but leaves the
+  // ledger untouched, so the amounts here can quietly stop matching the data
+  // they came from. Rather than trust a flag, recompute the split and compare:
+  // it catches every route by which the two can diverge.
+  const ledgerStale = useMemo(() => {
+    if (!rows.length) return false;
+    const expected = {};
+    categories.forEach(cat => {
+      const cr = window.ratesForCategory(selIpo, cat);
+      const shares = window.PoolMath.memberShares(
+        ipoAllots.filter(a => a.category === cat), cr.stcg, cr.brok, panToMember);
+      Object.keys(shares).forEach(mid => { expected[mid + '|' + cat] = shares[mid].share; });
+    });
+    const seen = new Set();
+    for (const r of rows) {
+      const k = r.member + '|' + r.category;
+      seen.add(k);
+      if (expected[k] === undefined || expected[k] !== r.amount) return true;
+    }
+    // A member who now qualifies but has no ledger row is equally stale.
+    return Object.keys(expected).some(k => !seen.has(k));
+  }, [rows, ipoAllots, categories, selIpo]);
+
   // ── Net position per member (single source for both the transfer plan and the
   // net-position display, so the two can never drift) ───────────────────────────
   //   received = gross gain from their allotted PANs (money already in account)
@@ -276,6 +301,22 @@ function SettlementLedger({ navigate, id }) {
           </Button>
         )}
       </div>
+
+      {/* Stale-ledger warning. Deliberately does NOT rewrite the amounts: some
+          of these rows may already have been paid, so correcting them silently
+          would be worse than saying so and letting the admin re-finalize. */}
+      {ledgerStale && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 20px', background: 'var(--loss-soft)', borderRadius: 'var(--r-lg)', border: '1px solid var(--loss)' }}>
+          <Icon name="refresh" size={18} color="var(--loss)" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--loss)' }}>This ledger is out of date</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+              Allotments for this IPO changed after payouts were finalized, so the amounts below no longer match the profit pool. Re-finalize on the Profit Pool screen to bring them back in step.
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" style={{ flexShrink: 0 }} onClick={() => navigate('pooling', { id: selIpo })}>Profit Pool</Button>
+        </div>
+      )}
 
       {/* Settled completion banner */}
       {isSettled && rows.length > 0 && (
