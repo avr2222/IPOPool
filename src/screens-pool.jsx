@@ -96,8 +96,9 @@ function ProfitPooling({ navigate, id }) {
   // Once a pool is finalized it carries the rates used at that time, so the
   // math stays identical on every device. Before finalize, preview with the
   // current local settings.
-  const stcgRate     = pool?.stcgRate  != null ? pool.stcgRate  : parseFloat(localStorage.getItem('stcg')      || '15');
-  const brokerageAmt = pool?.brokerage != null ? pool.brokerage : parseFloat(localStorage.getItem('brokerage') || '0');
+  const rates        = window.ratesForIpo(sel);
+  const stcgRate     = rates.stcg;
+  const brokerageAmt = rates.brok;
 
   // Unique categories in this IPO's allotments (order: SME, Retail, sHNI, bHNI)
   const CAT_ORDER  = ['SME', 'Retail', 'sHNI', 'bHNI'];

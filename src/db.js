@@ -250,6 +250,7 @@ var PoolMath = {
   },
 };
 window.PoolMath = PoolMath;
+// groupNetProfit is exported below, once it is defined.
 
 // Rate resolution used by EVERY profit aggregate. Once a pool is finalized it
 // carries the STCG/brokerage rates used at that moment, so the dashboard, ledger
@@ -278,6 +279,8 @@ function groupNetProfit(allots) {
     return sum + PoolMath.category(groups[k], r.stcg, r.brok).net;
   }, 0);
 }
+window.groupNetProfit = groupNetProfit;
+window.ratesForIpo    = ratesForIpo;
 
 // ── Computed aggregates ───────────────────────────────────────────────────────
 

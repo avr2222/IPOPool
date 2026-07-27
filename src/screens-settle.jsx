@@ -79,8 +79,9 @@ function SettlementLedger({ navigate, id }) {
   // Net profit per category — uses the rates captured on the pool at finalize
   // time (falling back to local settings for legacy pools) via the shared
   // PoolMath, so the ledger matches what the Profit Pool screen computed.
-  const stcgRate     = pool.stcgRate  != null ? pool.stcgRate  : parseFloat(localStorage.getItem('stcg')      || '15');
-  const brokerageAmt = pool.brokerage != null ? pool.brokerage : parseFloat(localStorage.getItem('brokerage')  || '0');
+  const rates        = window.ratesForIpo(selIpo);
+  const stcgRate     = rates.stcg;
+  const brokerageAmt = rates.brok;
   const ipoAllots    = D.allotments.filter(a => a.ipo === selIpo);
   const CAT_ORDER    = ['SME', 'Retail', 'sHNI', 'bHNI'];
   const categories   = CAT_ORDER.filter(c => ipoAllots.some(a => a.category === c));

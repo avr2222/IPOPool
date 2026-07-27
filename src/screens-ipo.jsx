@@ -29,12 +29,12 @@ function IpoDetails({ id, navigate }) {
   const [applicantSort, onApplicantSort] = useSortState(null);
   const allots = sortRows(allotsBase, applicantSort, applicantCols);
   const pool = D.pools.find(p => p.ipo === id);
-  const poolNetProfit = (() => {
-    const stcg = parseFloat(localStorage.getItem('stcg') || '15');
-    const brok = parseFloat(localStorage.getItem('brokerage') || '0');
-    const gross = allots.reduce((s, a) => s + (a.gain || 0), 0);
-    return Math.max(0, gross - Math.round(gross * stcg / 100) - brok);
-  })();
+  // Same shared math the dashboard, profit pool and ledger use, so every screen
+  // reports the same rupees for the same IPO. This used to price the pool from
+  // the browser's local settings (ignoring the rates a finalized pool captured)
+  // and deduct brokerage once for the whole IPO instead of per category, which
+  // gave this page a different net profit than the Profit Pool screen.
+  const poolNetProfit = window.groupNetProfit(allotsBase);
   const allottedCount = allots.filter(a => a.status === 'allotted').length;
   const timeline = [
     ['Open', ipo.open, true], ['Close', ipo.close, true], ['Allotment', ipo.allotDate, ipo.status === 'Listed' || ipo.status === 'Closed'],
