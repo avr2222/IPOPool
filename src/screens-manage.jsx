@@ -232,9 +232,11 @@ function AdminPanel() {
 
   // Copy the shareable member apply link (#/apply/<ipoId>) to post in the group.
   const copyApplyLink = async (ip) => {
-    const url = window.applyLinkFor(ip.id);
-    try { await navigator.clipboard.writeText(url); }
-    catch (e) { window.prompt('Copy this apply link:', url); }
+    // Copy a ready-to-send message (name, per-category lots/shares, link) rather
+    // than just the bare URL, so the admin can paste it straight into WhatsApp.
+    const msg = window.buildApplyMessage ? window.buildApplyMessage(ip) : window.applyLinkFor(ip.id);
+    try { await navigator.clipboard.writeText(msg); }
+    catch (e) { window.prompt('Copy this apply message:', msg); }
     setCopiedIpo(ip.id);
     setTimeout(() => setCopiedIpo(c => (c === ip.id ? null : c)), 1600);
   };

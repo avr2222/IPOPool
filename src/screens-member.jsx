@@ -14,7 +14,10 @@ const CAT_FLOOR = { sHNI: 200000, bHNI: 1000000 };
 
 // Smallest number of lots that qualifies for a category, given one lot's value
 // (lot_size × cut-off price). e.g. lot value ₹15,000 → sHNI needs ⌊2L/15k⌋+1 = 14 lots.
+// Delegates to the shared db.js helper so the admin share message and this form
+// agree; keeps a local fallback in case db.js hasn't defined it.
 function catMinLots(cat, lotValue) {
+  if (window.catMinLots) return window.catMinLots(cat, lotValue);
   const floor = CAT_FLOOR[cat];
   if (!floor || !lotValue) return 1;
   return Math.floor(floor / lotValue) + 1;

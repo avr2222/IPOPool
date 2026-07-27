@@ -851,6 +851,57 @@ function waReminder(phone, text) {
 window.buildUpiUri = buildUpiUri;
 window.waReminder  = waReminder;
 
+// ── Apply-link share message ──────────────────────────────────────────────────
+// Smallest lots that qualify for a category, given one lot's value (lot_size ×
+// cut-off price). Retail has no floor; the HNI buckets need enough lots to cross
+// their threshold. Kept here so the admin share message and the member apply
+// form agree on the numbers.
+var APPLY_CAT_FLOOR = { sHNI: 200000, bHNI: 1000000 };
+function catMinLots(cat, lotValue) {
+  var floor = APPLY_CAT_FLOOR[cat];
+  if (!floor || !lotValue) return 1;
+  return Math.floor(floor / lotValue) + 1;
+}
+
+// Build the ready-to-send message the admin copies for an IPO: the IPO name,
+// price/lot, the number of lots + shares to apply per category (Retail / sHNI /
+// bHNI, or a single line for SME), and the apply deep link.
+function buildApplyMessage(ip) {
+  if (!ip) return '';
+  var url      = window.applyLinkFor ? window.applyLinkFor(ip.id) : '';
+  var name     = ip.name || ip.short || 'IPO';
+  var isSME    = ip.type === 'SME';
+  var lotSize  = Number(ip.lotSize)  || 0;
+  var price    = Number(ip.bandHigh) || 0;
+  var lotValue = Number(ip.lotValue) || (lotSize * price) || 0;
+  var nf = function (n) { return Number(n).toLocaleString('en-IN'); };
+
+  var lines = [];
+  lines.push('📈 ' + name + (ip.type ? ' · ' + ip.type : ''));
+  if (price)   lines.push('Price ₹' + nf(price) + (lotSize ? ' · 1 lot = ' + nf(lotSize) + ' shares' : ''));
+  lines.push('');
+
+  if (isSME) {
+    if (lotSize) lines.push('Apply: 1 lot · ' + nf(lotSize) + ' shares' + (lotValue ? ' (' + fmtINR(lotValue, { compact: true }) + ')' : ''));
+  } else {
+    lines.push('How many to apply per category:');
+    ['Retail', 'sHNI', 'bHNI'].forEach(function (cat) {
+      var m = catMinLots(cat, lotValue);
+      var shares = m * lotSize;
+      var amt    = m * lotValue;
+      lines.push('• ' + cat + ' — ' + m + ' lot' + (m === 1 ? '' : 's')
+        + (lotSize ? ' · ' + nf(shares) + ' shares' : '')
+        + (amt ? ' (' + fmtINR(amt, { compact: true }) + ')' : ''));
+    });
+  }
+  lines.push('');
+  lines.push('Apply here 👉 ' + url);
+  return lines.join('\n');
+}
+
+window.catMinLots       = catMinLots;
+window.buildApplyMessage = buildApplyMessage;
+
 // ── Member self-service API (PAN login, no Supabase session) ──────────────────
 // Thin wrappers over the SECURITY DEFINER RPCs from migration 004. Available
 // WITHOUT loadDB (members are anonymous and never load the full admin dataset).
