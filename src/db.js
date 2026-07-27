@@ -895,7 +895,8 @@ function buildApplyMessage(ip) {
     });
   }
   lines.push('');
-  lines.push('Apply here 👉 ' + url);
+  lines.push('👉 Once you apply in your Demat, open this link and fill in your application details:');
+  lines.push(url);
   return lines.join('\n');
 }
 
