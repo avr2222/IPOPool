@@ -232,9 +232,11 @@ function AdminPanel() {
 
   // Copy the shareable member apply link (#/apply/<ipoId>) to post in the group.
   const copyApplyLink = async (ip) => {
-    const url = window.applyLinkFor(ip.id);
-    try { await navigator.clipboard.writeText(url); }
-    catch (e) { window.prompt('Copy this apply link:', url); }
+    // Copy a ready-to-send message (name, per-category lots/shares, link) rather
+    // than just the bare URL, so the admin can paste it straight into WhatsApp.
+    const msg = window.buildApplyMessage ? window.buildApplyMessage(ip) : window.applyLinkFor(ip.id);
+    try { await navigator.clipboard.writeText(msg); }
+    catch (e) { window.prompt('Copy this apply message:', msg); }
     setCopiedIpo(ip.id);
     setTimeout(() => setCopiedIpo(c => (c === ip.id ? null : c)), 1600);
   };
@@ -523,6 +525,30 @@ function AdminPanel() {
                 <Button variant="primary" size="sm" icon="plus" onClick={() => setAddIpoStep('details')}>New IPO</Button>
               </div>
             </div>
+            {(() => {
+              // Applications by category across every IPO — a quick "as of now"
+              // snapshot. Reuses D.categoryStats (applied = PAN applications).
+              const CAT_TONE = { Retail: 'neutral', sHNI: 'info', bHNI: 'warn', SME: 'sme' };
+              const cs = D.categoryStats || [];
+              const byCat = {}; cs.forEach(c => { byCat[c.cat] = c.applied; });
+              const cats = ['Retail', 'sHNI', 'bHNI', 'SME'].filter(c => byCat[c]);
+              const total = cs.reduce((s, c) => s + c.applied, 0);
+              if (total === 0) return null;
+              return (
+                <div style={{ padding: '11px 18px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Applications by category</span>
+                  {cats.map(c => (
+                    <span key={c} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Badge tone={CAT_TONE[c]}>{c}</Badge>
+                      <span className="num" style={{ fontSize: 14, fontWeight: 800 }}>{byCat[c]}</span>
+                    </span>
+                  ))}
+                  <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 700, color: 'var(--ink-2)' }}>
+                    Total <span className="num" style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>{total}</span> applications
+                  </span>
+                </div>
+              );
+            })()}
             {ipos.length === 0 ? (
               <div style={{ padding: '32px 18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No IPOs yet. Add one above.</div>
             ) : (
@@ -1048,6 +1074,21 @@ function AdminPanel() {
                       {notAllot > 0 && <span style={{ color: 'var(--loss)', fontWeight: 700 }}>· ✗ {notAllot} not allotted</span>}
                       {pending  > 0 && <span style={{ color: 'var(--warn)', fontWeight: 700 }}>· ⏳ {pending} pending</span>}
                     </div>
+                    {(() => {
+                      const byCat = {};
+                      vAllots.forEach(a => { const c = changes[a.id]?.category ?? a.category; byCat[c] = (byCat[c] || 0) + 1; });
+                      const cats = ['Retail', 'sHNI', 'bHNI', 'SME'].filter(c => byCat[c]);
+                      if (!cats.length) return null;
+                      return (
+                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+                          {cats.map(c => (
+                            <span key={c} style={{ fontSize: 10.5, fontWeight: 700, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 999, padding: '2px 9px', color: 'var(--ink-2)' }}>
+                              {c} · {byCat[c]}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
                 <IconButton name="x" size={32} onClick={closeView} />
