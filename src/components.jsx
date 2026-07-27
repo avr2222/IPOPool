@@ -41,6 +41,7 @@ const ICONS = {
   spark: 'M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4L12 2Z',
   upload: 'M12 21V9M7 14l5-5 5 5M5 3h14',
   external: 'M15 3h6v6M10 14L21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5',
+  refresh: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15',
   menu: 'M3 12h18M3 6h18M3 18h18',
   lock: 'M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2ZM7 11V7a5 5 0 0 1 10 0v4',
   eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8ZM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
@@ -129,17 +130,21 @@ function Button({ children, variant = 'primary', size = 'md', icon, iconRight, o
   );
 }
 
-function IconButton({ name, onClick, active, size = 38, tip }) {
+function IconButton({ name, onClick, active, size = 38, tip, spin, disabled }) {
   const [h, setH] = useState(false);
   return (
-    <button className="iconbtn" onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} onClick={onClick} title={tip}
+    <button className="iconbtn" onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      onClick={disabled ? undefined : onClick} title={tip} disabled={disabled}
       style={{
         width: size, height: size, display: 'grid', placeItems: 'center', borderRadius: 'var(--r-md)',
         border: '1px solid', borderColor: active ? 'var(--brand)' : h ? 'var(--border-strong)' : 'var(--border)',
         background: active ? 'var(--brand-tint)' : h ? 'var(--surface-2)' : 'var(--surface)',
         color: active ? 'var(--brand)' : 'var(--ink-2)', transition: 'all .15s', position: 'relative',
+        opacity: disabled && !spin ? 0.5 : 1, cursor: disabled ? 'default' : 'pointer',
       }}>
-      <Icon name={name} size={19} />
+      <span style={spin ? { display: 'grid', animation: 'spin .8s linear infinite' } : { display: 'grid' }}>
+        <Icon name={name} size={19} />
+      </span>
     </button>
   );
 }

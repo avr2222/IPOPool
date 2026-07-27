@@ -153,6 +153,22 @@ function AdminPanel() {
 
   // ── IPO Master state ──
   const [ipos, setIpos]         = useState(D.ipos);
+  const [refreshing, setRefreshing]     = useState(false);
+  const [refreshingId, setRefreshingId] = useState(null);   // ipo id being refreshed, or 'all'
+
+  // Pull the latest data from Supabase (members apply via the shared link, so the
+  // applied/allotted counts here can go stale). Reloads the whole dataset — there's
+  // no per-IPO endpoint — but a per-row spinner shows which row was refreshed.
+  const refreshData = async (ipoId) => {
+    if (refreshing) return;
+    setRefreshing(true); setRefreshingId(ipoId || 'all');
+    try {
+      await window.loadDB();
+      setIpos([...window.DB.ipos]);
+      setMembers([...window.DB.members]);
+    } catch (e) { alert(friendlyDbError(e)); }
+    setRefreshing(false); setRefreshingId(null);
+  };
   const [addIpoStep, setAddIpoStep] = useState(null); // null | 'details' | 'applicants'
   const [newIpoId,  setNewIpoId]  = useState(null);
   const [ipoForm, setIpoForm]   = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
@@ -501,7 +517,11 @@ function AdminPanel() {
           <div>
             <div style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)' }}>
               <div style={{ fontSize: 13.5, color: 'var(--ink-3)' }}>{ipos.length} IPO{ipos.length !== 1 ? 's' : ''} in master list</div>
-              <Button variant="primary" size="sm" icon="plus" onClick={() => setAddIpoStep('details')}>New IPO</Button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Button variant="soft" size="sm" icon="refresh" disabled={refreshing}
+                  onClick={() => refreshData()}>{refreshing ? 'Refreshing…' : 'Refresh'}</Button>
+                <Button variant="primary" size="sm" icon="plus" onClick={() => setAddIpoStep('details')}>New IPO</Button>
+              </div>
             </div>
             {ipos.length === 0 ? (
               <div style={{ padding: '32px 18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No IPOs yet. Add one above.</div>
@@ -542,6 +562,9 @@ function AdminPanel() {
                               onClick={() => { setViewIpoId(ip.id); setChanges({}); setSaved(false); }}>
                               Allotments
                             </Button>
+                            <IconButton name="refresh" size={34} tip="Refresh applied / allotted counts"
+                              spin={refreshingId === ip.id} disabled={refreshing}
+                              onClick={() => refreshData(ip.id)} />
                             <IconButton name={copiedIpo === ip.id ? 'check' : 'external'} size={34}
                               tip={copiedIpo === ip.id ? 'Link copied!' : 'Copy apply link'}
                               onClick={() => copyApplyLink(ip)} />
