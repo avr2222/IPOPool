@@ -182,6 +182,17 @@ function rowGain(status, sellPrice, issuePrice, shares) {
 }
 window.rowGain = rowGain;
 
+// Price of one lot = lot size × cut-off price. Derived in the db layer rather
+// than in the form, because the form forgetting to send it is exactly how
+// lot_value stayed NULL on every IPO and left the dashboard reporting a total
+// investment of ₹0 and 0% ROI. Mirrors the fallback buildApplyMessage uses.
+function deriveLotValue(lotSize, bandHigh) {
+  var ls = parseFloat(lotSize)  || 0;
+  var bh = parseFloat(bandHigh) || 0;
+  return ls > 0 && bh > 0 ? Math.round(ls * bh) : null;
+}
+window.deriveLotValue = deriveLotValue;
+
 // ── Shared pool math (single source of truth for profit distribution) ─────────
 // Every screen that splits profit — dashboard KPIs, charts, the Profit Pool
 // screen and the Settlement ledger — goes through PoolMath so the numbers
@@ -583,7 +594,7 @@ async function loadDB() {
           band_low:      fields.bandLow   || null,
           band_high:     fields.bandHigh  || null,
           lot_size:      fields.lotSize   || null,
-          lot_value:     fields.lotValue  || null,
+          lot_value:     fields.lotValue  || deriveLotValue(fields.lotSize, fields.bandHigh),
           open_date:     fields.openDate  || null,
           close_date:    fields.closeDate || null,
           allot_date:    fields.allotDate || null,
@@ -607,6 +618,16 @@ async function loadDB() {
         if (fields.type          != null) updates.type          = fields.type;
         if (fields.bandHigh      != null) updates.band_high     = fields.bandHigh;
         if (fields.lotSize       != null) updates.lot_size      = fields.lotSize;
+        // Keep lot_value in step with its two inputs, so correcting a price or
+        // lot size on an existing IPO also repairs invested/ROI.
+        if (fields.lotValue != null) {
+          updates.lot_value = fields.lotValue;
+        } else if (fields.lotSize != null || fields.bandHigh != null) {
+          var cur = _ipos.find(function(i){ return i.id === id; }) || {};
+          var lv  = deriveLotValue(fields.lotSize  != null ? fields.lotSize  : cur.lotSize,
+                                   fields.bandHigh != null ? fields.bandHigh : cur.bandHigh);
+          if (lv != null) updates.lot_value = lv;
+        }
         if (fields.status        != null) updates.status        = fields.status;
         if (fields.listPrice     != null) updates.list_price    = fields.listPrice;
         if (fields.listGain      != null) updates.list_gain_pct = fields.listGain;
