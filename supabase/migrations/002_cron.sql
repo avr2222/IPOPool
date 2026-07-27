@@ -1,1 +1,0 @@
--- No cron jobs needed — allotment status is marked manually by the admin.

@@ -2,18 +2,20 @@
 // Strategy: network-first for app files and CDN libs (so deploys reach users
 // without bumping this version), cache fallback for offline, and network-only
 // for Supabase API calls (so reads are never served stale after writes).
-const CACHE = 'ipo-pool-v35';
+const CACHE = 'ipo-pool-v36';
 
 const APP_ASSETS = [
   './',
   './index.html',
   './src/tokens.css',
   './src/supabase-client.js',
+  './src/qrcode.js',
   './src/db.js',
   './src/tweaks-panel.jsx',
   './src/charts.jsx',
   './src/components.jsx',
   './src/screens-auth.jsx',
+  './src/screens-member.jsx',
   './src/screens-dashboard.jsx',
   './src/screens-ipo.jsx',
   './src/screens-pool.jsx',
