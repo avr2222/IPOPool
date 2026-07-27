@@ -88,7 +88,8 @@ function SettlementLedger({ navigate, id }) {
   const panToMember  = (panId) => { const p = D.pan(panId); return p ? p.member : null; };
   const catSummaries = categories.map(cat => {
     const ca = ipoAllots.filter(a => a.category === cat);
-    const m  = window.PoolMath.category(ca, stcgRate, brokerageAmt);
+    const cr = window.ratesForCategory(selIpo, cat);
+    const m  = window.PoolMath.category(ca, cr.stcg, cr.brok);
     return { cat, net: m.net, perPan: m.perPan, total: m.total };
   });
   const totalNet = catSummaries.reduce((s, d) => s + d.net, 0);
@@ -97,7 +98,8 @@ function SettlementLedger({ navigate, id }) {
   // Your retained share (exact, summed across all categories)
   const myShare = categories.reduce((sum, cat) => {
     const ca = ipoAllots.filter(a => a.category === cat);
-    const shares = window.PoolMath.memberShares(ca, stcgRate, brokerageAmt, panToMember);
+    const cr = window.ratesForCategory(selIpo, cat);
+    const shares = window.PoolMath.memberShares(ca, cr.stcg, cr.brok, panToMember);
     return sum + (shares[me?.id]?.share || 0);
   }, 0);
 
@@ -127,7 +129,8 @@ function SettlementLedger({ navigate, id }) {
     // gives net = gross − STCG − brokerage, so (gross − net) is exactly the cost.
     let grossTotal = 0, costTotal = 0;
     categories.forEach(cat => {
-      const m = window.PoolMath.category(ipoAllots.filter(a => a.category === cat), stcgRate, brokerageAmt);
+      const cr = window.ratesForCategory(selIpo, cat);
+      const m = window.PoolMath.category(ipoAllots.filter(a => a.category === cat), cr.stcg, cr.brok);
       grossTotal += m.gross; costTotal += (m.gross - m.net);
     });
 

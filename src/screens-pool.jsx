@@ -112,9 +112,12 @@ function ProfitPooling({ navigate, id }) {
   const panToMember = (panId) => { const p = D.pan(panId); return p ? p.member : null; };
   const catData = categories.map(cat => {
     const catAllots = ipoAllots.filter(a => a.category === cat);
-    const math = window.PoolMath.category(catAllots, stcgRate, brokerageAmt);
-    const memberShares = window.PoolMath.memberShares(catAllots, stcgRate, brokerageAmt, panToMember);
-    return { cat, catAllots, ...math, memberShares };
+    // This category's share of the IPO's single flat brokerage charge, not the
+    // whole charge again — see ratesForCategory.
+    const cr = window.ratesForCategory(sel, cat);
+    const math = window.PoolMath.category(catAllots, cr.stcg, cr.brok);
+    const memberShares = window.PoolMath.memberShares(catAllots, cr.stcg, cr.brok, panToMember);
+    return { cat, catAllots, ...math, brok: cr.brok, memberShares };
   });
 
   // Your combined share across ALL categories
@@ -289,7 +292,7 @@ function ProfitPooling({ navigate, id }) {
                     {[
                       ['Gross profit', d.gross, 'var(--ink)'],
                       [`STCG (${stcgRate}%)`, -d.stcgAmt, 'var(--loss)'],
-                      ['Brokerage', -brokerageAmt, 'var(--loss)'],
+                      [categories.length > 1 ? 'Brokerage (share)' : 'Brokerage', -d.brok, 'var(--loss)'],
                     ].map(([l, v, c]) => (
                       <div key={l} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
                         <span style={{ fontSize: 12.5, color: 'var(--ink-2)', fontWeight: 600 }}>{l}</span>

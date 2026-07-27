@@ -265,9 +265,59 @@ function ratesForIpo(ipoId) {
   };
 }
 
+// Brokerage is ONE flat charge per IPO — Settings calls it "flat amount
+// deducted per IPO sell" — but profit is pooled per category. The flat amount
+// used to be handed to every category in full, so a Mainboard IPO with Retail,
+// sHNI and bHNI paid it three times over.
+//
+// Splitting it pro-rata by each category's gross deducts it exactly once,
+// whatever the category count, and charges it where the money actually was.
+// The parts sum EXACTLY to the flat amount: the last category absorbs the
+// rounding, the same technique panAmounts uses for per-PAN remainders.
+function brokerageByCategory(ipoId, brokerageAmt) {
+  var brok  = Number(brokerageAmt) || 0;
+  var gross = {};
+  _allotments.forEach(function(a) {
+    if (a.ipo !== ipoId) return;
+    if (gross[a.category] == null) gross[a.category] = 0;
+    if (a.status === 'allotted') gross[a.category] += (a.gain || 0);
+  });
+
+  var cats = Object.keys(gross);
+  var out  = {};
+  if (!cats.length) return out;
+
+  // Only categories that actually made money can carry a share of the charge.
+  // If none did, spread it evenly — every net floors at 0 either way.
+  var basis = cats.filter(function(c){ return gross[c] > 0; });
+  if (!basis.length) basis = cats;
+
+  var totalGross = basis.reduce(function(s, c){ return s + Math.max(0, gross[c]); }, 0);
+  var assigned   = 0;
+  basis.forEach(function(c, i) {
+    var share = (i === basis.length - 1)
+      ? brok - assigned
+      : (totalGross > 0 ? Math.round(brok * gross[c] / totalGross)
+                        : Math.floor(brok / basis.length));
+    out[c]   = share;
+    assigned += share;
+  });
+  cats.forEach(function(c){ if (out[c] == null) out[c] = 0; });
+  return out;
+}
+
+// Rates to price ONE category of one IPO: that IPO's STCG rate, plus this
+// category's share of its single flat brokerage charge. Every per-category
+// PoolMath call should resolve its rates through here rather than passing the
+// raw flat brokerage, which is what caused the multiple-charge bug.
+function ratesForCategory(ipoId, category) {
+  var r = ratesForIpo(ipoId);
+  return { stcg: r.stcg, brok: brokerageByCategory(ipoId, r.brok)[category] || 0 };
+}
+
 // Total net profit across a set of allotments, grouped by (ipo, category) so
 // STCG and brokerage are applied per category exactly as the pool screen does.
-// Each group is priced with its own IPO's finalized rates via ratesForIpo.
+// Each group is priced with its own IPO's finalized rates via ratesForCategory.
 function groupNetProfit(allots) {
   var groups = {};
   allots.forEach(function(a) {
@@ -275,12 +325,15 @@ function groupNetProfit(allots) {
     (groups[key] = groups[key] || []).push(a);
   });
   return Object.keys(groups).reduce(function(sum, k) {
-    var r = ratesForIpo(groups[k][0].ipo);
+    var head = groups[k][0];
+    var r = ratesForCategory(head.ipo, head.category);
     return sum + PoolMath.category(groups[k], r.stcg, r.brok).net;
   }, 0);
 }
-window.groupNetProfit = groupNetProfit;
-window.ratesForIpo    = ratesForIpo;
+window.groupNetProfit     = groupNetProfit;
+window.ratesForIpo        = ratesForIpo;
+window.ratesForCategory   = ratesForCategory;
+window.brokerageByCategory = brokerageByCategory;
 
 // ── Computed aggregates ───────────────────────────────────────────────────────
 
@@ -416,11 +469,11 @@ function computeMemberProfits() {
   _ipos.forEach(function(ipo) {
     var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
     if (!ipoAllots.length) return;
-    var r = ratesForIpo(ipo.id);
 
     var cats = {};
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
     Object.keys(cats).forEach(function(cat) {
+      var r = ratesForCategory(ipo.id, cat);
       var shares = PoolMath.memberShares(cats[cat], r.stcg, r.brok, panToMember);
       Object.keys(shares).forEach(function(mid) {
         if (!totals[mid]) totals[mid] = { profit: 0, pans: 0 };
