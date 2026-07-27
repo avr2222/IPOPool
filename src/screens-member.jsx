@@ -237,9 +237,9 @@ function MemberLogin({ ipo, onLogin }) {
           </div>
         </div>
       )}
-      <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-.01em' }}>Apply to this IPO</div>
+      <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-.01em' }}>Record your application</div>
       <div style={{ fontSize: 13.5, color: 'var(--ink-3)', margin: '4px 0 20px' }}>
-        Enter your PAN to record which of your family PANs applied. No password needed.
+        Already applied in your Demat? Enter your PAN to fill in which of your family PANs applied. No password needed.
       </div>
 
       <label style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink-2)', display: 'block', marginBottom: 8 }}>Your PAN number</label>
