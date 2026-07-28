@@ -408,4 +408,61 @@ function App() {
   return (<>{shell}{Panel}</>);
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+// Clear every cache and unregister the service worker, then hard-reload. This is
+// the escape hatch for a device stuck on a stale or broken cached bundle — the
+// exact state that renders a blank screen when a script fails to load.
+async function hardReset() {
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    if (navigator.serviceWorker) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+  } catch (e) { /* best effort — reload regardless */ }
+  location.reload();
+}
+
+// Last line of defence against a blank screen. Without a boundary, any render
+// throw — most commonly a component left undefined because its script 404'd or
+// was served as HTML by a stale service worker — unmounts the whole tree and
+// leaves an empty <body>. This catches that and offers a one-tap self-heal.
+//
+// Deliberately built from plain DOM elements and inline styles, not the app's
+// own Button/Card/Logo: if the failure is a missing component script, those
+// helpers may be undefined too, and the recovery screen must never be the thing
+// that throws.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { failed: false, msg: '' }; }
+  static getDerivedStateFromError(err) {
+    return { failed: true, msg: (err && err.message) || String(err) };
+  }
+  componentDidCatch(err) { try { console.error('[IPOPool] render error', err); } catch (e) {} }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    const wrap = { minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#f6f7f9', padding: 20, fontFamily: 'system-ui, sans-serif' };
+    const card = { maxWidth: 380, textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, color: '#1a1f29' };
+    const btn = { border: 'none', borderRadius: 10, padding: '11px 20px', fontSize: 14, fontWeight: 700, background: '#0B8A4B', color: '#fff', cursor: 'pointer' };
+    return (
+      <div style={wrap}>
+        <div style={card}>
+          <div style={{ fontSize: 20, fontWeight: 800 }}>IPO Pool</div>
+          <div style={{ fontSize: 15, fontWeight: 800 }}>Couldn't load the app</div>
+          <div style={{ fontSize: 13, color: '#5b6472', lineHeight: 1.6 }}>
+            A part of the app failed to load — this is usually a stale cached version. Reloading fresh almost always fixes it.
+          </div>
+          {this.state.msg && (
+            <div style={{ fontSize: 11, color: '#8a94a3', fontFamily: 'monospace', wordBreak: 'break-word', background: '#eceef1', padding: '8px 12px', borderRadius: 8, width: '100%' }}>{this.state.msg}</div>
+          )}
+          <button style={btn} onClick={hardReset}>Reload the app</button>
+        </div>
+      </div>
+    );
+  }
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ErrorBoundary><App /></ErrorBoundary>
+);
