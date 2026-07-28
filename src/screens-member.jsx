@@ -104,6 +104,11 @@ function MemberSummary({ session }) {
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(true);
   const [err,     setErr]     = useState('');
+  // Every hook must run on every render, before any early return below —
+  // otherwise the count changes once loading flips false and React throws
+  // "Rendered more hooks than during the previous render". useSortState is a
+  // hook, so it lives up here, not next to the table it feeds.
+  const [iposSort, onIposSort] = useSortState('profit', 'desc');
   const f = (n, o) => (window.fmtINR ? window.fmtINR(n, o) : '₹' + (n || 0));
 
   useEffect(() => {
@@ -147,7 +152,6 @@ function MemberSummary({ session }) {
     { key: 'profit',        label: 'Profit',   align: 'right', get: p => p.profit || 0, defDir: 'desc' },
     { key: 'settle_status', label: 'Status',   align: 'right', get: p => p.settle_status || '' },
   ];
-  const [iposSort, onIposSort] = useSortState('profit', 'desc');
   const sortedIpos = sortRows(ipos, iposSort, cols);
 
   return (
