@@ -203,6 +203,32 @@ section('1.4  brokerage charged once per IPO, not once per category');
     check('the split is scoped to one IPO', split.SME === undefined && smeSplit.Retail === undefined,
       JSON.stringify({ i1: split, i2: smeSplit }));
 
+    // ── SME category split (SEBI ICDR amendment, effective 1 Jul 2025) ──────
+    // SME IPOs now split applicants into Individual/S-HNI/B-HNI exactly like
+    // Mainboard, but the Individual/NII boundary is a FIXED lot count (2 lots
+    // max / 3 lots min), not value-based like Mainboard's Retail/NII boundary.
+    // Verified against a real SME lot-size table: lot value ₹1,20,400 gives
+    // Individual=2 lots (₹2,40,800), S-HNI 3-8 lots (₹3,61,200-₹9,63,200),
+    // B-HNI from 9 lots (₹10,83,600) -- the ₹10L bHNI split stays value-based.
+    section('SME category thresholds (SEBI, 1 Jul 2025)');
+    const smeLotValue = 120400;
+    check('SME sHNI floor is the fixed 3-lot minimum, not the value-based 2',
+      win.catMinLots('sHNI', smeLotValue, true) === 3,
+      'got ' + win.catMinLots('sHNI', smeLotValue, true));
+    check('Mainboard sHNI floor stays value-based (2 lots here)',
+      win.catMinLots('sHNI', smeLotValue, false) === 2,
+      'got ' + win.catMinLots('sHNI', smeLotValue, false));
+    check('bHNI floor is identical on both boards (value-based, ₹10L)',
+      win.catMinLots('bHNI', smeLotValue, true) === 9 && win.catMinLots('bHNI', smeLotValue, true) === win.catMinLots('bHNI', smeLotValue, false),
+      'sme=' + win.catMinLots('bHNI', smeLotValue, true) + ' mainboard=' + win.catMinLots('bHNI', smeLotValue, false));
+    check('Retail/SME never carries a floor', win.catMinLots('Retail', smeLotValue, true) === 1 && win.catMinLots('SME', smeLotValue, true) === 1);
+    // A low-lot-value edge case: the value floor for sHNI could exceed 3 lots;
+    // SME must still take the LARGER of the fixed floor and the value floor,
+    // never let a cheap lot slip into NII below the ₹2L SEBI requirement.
+    check('SME sHNI floor never drops below the value floor either',
+      win.catMinLots('sHNI', 50000, true) === Math.max(3, Math.floor(200000/50000)+1),
+      'got ' + win.catMinLots('sHNI', 50000, true));
+
     console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all invariants hold'));
     process.exit(failures ? 1 : 0);
   });

@@ -1007,19 +1007,39 @@ window.waReminder  = waReminder;
 
 // ── Apply-link share message ──────────────────────────────────────────────────
 // Smallest lots that qualify for a category, given one lot's value (lot_size ×
-// cut-off price). Retail has no floor; the HNI buckets need enough lots to cross
-// their threshold. Kept here so the admin share message and the member apply
+// cut-off price). Kept here so the admin share message and the member apply
 // form agree on the numbers.
+//
+// Mainboard: Retail has no floor (1 lot); the NII entry (sHNI) and the sHNI/bHNI
+// split are both VALUE-based — the fewest lots whose combined value crosses the
+// SEBI rupee floor for that bucket.
+//
+// SME, since SEBI's ICDR amendment effective 1 Jul 2025: the Individual/NII
+// boundary is a FIXED LOT COUNT, not value-based. Individual (formerly "Retail
+// Individual Investor") applications are capped at 2 lots; 3 lots or more is
+// NII regardless of what that comes to in rupees. The bHNI split above NII stays
+// value-based (₹10L) on both boards — max() with the value floor covers the
+// edge case where a low lot value would otherwise cross ₹10L before 3 lots.
 var APPLY_CAT_FLOOR = { sHNI: 200000, bHNI: 1000000 };
-function catMinLots(cat, lotValue) {
-  var floor = APPLY_CAT_FLOOR[cat];
-  if (!floor || !lotValue) return 1;
-  return Math.floor(floor / lotValue) + 1;
+var SME_NII_MIN_LOTS       = 3;  // SEBI: SME NII applications are 3 lots or more
+var SME_INDIVIDUAL_MAX_LOTS = 2; // SEBI: SME Individual Investors apply for up to 2 lots
+function catMinLots(cat, lotValue, isSME) {
+  if (cat === 'Retail' || cat === 'SME') return 1;
+  var valueFloor = function(rupees) {
+    return lotValue ? Math.floor(rupees / lotValue) + 1 : 1;
+  };
+  if (cat === 'sHNI') {
+    var floor = valueFloor(APPLY_CAT_FLOOR.sHNI);
+    return isSME ? Math.max(SME_NII_MIN_LOTS, floor) : floor;
+  }
+  if (cat === 'bHNI') return valueFloor(APPLY_CAT_FLOOR.bHNI);
+  return 1;
 }
 
 // Build the ready-to-send message the admin copies for an IPO: the IPO name,
-// price/lot, the number of lots + shares to apply per category (Retail / sHNI /
-// bHNI, or a single line for SME), and the apply deep link.
+// price/lot, the number of lots + shares to apply per category (Retail/Individual,
+// sHNI, bHNI — same three-way split for SME as Mainboard since SEBI's 1 Jul 2025
+// SME rule), and the apply deep link.
 function buildApplyMessage(ip) {
   if (!ip) return '';
   var url      = window.applyLinkFor ? window.applyLinkFor(ip.id) : '';
@@ -1035,19 +1055,21 @@ function buildApplyMessage(ip) {
   if (price)   lines.push('Price ₹' + nf(price) + (lotSize ? ' · 1 lot = ' + nf(lotSize) + ' shares' : ''));
   lines.push('');
 
-  if (isSME) {
-    if (lotSize) lines.push('Apply: 1 lot · ' + nf(lotSize) + ' shares' + (lotValue ? ' (' + fmtINR(lotValue, { compact: true }) + ')' : ''));
-  } else {
-    lines.push('How many to apply per category:');
-    ['Retail', 'sHNI', 'bHNI'].forEach(function (cat) {
-      var m = catMinLots(cat, lotValue);
-      var shares = m * lotSize;
-      var amt    = m * lotValue;
-      lines.push('• ' + cat + ' — ' + m + ' lot' + (m === 1 ? '' : 's')
-        + (lotSize ? ' · ' + nf(shares) + ' shares' : '')
-        + (amt ? ' (' + fmtINR(amt, { compact: true }) + ')' : ''));
-    });
-  }
+  lines.push('How many to apply per category:');
+  ['Retail', 'sHNI', 'bHNI'].forEach(function (cat) {
+    var isSmeRetail = isSME && cat === 'Retail';
+    // SME's Individual bucket is a fixed 2 lots (SEBI), not a 1-lot floor with
+    // no ceiling like Mainboard Retail — show the actual application size, not
+    // a misleading 1-lot minimum that wouldn't even cross the ₹2L requirement.
+    var m      = isSmeRetail ? SME_INDIVIDUAL_MAX_LOTS : catMinLots(cat, lotValue, isSME);
+    var shares = m * lotSize;
+    var amt    = m * lotValue;
+    var label  = isSmeRetail ? 'Individual' : cat;
+    var lotsNote = isSmeRetail ? m + ' lots (fixed)' : m + ' lot' + (m === 1 ? '' : 's');
+    lines.push('• ' + label + ' — ' + lotsNote
+      + (lotSize ? ' · ' + nf(shares) + ' shares' : '')
+      + (amt ? ' (' + fmtINR(amt, { compact: true }) + ')' : ''));
+  });
   lines.push('');
   lines.push('👉 Once you apply in your Demat, open this link and fill in your application details:');
   lines.push(url);
@@ -1060,7 +1082,9 @@ function buildApplyMessage(ip) {
   return lines.join('\n');
 }
 
-window.catMinLots       = catMinLots;
+window.catMinLots            = catMinLots;
+window.SME_INDIVIDUAL_MAX_LOTS = SME_INDIVIDUAL_MAX_LOTS;
+window.SME_NII_MIN_LOTS        = SME_NII_MIN_LOTS;
 window.buildApplyMessage = buildApplyMessage;
 
 // ── Member self-service API (PAN login, no Supabase session) ──────────────────

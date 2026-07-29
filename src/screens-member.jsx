@@ -9,18 +9,33 @@ const MEMBER_CATS = ['Retail', 'sHNI', 'bHNI'];
 const MEMBER_SESSION_KEY = 'ipopool_member';
 
 // Minimum application value (in ₹) a category must EXCEED. Retail has no floor
-// (starts at 1 lot); the HNI buckets need enough lots to cross their threshold.
+// (starts at 1 lot) on Mainboard; the HNI buckets need enough lots to cross
+// their threshold. SME's NII entry is a fixed lot count instead — see db.js.
 const CAT_FLOOR = { sHNI: 200000, bHNI: 1000000 };
+const SME_INDIVIDUAL_MAX_LOTS_FALLBACK = 2;
 
 // Smallest number of lots that qualifies for a category, given one lot's value
 // (lot_size × cut-off price). e.g. lot value ₹15,000 → sHNI needs ⌊2L/15k⌋+1 = 14 lots.
+// SME (SEBI, effective 1 Jul 2025): NII (sHNI) entry is a FIXED 3 lots, not
+// value-based — see db.js's catMinLots for the full explanation.
 // Delegates to the shared db.js helper so the admin share message and this form
 // agree; keeps a local fallback in case db.js hasn't defined it.
-function catMinLots(cat, lotValue) {
-  if (window.catMinLots) return window.catMinLots(cat, lotValue);
+//
+// IMPORTANT: this must NOT be named catMinLots. index.html loads this file as
+// <script type="text/babel">, which Babel Standalone evaluates unwrapped, so a
+// top-level `function catMinLots` here overwrites window.catMinLots (the one
+// db.js just set) with ITSELF — and then the `if (window.catMinLots) return
+// window.catMinLots(...)` line below calls itself forever. Confirmed live:
+// window.catMinLots's source contained this very file's fallback body, and
+// invoking it threw "Maximum call stack size exceeded". Every other top-level
+// name in this file was cross-checked against db.js's window exports too.
+function memberCatMinLots(cat, lotValue, isSME) {
+  if (window.catMinLots) return window.catMinLots(cat, lotValue, isSME);
+  if (cat === 'Retail' || cat === 'SME') return 1;
   const floor = CAT_FLOOR[cat];
-  if (!floor || !lotValue) return 1;
-  return Math.floor(floor / lotValue) + 1;
+  const valueFloor = floor && lotValue ? Math.floor(floor / lotValue) + 1 : 1;
+  if (cat === 'sHNI' && isSME) return Math.max(3, valueFloor);
+  return valueFloor;
 }
 
 // ipoId is null when opened at #/me — the standalone "my profits" entry point.
@@ -287,9 +302,13 @@ function MemberApply({ ipo, session }) {
   const lotValue = Number(ipo && ipo.lot_value) || (lotSize * (Number(ipo && ipo.band_high) || 0)) || 0;
 
   // Per-PAN application state: { [panId]: { on, category, lots } }
+  // SME's Individual bucket is a fixed 2 lots (SEBI, since 1 Jul 2025), not a
+  // 1-lot floor — default straight to that so a family applying Retail-style
+  // for an SME IPO doesn't have to notice and correct it themselves.
   const [rows, setRows] = useState(() => {
     const init = {};
-    pans.forEach(p => { init[p.id] = { on: false, category: isSME ? 'SME' : 'Retail', lots: 1 }; });
+    const smeMax = window.SME_INDIVIDUAL_MAX_LOTS || SME_INDIVIDUAL_MAX_LOTS_FALLBACK;
+    pans.forEach(p => { init[p.id] = { on: false, category: 'Retail', lots: isSME ? smeMax : 1 }; });
     return init;
   });
   const [appliedIds, setAppliedIds] = useState({});   // { [panId]: allot_status } — already-applied PANs
@@ -311,7 +330,10 @@ function MemberApply({ ipo, session }) {
           const next = { ...prev };
           (existing || []).forEach(a => {
             applied[a.pan_id] = a.allot_status || 'pending';
-            if (next[a.pan_id]) next[a.pan_id] = { on: true, category: isSME ? 'SME' : (a.category || 'Retail'), lots: a.lots || 1 };
+            // Keep whatever category the saved application already has — including
+            // a legacy 'SME' value from before this app split SME into Retail/
+            // sHNI/bHNI — rather than silently rewriting it under the member.
+            if (next[a.pan_id]) next[a.pan_id] = { on: true, category: a.category || 'Retail', lots: a.lots || 1 };
           });
           return next;
         });
@@ -332,7 +354,7 @@ function MemberApply({ ipo, session }) {
     try {
       const payload = selected.map(p => ({
         pan_id: p.id,
-        category: isSME ? 'SME' : rows[p.id].category,
+        category: rows[p.id].category,
         lots: Math.max(1, parseInt(rows[p.id].lots, 10) || 1),
       }));
       const res = await window.MemberAPI.submitApplications(session.loginPan, ipo.id, payload);
@@ -372,15 +394,21 @@ function MemberApply({ ipo, session }) {
         <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 3 }}>
           {hasExisting
             ? 'Your saved application is loaded below — adjust and update.'
-            : <>Tick the PANs that applied{isSME ? '' : ', pick a category'} and the number of lots.</>}
+            : 'Tick the PANs that applied, pick a category and the number of lots.'}
         </div>
-        {!isSME && lotValue > 0 && (
+        {lotValue > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
             {MEMBER_CATS.map(c => {
-              const m = catMinLots(c, lotValue);
+              // SME's Individual bucket is a fixed 2 lots (SEBI, since 1 Jul
+              // 2025), not a 1-lot floor with no ceiling like Mainboard Retail —
+              // show the real application size, not a misleading "1 lot".
+              const smeMax = window.SME_INDIVIDUAL_MAX_LOTS || SME_INDIVIDUAL_MAX_LOTS_FALLBACK;
+              const isSmeRetail = isSME && c === 'Retail';
+              const m = isSmeRetail ? smeMax : memberCatMinLots(c, lotValue, isSME);
+              const label = isSmeRetail ? 'Individual' : c;
               return (
                 <span key={c} style={{ fontSize: 11, fontWeight: 700, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 999, padding: '3px 10px', color: 'var(--ink-2)' }}>
-                  {c} · {m} lot{m === 1 ? '' : 's'}
+                  {label} · {isSmeRetail ? `${m} lots` : `${m} lot${m === 1 ? '' : 's'}`}
                   <span style={{ color: 'var(--ink-3)', fontWeight: 600 }}> · {(m * lotSize).toLocaleString('en-IN')} sh</span>
                 </span>
               );
@@ -422,16 +450,28 @@ function MemberApply({ ipo, session }) {
                 const amount = lots * lotValue;
                 return (
                 <div style={{ display: 'flex', gap: 10, marginTop: 11, marginLeft: 29, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {!isSME && (
-                    <select value={r.category}
-                      onChange={e => { const cat = e.target.value; setRow(p.id, { category: cat, lots: catMinLots(cat, lotValue) }); }}
-                      style={{ border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 13, fontWeight: 600, background: 'var(--surface)', color: 'var(--ink)' }}>
-                      {MEMBER_CATS.map(c => {
-                        const m = catMinLots(c, lotValue);
-                        return <option key={c} value={c}>{c}{m > 1 ? ' · min ' + m + ' lots' : ''}</option>;
-                      })}
-                    </select>
-                  )}
+                  {(() => {
+                    const smeMax = window.SME_INDIVIDUAL_MAX_LOTS || SME_INDIVIDUAL_MAX_LOTS_FALLBACK;
+                    const defaultLots = (cat) => (isSME && cat === 'Retail') ? smeMax : memberCatMinLots(cat, lotValue, isSME);
+                    // A saved application from before this app split SME into
+                    // Retail/sHNI/bHNI may still carry the old 'SME' category —
+                    // keep it selectable rather than silently reassigning it.
+                    const options = MEMBER_CATS.includes(r.category) ? MEMBER_CATS : [...MEMBER_CATS, r.category];
+                    return (
+                      <select value={r.category}
+                        onChange={e => { const cat = e.target.value; setRow(p.id, { category: cat, lots: defaultLots(cat) }); }}
+                        style={{ border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 13, fontWeight: 600, background: 'var(--surface)', color: 'var(--ink)' }}>
+                        {options.map(c => {
+                          if (c === 'SME') return <option key={c} value={c}>SME (legacy)</option>;
+                          const isSmeRetail = isSME && c === 'Retail';
+                          const m = isSmeRetail ? smeMax : memberCatMinLots(c, lotValue, isSME);
+                          const label = isSmeRetail ? 'Individual' : c;
+                          const hint  = isSmeRetail ? ' · ' + m + ' lots (fixed)' : (m > 1 ? ' · min ' + m + ' lots' : '');
+                          return <option key={c} value={c}>{label}{hint}</option>;
+                        })}
+                      </select>
+                    );
+                  })()}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                     <span style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 600 }}>Lots</span>
                     <input type="number" min="1" value={r.lots} onChange={e => setRow(p.id, { lots: e.target.value })}
