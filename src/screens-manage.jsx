@@ -754,8 +754,13 @@ function AdminPanel() {
       {/* ── Step 2: Applicant selection ── */}
       {addIpoStep === 'applicants' && (() => {
         const newIpo   = window.DB.ipos.find(i => i.id === newIpoId);
+        // Since SEBI's ICDR amendment (1 Jul 2025), SME IPOs split applicants
+        // into Individual/S-HNI/B-HNI exactly like Mainboard — same category set
+        // for both board types now (see db.js catMinLots for the SME-specific
+        // lot-count thresholds this labelling matches).
         const isSME    = (newIpo?.type || 'SME') === 'SME';
-        const cats     = isSME ? ['SME'] : ['Retail', 'sHNI', 'bHNI'];
+        const cats     = ['Retail', 'sHNI', 'bHNI'];
+        const catLabel = (c) => (isSME && c === 'Retail') ? 'Individual' : c;
         const selected = Object.values(applicantSel).filter(v => v.selected).length;
         const allPans  = D.pans.map(p => ({ ...p, mem: D.member(p.member) }));
         const toggle2  = (panId) => togglePan(panId);
@@ -803,17 +808,13 @@ function AdminPanel() {
                       </div>
                     </div>
                     <span className="num" style={{ fontSize: 12.5, color: 'var(--ink-3)', letterSpacing: '.05em', fontWeight: 700 }}>{p.pan}</span>
-                    {!isSME ? (
-                      <select
-                        style={{ ...inputSt, width: 86, padding: '5px 7px', fontSize: 12.5, opacity: sel.selected ? 1 : .35 }}
-                        value={sel.category} disabled={!sel.selected}
-                        onClick={e => e.stopPropagation()}
-                        onChange={e => { e.stopPropagation(); setCat(p.id, e.target.value); }}>
-                        {cats.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    ) : (
-                      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-3)', minWidth: 36, textAlign: 'right' }}>SME</span>
-                    )}
+                    <select
+                      style={{ ...inputSt, width: 96, padding: '5px 7px', fontSize: 12.5, opacity: sel.selected ? 1 : .35 }}
+                      value={sel.category} disabled={!sel.selected}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => { e.stopPropagation(); setCat(p.id, e.target.value); }}>
+                      {cats.map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
+                    </select>
                   </div>
                 );
               })}
@@ -1021,8 +1022,14 @@ function AdminPanel() {
       {/* ── IPO applicants modal (view + mark allotments) ── */}
       {viewIpoId && (() => {
         const vIpo    = D.ipo(viewIpoId);
-        const vIsSME  = vIpo?.type === 'SME';
-        const vCats   = vIsSME ? ['SME'] : ['Retail', 'sHNI', 'bHNI'];
+        // Since SEBI's ICDR amendment (1 Jul 2025), SME IPOs split applicants
+        // into Individual/S-HNI/B-HNI exactly like Mainboard. Rows recorded
+        // before this app added that split may still carry the old single
+        // 'SME' category value — 'SME' stays a selectable option (never forced
+        // or silently rewritten) so those legacy rows keep displaying correctly.
+        const vIsSME    = vIpo?.type === 'SME';
+        const vCatLabel = (c) => (vIsSME && c === 'Retail') ? 'Individual' : (c === 'SME' ? 'SME (legacy)' : c);
+        const vCats     = ['Retail', 'sHNI', 'bHNI'];
         const vAllots = D.allotments.filter(a => a.ipo === viewIpoId);
         const countBy = s => vAllots.filter(a => (changes[a.id]?.status ?? a.status) === s).length;
         const allotted = countBy('allotted'), notAllot = countBy('not_allotted'), pending = countBy('pending');
@@ -1244,15 +1251,18 @@ function AdminPanel() {
                               <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{mem?.name}{panObj?.pan ? ' · ' + panObj.pan : ''}</div>
                             </td>
                             <td style={{ padding: '10px 8px' }}>
-                              {vIsSME ? (
-                                <Badge tone="sme">SME</Badge>
-                              ) : (
-                                <select value={category}
-                                  onChange={e => setChange(a.id, 'category', e.target.value)}
-                                  style={{ ...inputSt, padding: '5px 6px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
-                                  {vCats.map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                              )}
+                              {(() => {
+                                // Keep a legacy 'SME' value selectable rather than
+                                // forcing/hiding it — see the vCats comment above.
+                                const options = vCats.includes(category) ? vCats : [...vCats, category];
+                                return (
+                                  <select value={category}
+                                    onChange={e => setChange(a.id, 'category', e.target.value)}
+                                    style={{ ...inputSt, padding: '5px 6px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+                                    {options.map(c => <option key={c} value={c}>{vCatLabel(c)}</option>)}
+                                  </select>
+                                );
+                              })()}
                             </td>
                             <td style={{ padding: '10px 8px', textAlign: 'center' }}>
                               <div style={{ display: 'inline-flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 3, gap: 2 }}>
@@ -1344,8 +1354,10 @@ function AdminPanel() {
       {/* ── Add applicants to existing IPO modal ── */}
       {addAppIpoId && (() => {
         const aIpo     = D.ipo(addAppIpoId);
+        // Same three-way split for SME as Mainboard since SEBI's 1 Jul 2025 rule.
         const isSME    = aIpo?.type === 'SME';
-        const cats     = isSME ? ['SME'] : ['Retail', 'sHNI', 'bHNI'];
+        const cats     = ['Retail', 'sHNI', 'bHNI'];
+        const catLabel = (c) => (isSME && c === 'Retail') ? 'Individual' : c;
         const panIds   = Object.keys(addAppSel);
         const selCount = Object.values(addAppSel).filter(v => v.selected).length;
         // flat list of all available PANs (not yet applied), with their member info
@@ -1410,18 +1422,14 @@ function AdminPanel() {
                         <span className="num" style={{ fontSize: 12.5, color: 'var(--ink-3)', letterSpacing: '.05em', fontWeight: 700 }}>{p.pan}</span>
 
                         {/* Category — stop click propagation so dropdown doesn't toggle row */}
-                        {!isSME ? (
-                          <select
-                            style={{ ...inputSt, width: 86, padding: '5px 7px', fontSize: 12.5, opacity: sel.selected ? 1 : .35 }}
-                            value={sel.category}
-                            disabled={!sel.selected}
-                            onClick={e => e.stopPropagation()}
-                            onChange={e => { e.stopPropagation(); setAddAppSel(prev => ({ ...prev, [p.id]: { ...prev[p.id], category: e.target.value } })); }}>
-                            {cats.map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                        ) : (
-                          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-3)', minWidth: 36, textAlign: 'right' }}>SME</span>
-                        )}
+                        <select
+                          style={{ ...inputSt, width: 96, padding: '5px 7px', fontSize: 12.5, opacity: sel.selected ? 1 : .35 }}
+                          value={sel.category}
+                          disabled={!sel.selected}
+                          onClick={e => e.stopPropagation()}
+                          onChange={e => { e.stopPropagation(); setAddAppSel(prev => ({ ...prev, [p.id]: { ...prev[p.id], category: e.target.value } })); }}>
+                          {cats.map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
+                        </select>
                       </div>
                     );
                   })}
