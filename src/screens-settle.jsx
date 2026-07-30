@@ -119,7 +119,15 @@ function SettlementLedger({ navigate, id }) {
       const cr = window.ratesForCategory(selIpo, cat);
       const shares = window.PoolMath.memberShares(
         ipoAllots.filter(a => a.category === cat), cr.stcg, cr.brok, panToMember);
-      Object.keys(shares).forEach(mid => { expected[mid + '|' + cat] = shares[mid].share; });
+      // finalizePayouts (screens-pool.jsx) only ever writes a settlement row
+      // when share > 0 -- a member whose fair entitlement rounds down to
+      // exactly ₹0 legitimately gets no row. Mirror that filter here, or this
+      // permanently reports "stale" for any pool where at least one member's
+      // rounded share is ₹0: their absent row would forever look like a
+      // missing one, surviving even a fresh, fully correct re-finalize.
+      Object.keys(shares).forEach(mid => {
+        if (shares[mid].share > 0) expected[mid + '|' + cat] = shares[mid].share;
+      });
     });
     const seen = new Set();
     for (const r of rows) {
@@ -127,7 +135,7 @@ function SettlementLedger({ navigate, id }) {
       seen.add(k);
       if (expected[k] === undefined || expected[k] !== r.amount) return true;
     }
-    // A member who now qualifies but has no ledger row is equally stale.
+    // A member who now qualifies (share > 0) but has no ledger row is equally stale.
     return Object.keys(expected).some(k => !seen.has(k));
   }, [rows, ipoAllots, categories, selIpo]);
 
