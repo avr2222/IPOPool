@@ -6,21 +6,25 @@ function SettingsScreen() {
   const D = window.DB;
   const me = D.members.find(m => m.you);
 
-  const [stcg,      setStcg]      = useState(() => parseFloat(localStorage.getItem('stcg')      || '15'));
-  const [brokerage, setBrokerage] = useState(() => parseFloat(localStorage.getItem('brokerage')  || '0'));
-  const [saved,     setSaved]     = useState(false);
+  const [stcg,       setStcg]       = useState(() => parseFloat(localStorage.getItem('stcg')       || '15'));
+  const [brokerage,  setBrokerage]  = useState(() => parseFloat(localStorage.getItem('brokerage')   || '0'));
+  const [bonusRate,  setBonusRate]  = useState(() => parseFloat(localStorage.getItem('allotBonus')  || '0'));
+  const [saved,      setSaved]      = useState(false);
 
   const handleSave = () => {
-    localStorage.setItem('stcg',      String(stcg));
-    localStorage.setItem('brokerage', String(brokerage));
+    localStorage.setItem('stcg',       String(stcg));
+    localStorage.setItem('brokerage',  String(brokerage));
+    localStorage.setItem('allotBonus', String(bonusRate));
     setSaved(true);
     setTimeout(() => setSaved(false), 2200);
   };
 
   // Live preview of how settings affect a sample profit
-  const sampleGross = 100000;
-  const sampleStcg  = Math.round(sampleGross * stcg / 100);
-  const sampleNet   = Math.max(0, sampleGross - sampleStcg - brokerage);
+  const sampleGross    = 100000;
+  const sampleStcg     = Math.round(sampleGross * stcg / 100);
+  const sampleAfterTax = Math.max(0, sampleGross - sampleStcg);
+  const sampleBonus    = bonusRate > 0 ? Math.round(sampleAfterTax * bonusRate / 100) : 0;
+  const sampleNet      = Math.max(0, sampleAfterTax - sampleBonus - brokerage);
 
   const Field = ({ label, sub, children }) => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -64,7 +68,7 @@ function SettingsScreen() {
 
       {/* Tax & costs */}
       <Card pad={24}>
-        <SectionTitle title="Tax & cost settings" sub="Deducted from gross profit before the per-PAN share is calculated" />
+        <SectionTitle title="Tax & cost settings" sub="STCG and brokerage are deducted before the pool is split; the bonus is kept by whoever was allotted, on top of their pool share" />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20, marginTop: 20 }}>
 
           <Field
@@ -101,6 +105,21 @@ function SettingsScreen() {
               />
             </div>
           </Field>
+
+          <Field
+            label="Allotted-PAN bonus"
+            sub="A reward for whoever actually got allotment: this % of THEIR OWN after-tax gain is kept by that PAN personally, on top of their normal equal pool share — the rest still goes into the pool. Set to 0 to split everything equally as before."
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="number" min="0" max="100" step="0.5"
+                value={bonusRate}
+                onChange={e => setBonusRate(parseFloat(e.target.value) || 0)}
+                style={{ ...inputStyle, maxWidth: 100 }}
+              />
+              <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--ink-2)' }}>%</span>
+            </div>
+          </Field>
         </div>
 
         {/* Live preview */}
@@ -108,10 +127,11 @@ function SettingsScreen() {
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 10 }}>Preview on ₹1,00,000 gross profit</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {[
-              ['Gross profit',         sampleGross,  'var(--ink)'],
-              [`STCG (${stcg}%)`,      -sampleStcg,  'var(--loss)'],
-              ['Brokerage',            -brokerage,   'var(--loss)'],
-              ['Net distributable',    sampleNet,    'var(--brand)'],
+              ['Gross profit',                             sampleGross,  'var(--ink)'],
+              [`STCG (${stcg}%)`,                           -sampleStcg,  'var(--loss)'],
+              ...(bonusRate > 0 ? [[`Allotted-PAN bonus (${bonusRate}% of after-tax, kept personally)`, -sampleBonus, 'var(--loss)']] : []),
+              ['Brokerage',                                 -brokerage,   'var(--loss)'],
+              ['Net distributable (equal pool split)',      sampleNet,    'var(--brand)'],
             ].map(([l, v, c]) => (
               <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: v === sampleNet ? 800 : 600 }}>
                 <span style={{ color: 'var(--ink-2)' }}>{l}</span>
@@ -125,8 +145,8 @@ function SettingsScreen() {
           <Button variant="primary" icon={saved ? 'check' : undefined} onClick={handleSave} style={{ minWidth: 140 }}>
             {saved ? 'Saved!' : 'Save settings'}
           </Button>
-          <button onClick={() => { setStcg(15); setBrokerage(0); }} style={{ background: 'none', border: 'none', color: 'var(--ink-3)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
-            Reset to defaults (15% STCG, ₹0 brokerage)
+          <button onClick={() => { setStcg(15); setBrokerage(0); setBonusRate(0); }} style={{ background: 'none', border: 'none', color: 'var(--ink-3)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+            Reset to defaults (15% STCG, ₹0 brokerage, 0% bonus)
           </button>
           {saved && <span style={{ fontSize: 13, color: 'var(--profit)', fontWeight: 600 }}>Settings applied to all profit calculations.</span>}
         </div>

@@ -87,6 +87,72 @@ section('STCG on a profitable pool');
   check('net = gross - stcg', m.net === 85000, 'net=' + m.net);
 }
 
+// ── allotted-PAN bonus (kept personally, on top of the equal pool share) ────
+section('allotted-PAN bonus');
+{
+  const panToMember = (panId) => ({ p1: 'm1', p2: 'm2', p3: 'm3' })[panId];
+
+  // Backward compatibility: omitting bonusRate, or passing 0, must reproduce
+  // today's numbers exactly -- this is the default and must never regress.
+  const rows0 = [row(1, 'allotted', 2250), row(2, 'allotted', 31500), row(3, 'not_allotted', 0)];
+  const noArg  = PoolMath.category(rows0, 15, 0);
+  const zero   = PoolMath.category(rows0, 15, 0, 0);
+  check('omitting bonusRate matches explicit 0', noArg.net === zero.net,
+    'noArg.net=' + noArg.net + ' zero.net=' + zero.net);
+  check('bonusRate=0 sets bonusTotal=0', zero.bonusTotal === 0);
+
+  // The exact worked example: ₹100 gross, 20% STCG -> ₹80 after tax, 5% of
+  // that (₹4) kept by the allottee, ₹76 into the pool.
+  const hundred = [row(1, 'allotted', 100)];
+  const worked = PoolMath.category(hundred, 20, 0, 5);
+  check('worked example: afterTax=80', worked.afterTax === 80, 'got ' + worked.afterTax);
+  check('worked example: bonusTotal=4 (5% of 80)', worked.bonusTotal === 4, 'got ' + worked.bonusTotal);
+  check('worked example: net=76 (goes to the pool)', worked.net === 76, 'got ' + worked.net);
+
+  // Multi-PAN worked example (Kalyani Steel numbers from this session):
+  // Rao ₹2,250, Spouse ₹31,500 allotted; Father not allotted. STCG 20%, bonus 5%.
+  const kalyani = [row(1, 'allotted', 2250), row(2, 'allotted', 31500), row(3, 'not_allotted', 0)];
+  const km = PoolMath.category(kalyani, 20, 0, 5);
+  check('gross=33750',   km.gross === 33750,   'got ' + km.gross);
+  check('afterTax=27000 (20% STCG)', km.afterTax === 27000, 'got ' + km.afterTax);
+  check('bonusTotal=1350 (5% of 27000)', km.bonusTotal === 1350, 'got ' + km.bonusTotal);
+  check('net=25650 (goes to the pool)', km.net === 25650, 'got ' + km.net);
+
+  const bonuses = PoolMath.panBonuses(kalyani, 20, 0, 5);
+  check('bonus pro-rata by gain: Rao ~90',    bonuses[1] === 90,   'got ' + bonuses[1]);
+  check('bonus pro-rata by gain: Spouse ~1260', bonuses[2] === 1260, 'got ' + bonuses[2]);
+  check('not-allotted PAN gets no bonus', bonuses[3] === 0, 'got ' + bonuses[3]);
+  check('bonuses sum EXACTLY to bonusTotal (largest-remainder guarantee)',
+    Object.values(bonuses).reduce((a, b) => a + b, 0) === km.bonusTotal,
+    'sum=' + Object.values(bonuses).reduce((a, b) => a + b, 0) + ' bonusTotal=' + km.bonusTotal);
+
+  const memberBonuses = PoolMath.memberBonuses(kalyani, 20, 0, 5, panToMember);
+  check('memberBonuses aggregates by member correctly',
+    memberBonuses.m1 === 90 && memberBonuses.m2 === 1260 && memberBonuses.m3 === 0,
+    JSON.stringify(memberBonuses));
+
+  // The pool split (net) must still sum exactly across all applicants,
+  // remainder rounding unaffected by the bonus carve-out.
+  const amounts = PoolMath.panAmounts(kalyani, 20, 0, 5);
+  check('per-PAN pool amounts still sum exactly to net',
+    Object.values(amounts).reduce((a, b) => a + b, 0) === km.net,
+    'sum=' + Object.values(amounts).reduce((a, b) => a + b, 0) + ' net=' + km.net);
+
+  // A losing category must never produce a positive bonus.
+  const losing = [row(1, 'allotted', -5000)];
+  const lm = PoolMath.category(losing, 15, 0, 5);
+  check('a losing pool has no bonus (afterTax floors at 0)', lm.bonusTotal === 0, 'got ' + lm.bonusTotal);
+
+  // Many small PANs: bonus proportions must still sum exactly (largest-
+  // remainder correctness at scale, not just a 2-PAN toy example).
+  const many = Array.from({ length: 7 }, (_, i) => row(i + 1, 'allotted', (i + 1) * 137));
+  const mm = PoolMath.category(many, 12.5, 0, 5);
+  const manyBonuses = PoolMath.panBonuses(many, 12.5, 0, 5);
+  check('7-PAN bonus split sums exactly to bonusTotal',
+    Object.values(manyBonuses).reduce((a, b) => a + b, 0) === mm.bonusTotal,
+    'sum=' + Object.values(manyBonuses).reduce((a, b) => a + b, 0) + ' bonusTotal=' + mm.bonusTotal);
+}
+
 // ── registrar paste parser ──────────────────────────────────────────────────
 section('parseAllotmentPaste (bulk allotment import)');
 {

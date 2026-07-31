@@ -149,8 +149,9 @@ function txPools(rows) {
   return rows.map(function(r) {
     return {
       id: r.id, ipo: r.ipo_id, status: r.status,
-      stcgRate:  r.stcg_rate != null ? parseFloat(r.stcg_rate) : null,
-      brokerage: r.brokerage != null ? parseFloat(r.brokerage) : null,
+      stcgRate:  r.stcg_rate  != null ? parseFloat(r.stcg_rate)  : null,
+      brokerage: r.brokerage  != null ? parseFloat(r.brokerage)  : null,
+      bonusRate: r.bonus_rate != null ? parseFloat(r.bonus_rate) : null,
     };
   });
 }
@@ -256,26 +257,38 @@ var PoolMath = {
   // contribute profit. `total` deliberately counts EVERY applicant, allotted or
   // not: pooling exists so the winners' profit is split across everyone who
   // applied. That asymmetry is the point of the pool, not a bug.
-  category: function(catAllots, stcgRate, brokerageAmt) {
+  // bonusRate is optional (defaults to 0, i.e. today's behaviour exactly) —
+  // an admin-set % kept personally by whoever was allotted, on top of their
+  // normal equal pool share. See the "afterTax"/"bonusTotal" comment below.
+  category: function(catAllots, stcgRate, brokerageAmt, bonusRate) {
     var gross     = catAllots.reduce(function(s, a){
       return a.status === 'allotted' ? s + (a.gain || 0) : s;
     }, 0);
     // No tax on a loss-making pool.
     var stcgAmt   = gross > 0 ? Math.round(gross * stcgRate / 100) : 0;
+    var afterTax  = Math.max(0, gross - stcgAmt);
+    // The allotted-PAN bonus is carved out of the AGGREGATE after-tax amount
+    // (not recomputed per PAN from scratch) so bonusRate=0 reproduces today's
+    // net to the rupee, with zero rounding drift. panBonuses below then
+    // divides bonusTotal back among allotted PANs pro-rata by their own gain
+    // -- the same "distribute a shared total by individual contribution"
+    // technique brokerageByCategory already uses, just one level deeper.
+    var bonusTotal = (bonusRate > 0 && afterTax > 0) ? Math.round(afterTax * bonusRate / 100) : 0;
     // A pool never distributes a negative amount: losses are visible per PAN
     // (see rowGain) but nobody is ever asked to pay money back in.
-    var net       = Math.max(0, gross - stcgAmt - brokerageAmt);
+    var net       = Math.max(0, afterTax - bonusTotal - brokerageAmt);
     var total     = catAllots.length;
     var perPan    = total > 0 ? Math.floor(net / total) : 0;
     var remainder = net - perPan * total;   // integer rupees, 0 .. total-1
     var allotted  = catAllots.filter(function(a){ return a.status === 'allotted'; }).length;
-    return { gross: gross, stcgAmt: stcgAmt, net: net, total: total, perPan: perPan, remainder: remainder, allotted: allotted };
+    return { gross: gross, stcgAmt: stcgAmt, afterTax: afterTax, bonusTotal: bonusTotal,
+             net: net, total: total, perPan: perPan, remainder: remainder, allotted: allotted };
   },
 
   // Amount per PAN with the remainder distributed deterministically:
   // the first `remainder` PANs (sorted by id) each get one extra rupee.
-  panAmounts: function(catAllots, stcgRate, brokerageAmt) {
-    var m = this.category(catAllots, stcgRate, brokerageAmt);
+  panAmounts: function(catAllots, stcgRate, brokerageAmt, bonusRate) {
+    var m = this.category(catAllots, stcgRate, brokerageAmt, bonusRate);
     var sorted = catAllots.slice().sort(function(a, b){ return String(a.id).localeCompare(String(b.id)); });
     var out = {};
     for (var i = 0; i < sorted.length; i++) {
@@ -286,8 +299,10 @@ var PoolMath = {
 
   // Aggregate per-PAN amounts by member. panToMember(panId) -> memberId | null.
   // Returns { [memberId]: { pans, share } } where the shares sum to net.
-  memberShares: function(catAllots, stcgRate, brokerageAmt, panToMember) {
-    var amounts = this.panAmounts(catAllots, stcgRate, brokerageAmt);
+  // This is the equal POOL share only — it does NOT include a PAN's personal
+  // allotted-PAN bonus; see panBonuses/memberBonuses for that, added on top.
+  memberShares: function(catAllots, stcgRate, brokerageAmt, panToMember, bonusRate) {
+    var amounts = this.panAmounts(catAllots, stcgRate, brokerageAmt, bonusRate);
     var shares = {};
     catAllots.forEach(function(a) {
       var mid = panToMember(a.pan);
@@ -297,6 +312,43 @@ var PoolMath = {
       shares[mid].share += (amounts[a.id] || 0);
     });
     return shares;
+  },
+
+  // Each ALLOTTED PAN's personal share of the category's bonusTotal, pro-rata
+  // by their own gain -- someone whose gain was twice another's gets twice the
+  // bonus. The last (by id, for determinism) allotted PAN absorbs the
+  // rounding remainder, same pattern as brokerageByCategory. Non-allotted
+  // PANs, and PANs with a zero/negative gain, get 0 -- there is nothing of
+  // theirs to reward.
+  panBonuses: function(catAllots, stcgRate, brokerageAmt, bonusRate) {
+    var m = this.category(catAllots, stcgRate, brokerageAmt, bonusRate);
+    var out = {};
+    catAllots.forEach(function(a){ out[a.id] = 0; });
+    if (m.bonusTotal <= 0 || m.gross <= 0) return out;
+    var eligible = catAllots.filter(function(a){ return a.status === 'allotted' && (a.gain || 0) > 0; });
+    var sorted = eligible.slice().sort(function(a, b){ return String(a.id).localeCompare(String(b.id)); });
+    var assigned = 0;
+    sorted.forEach(function(a, i) {
+      var share = (i === sorted.length - 1)
+        ? m.bonusTotal - assigned
+        : Math.round(m.bonusTotal * (a.gain || 0) / m.gross);
+      out[a.id] = share;
+      assigned += share;
+    });
+    return out;
+  },
+
+  // Aggregate panBonuses by member -- the personal bonus a member should
+  // receive ON TOP OF their memberShares pool share (added, never substituted).
+  memberBonuses: function(catAllots, stcgRate, brokerageAmt, bonusRate, panToMember) {
+    var amounts = this.panBonuses(catAllots, stcgRate, brokerageAmt, bonusRate);
+    var out = {};
+    catAllots.forEach(function(a) {
+      var mid = panToMember(a.pan);
+      if (mid == null) return;
+      out[mid] = (out[mid] || 0) + (amounts[a.id] || 0);
+    });
+    return out;
   },
 };
 window.PoolMath = PoolMath;
@@ -310,8 +362,9 @@ window.PoolMath = PoolMath;
 function ratesForIpo(ipoId) {
   var pool = _pools.find(function(p){ return p.ipo === ipoId; });
   return {
-    stcg: pool && pool.stcgRate  != null ? pool.stcgRate  : parseFloat(localStorage.getItem('stcg')      || '15'),
-    brok: pool && pool.brokerage != null ? pool.brokerage : parseFloat(localStorage.getItem('brokerage') || '0'),
+    stcg:  pool && pool.stcgRate  != null ? pool.stcgRate  : parseFloat(localStorage.getItem('stcg')       || '15'),
+    brok:  pool && pool.brokerage != null ? pool.brokerage : parseFloat(localStorage.getItem('brokerage')  || '0'),
+    bonus: pool && pool.bonusRate != null ? pool.bonusRate : parseFloat(localStorage.getItem('allotBonus') || '0'),
   };
 }
 
@@ -360,14 +413,27 @@ function brokerageByCategory(ipoId, brokerageAmt) {
 // category's share of its single flat brokerage charge. Every per-category
 // PoolMath call should resolve its rates through here rather than passing the
 // raw flat brokerage, which is what caused the multiple-charge bug.
+//
+// bonus (the allotted-PAN bonus %) is passed through unchanged, not split like
+// brokerage: it is a PERCENTAGE applied to each category's own after-tax
+// gross, not a flat rupee amount shared across categories, so there is
+// nothing to divide.
 function ratesForCategory(ipoId, category) {
   var r = ratesForIpo(ipoId);
-  return { stcg: r.stcg, brok: brokerageByCategory(ipoId, r.brok)[category] || 0 };
+  return { stcg: r.stcg, brok: brokerageByCategory(ipoId, r.brok)[category] || 0, bonus: r.bonus };
 }
 
-// Total net profit across a set of allotments, grouped by (ipo, category) so
-// STCG and brokerage are applied per category exactly as the pool screen does.
-// Each group is priced with its own IPO's finalized rates via ratesForCategory.
+// Total REALISED profit across a set of allotments, grouped by (ipo,
+// category) so STCG and brokerage are applied per category exactly as the
+// pool screen does. Each group is priced with its own IPO's finalized rates
+// via ratesForCategory.
+//
+// This is net + bonusTotal, not just net: the allotted-PAN bonus doesn't
+// leave the family, it's just paid directly to whoever was allotted instead
+// of flowing through the equal pool split. Summing only `net` here would
+// make "Total Profit" silently shrink by every bonus paid out, understating
+// what the family actually earned by the exact amount that went straight to
+// allottees instead of through the pool.
 function groupNetProfit(allots) {
   var groups = {};
   allots.forEach(function(a) {
@@ -377,7 +443,8 @@ function groupNetProfit(allots) {
   return Object.keys(groups).reduce(function(sum, k) {
     var head = groups[k][0];
     var r = ratesForCategory(head.ipo, head.category);
-    return sum + PoolMath.category(groups[k], r.stcg, r.brok).net;
+    var m = PoolMath.category(groups[k], r.stcg, r.brok, r.bonus);
+    return sum + m.net + m.bonusTotal;
   }, 0);
 }
 window.groupNetProfit     = groupNetProfit;
@@ -504,7 +571,9 @@ function computeCategoryStats() {
 // Per-member profit totalled across EVERY IPO, ranked highest first. Reuses the
 // same PoolMath.memberShares split the Profit Pool screen uses, and the same
 // rate resolution (finalized pool rates when present, else the local defaults),
-// so a member's leaderboard total equals the sum of their pool shares.
+// so a member's leaderboard total equals the sum of their pool shares --
+// PLUS their personal allotted-PAN bonus (memberBonuses), since that money is
+// theirs too, just paid outside the equal pool split.
 function computeMemberProfits() {
   var panToMember = function(panId) {
     var p = _pans.find(function(x){ return x.id === panId; });
@@ -520,11 +589,16 @@ function computeMemberProfits() {
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
     Object.keys(cats).forEach(function(cat) {
       var r = ratesForCategory(ipo.id, cat);
-      var shares = PoolMath.memberShares(cats[cat], r.stcg, r.brok, panToMember);
+      var shares  = PoolMath.memberShares(cats[cat], r.stcg, r.brok, panToMember, r.bonus);
+      var bonuses = PoolMath.memberBonuses(cats[cat], r.stcg, r.brok, r.bonus, panToMember);
       Object.keys(shares).forEach(function(mid) {
         if (!totals[mid]) totals[mid] = { profit: 0, pans: 0 };
         totals[mid].profit += shares[mid].share;
         totals[mid].pans   += shares[mid].pans;
+      });
+      Object.keys(bonuses).forEach(function(mid) {
+        if (!totals[mid]) totals[mid] = { profit: 0, pans: 0 };
+        totals[mid].profit += bonuses[mid];
       });
     });
   });
@@ -886,14 +960,14 @@ async function loadDB() {
         var pool = txPools([poolData])[0];
 
         // Persist the rates used, so the ledger is identical on every device.
-        // Best-effort: if migration 003 (stcg_rate/brokerage columns) hasn't
-        // been applied yet, finalize still succeeds and falls back to local
-        // settings for display.
+        // Best-effort: if migration 003/009 (stcg_rate/brokerage/bonus_rate
+        // columns) hasn't been applied yet, finalize still succeeds and falls
+        // back to local settings for display.
         if (rates) {
           var { error: rateErr } = await window.sb.from('profit_pools')
-            .update({ stcg_rate: rates.stcgRate, brokerage: rates.brokerage })
+            .update({ stcg_rate: rates.stcgRate, brokerage: rates.brokerage, bonus_rate: rates.bonusRate })
             .eq('id', pool.id);
-          if (rateErr) console.warn('[IPOPool] pool rate columns missing — run migration 003:', rateErr.message);
+          if (rateErr) console.warn('[IPOPool] pool rate columns missing — run migrations 003/009:', rateErr.message);
         }
 
         // Which (member, category) settlements are already Paid — leave untouched.
