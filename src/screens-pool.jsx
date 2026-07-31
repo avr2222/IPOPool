@@ -13,15 +13,20 @@ const CAT_META = {
   bHNI:   { label: 'bHNI',   tone: 'warn',    desc: 'Above ₹10L application', textColor: 'var(--warn)' },
 };
 
-// Sortable member-shares table for one category pool.
-function MemberSharesTable({ D, shares, f }) {
+// Sortable member-shares table for one category pool. `bonuses` (optional)
+// is each member's personal allotted-PAN bonus, kept on top of their equal
+// pool share -- shown as its own column only when at least one is non-zero,
+// so a pool with no bonus configured renders exactly as before.
+function MemberSharesTable({ D, shares, f, bonuses }) {
+  const hasBonus = bonuses && Object.values(bonuses).some(b => b > 0);
   const rows = Object.entries(shares || {})
-    .map(([mid, row]) => ({ mid, m: D.member(mid), pans: row.pans, share: row.share }))
+    .map(([mid, row]) => ({ mid, m: D.member(mid), pans: row.pans, share: row.share, bonus: (bonuses && bonuses[mid]) || 0 }))
     .filter(r => r.m);
   const cols = [
     { key: 'member', label: 'Member', align: 'left',   get: r => r.m.name || '' },
     { key: 'pans',   label: 'PANs',   align: 'center', get: r => r.pans || 0, defDir: 'desc' },
-    { key: 'share',  label: 'Share',  align: 'right',  get: r => r.share || 0, defDir: 'desc' },
+    ...(hasBonus ? [{ key: 'bonus', label: 'Bonus', align: 'right', get: r => r.bonus || 0, defDir: 'desc' }] : []),
+    { key: 'share',  label: hasBonus ? 'Total' : 'Share', align: 'right', get: r => (r.share || 0) + (r.bonus || 0), defDir: 'desc' },
   ];
   const [sort, onSort] = useSortState('share', 'desc');
   const sorted = sortRows(rows, sort, cols);
@@ -29,13 +34,11 @@ function MemberSharesTable({ D, shares, f }) {
     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-          <SortTh col={cols[0]} sort={sort} onSort={onSort} style={{ padding: '6px 20px' }} />
-          <SortTh col={cols[1]} sort={sort} onSort={onSort} style={{ padding: '6px 8px' }} />
-          <SortTh col={cols[2]} sort={sort} onSort={onSort} style={{ padding: '6px 20px' }} />
+          {cols.map((c, i) => <SortTh key={c.key} col={c} sort={sort} onSort={onSort} style={{ padding: i === 0 ? '6px 20px' : '6px 8px' }} />)}
         </tr>
       </thead>
       <tbody>
-        {sorted.map(({ mid, m, pans, share }) => (
+        {sorted.map(({ mid, m, pans, share, bonus }) => (
           <tr key={mid} style={{ borderTop: '1px solid var(--border)', background: m.you ? 'var(--brand-tint)' : 'transparent' }}>
             <td style={{ padding: '10px 20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -50,7 +53,10 @@ function MemberSharesTable({ D, shares, f }) {
                 ))}
               </div>
             </td>
-            <td className="num" style={{ padding: '10px 20px', textAlign: 'right', fontSize: 14, fontWeight: 800, color: m.you ? 'var(--brand)' : 'var(--profit)' }}>{f(share)}</td>
+            {hasBonus && (
+              <td className="num" style={{ padding: '10px 8px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: 'var(--warn)' }}>{bonus > 0 ? f(bonus) : '—'}</td>
+            )}
+            <td className="num" style={{ padding: '10px 20px', textAlign: 'right', fontSize: 14, fontWeight: 800, color: m.you ? 'var(--brand)' : 'var(--profit)' }}>{f(share + bonus)}</td>
           </tr>
         ))}
       </tbody>
@@ -99,6 +105,7 @@ function ProfitPooling({ navigate, id }) {
   const rates        = window.ratesForIpo(sel);
   const stcgRate     = rates.stcg;
   const brokerageAmt = rates.brok;
+  const bonusRate    = rates.bonus;
 
   // Unique categories in this IPO's allotments (order: SME, Retail, sHNI, bHNI)
   const CAT_ORDER  = ['SME', 'Retail', 'sHNI', 'bHNI'];
@@ -109,25 +116,36 @@ function ProfitPooling({ navigate, id }) {
   // that category's allotments, so someone with 2 PANs in sHNI gets 2× the
   // perPan share. PoolMath distributes the rounding remainder so the member
   // shares sum EXACTLY to the category net.
+  //
+  // memberBonuses is a SEPARATE, personal reward on top of the equal share:
+  // whoever actually got allotted keeps bonusRate% of their own after-tax gain
+  // for themselves before the rest is even pooled. It is added to, never
+  // instead of, memberShares.
   const panToMember = (panId) => { const p = D.pan(panId); return p ? p.member : null; };
   const catData = categories.map(cat => {
     const catAllots = ipoAllots.filter(a => a.category === cat);
     // This category's share of the IPO's single flat brokerage charge, not the
     // whole charge again — see ratesForCategory.
     const cr = window.ratesForCategory(sel, cat);
-    const math = window.PoolMath.category(catAllots, cr.stcg, cr.brok);
-    const memberShares = window.PoolMath.memberShares(catAllots, cr.stcg, cr.brok, panToMember);
-    return { cat, catAllots, ...math, brok: cr.brok, memberShares };
+    const math = window.PoolMath.category(catAllots, cr.stcg, cr.brok, cr.bonus);
+    const memberShares  = window.PoolMath.memberShares(catAllots, cr.stcg, cr.brok, panToMember, cr.bonus);
+    const memberBonuses = window.PoolMath.memberBonuses(catAllots, cr.stcg, cr.brok, cr.bonus, panToMember);
+    return { cat, catAllots, ...math, brok: cr.brok, bonusRate: cr.bonus, memberShares, memberBonuses };
   });
 
-  // Your combined share across ALL categories
-  const myTotal    = catData.reduce((s, d) => s + (d.memberShares[me?.id]?.share || 0), 0);
-  const myPanCount = catData.reduce((s, d) => s + (d.memberShares[me?.id]?.pans  || 0), 0);
+  // Your combined share across ALL categories (pool share + personal bonus)
+  const myPoolShare = catData.reduce((s, d) => s + (d.memberShares[me?.id]?.share || 0), 0);
+  const myBonus     = catData.reduce((s, d) => s + (d.memberBonuses[me?.id] || 0), 0);
+  const myTotal     = myPoolShare + myBonus;
+  const myPanCount  = catData.reduce((s, d) => s + (d.memberShares[me?.id]?.pans  || 0), 0);
 
-  // Overall summary
+  // Overall summary. totalNet is the pool-only amount left to be split
+  // equally; totalBonus is what's carved out and paid directly to allottees;
+  // together they are the IPO's whole realised profit (matches groupNetProfit).
   const totalPans     = ipoAllots.length;
   const totalAllotted = ipoAllots.filter(a => a.status === 'allotted').length;
   const totalNet      = catData.reduce((s, d) => s + d.net, 0);
+  const totalBonus    = catData.reduce((s, d) => s + d.bonusTotal, 0);
 
   // Build settlement rows from computed catData and save to Supabase
   const finalizePayouts = async () => {
@@ -135,13 +153,20 @@ function ProfitPooling({ navigate, id }) {
     try {
       const rows = [];
       catData.forEach(d => {
-        if (d.net <= 0) return;
-        Object.entries(d.memberShares).forEach(([memberId, { pans, share }]) => {
-          if (share > 0) rows.push({ memberId, category: d.cat, pans, amount: Math.round(share) });
+        // A category whose pool net rounds to 0 (e.g. brokerage ate the rest)
+        // can still owe personal bonuses -- the bonus is carved out BEFORE
+        // net, not from what's left of it -- so this no longer skips the
+        // whole category just because d.net <= 0.
+        Object.keys(d.memberShares).forEach(memberId => {
+          const poolShare = d.memberShares[memberId]?.share || 0;
+          const bonus     = d.memberBonuses[memberId] || 0;
+          const pans      = d.memberShares[memberId]?.pans || 0;
+          const amount    = poolShare + bonus;
+          if (amount > 0) rows.push({ memberId, category: d.cat, pans, amount: Math.round(amount) });
         });
       });
       if (rows.length === 0) { setFinalErr('No profit to distribute yet.'); setFinalizing(false); return; }
-      await D.mutations.createSettlements(sel, rows, { stcgRate, brokerage: brokerageAmt });
+      await D.mutations.createSettlements(sel, rows, { stcgRate, brokerage: brokerageAmt, bonusRate });
       navigate('settlement', { id: sel });
     } catch (e) {
       setFinalErr(e.message || 'Failed to save settlements.');
@@ -210,6 +235,7 @@ function ProfitPooling({ navigate, id }) {
                 const r = d.memberShares[me.id];
                 return `${CAT_META[d.cat]?.label || d.cat}: ${r.pans} PAN${r.pans > 1 ? 's' : ''} × ${f(d.perPan)}`;
               }).join(' · ')}
+              {myBonus > 0 && <span style={{ color: 'var(--warn)', fontWeight: 700 }}> · +{f(myBonus)} allotted-PAN bonus</span>}
             </div>
           </div>
           <div className="num" style={{ fontSize: 30, fontWeight: 800, color: 'var(--brand)' }}>{f(myTotal)}</div>
@@ -221,7 +247,7 @@ function ProfitPooling({ navigate, id }) {
         {[
           { label: 'PANs applied',  value: totalPans,                       icon: 'pan',    tone: 'neutral' },
           { label: 'Allotted',      value: totalAllotted,                   icon: 'check',  tone: 'info' },
-          { label: 'Net profit',    value: f(totalNet, { compact: true }),  icon: 'trend',  tone: 'profit' },
+          { label: 'Net profit',    value: f(totalNet + totalBonus, { compact: true }), icon: 'trend', tone: 'profit' },
           { label: 'Your share',    value: f(myTotal),                      icon: 'wallet', tone: 'brand' },
         ].map(s => (
           <Card key={s.label} pad={16} style={{ background: s.tone === 'brand' ? 'var(--brand-tint)' : 'var(--surface)', borderColor: s.tone === 'brand' ? 'var(--brand)' : 'var(--border)' }}>
@@ -247,7 +273,10 @@ function ProfitPooling({ navigate, id }) {
       {/* Per-category breakdown */}
       {catData.map(d => {
         const meta    = CAT_META[d.cat] || { label: d.cat, tone: 'neutral', desc: '', textColor: 'var(--ink-2)' };
-        const hasProfit = d.net > 0;
+        // A category can legitimately have all its profit go to the bonus
+        // (net rounds to 0 after a high bonus rate) and still have real
+        // money to show -- not just an empty "no allotments" category.
+        const hasProfit = d.net > 0 || d.bonusTotal > 0;
         return (
           <Card key={d.cat} pad={0} style={{ borderColor: hasProfit ? 'var(--border)' : 'var(--border)', overflow: 'hidden' }}>
             {/* Category header */}
@@ -292,6 +321,7 @@ function ProfitPooling({ navigate, id }) {
                     {[
                       ['Gross profit', d.gross, 'var(--ink)'],
                       [`STCG (${stcgRate}%)`, -d.stcgAmt, 'var(--loss)'],
+                      ...(d.bonusTotal > 0 ? [[`Allotted-PAN bonus (${d.bonusRate}%, kept personally)`, -d.bonusTotal, 'var(--warn)']] : []),
                       [categories.length > 1 ? 'Brokerage (share)' : 'Brokerage', -d.brok, 'var(--loss)'],
                     ].map(([l, v, c]) => (
                       <div key={l} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
@@ -311,7 +341,7 @@ function ProfitPooling({ navigate, id }) {
                 {/* Member shares in this category */}
                 <div>
                   <div style={{ padding: '16px 20px 10px', fontSize: 13, fontWeight: 800 }}>Member shares ({meta.label})</div>
-                  <MemberSharesTable D={D} shares={d.memberShares} f={f} />
+                  <MemberSharesTable D={D} shares={d.memberShares} bonuses={d.memberBonuses} f={f} />
                 </div>
               </div>
             )}

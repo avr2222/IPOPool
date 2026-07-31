@@ -82,6 +82,7 @@ function SettlementLedger({ navigate, id }) {
   const rates        = window.ratesForIpo(selIpo);
   const stcgRate     = rates.stcg;
   const brokerageAmt = rates.brok;
+  const bonusRate    = rates.bonus;
   const ipoAllots    = D.allotments.filter(a => a.ipo === selIpo);
   const CAT_ORDER    = ['SME', 'Retail', 'sHNI', 'bHNI'];
   const categories   = CAT_ORDER.filter(c => ipoAllots.some(a => a.category === c));
@@ -89,18 +90,22 @@ function SettlementLedger({ navigate, id }) {
   const catSummaries = categories.map(cat => {
     const ca = ipoAllots.filter(a => a.category === cat);
     const cr = window.ratesForCategory(selIpo, cat);
-    const m  = window.PoolMath.category(ca, cr.stcg, cr.brok);
-    return { cat, net: m.net, perPan: m.perPan, total: m.total };
+    const m  = window.PoolMath.category(ca, cr.stcg, cr.brok, cr.bonus);
+    return { cat, net: m.net, bonusTotal: m.bonusTotal, perPan: m.perPan, total: m.total };
   });
-  const totalNet = catSummaries.reduce((s, d) => s + d.net, 0);
+  const totalNet   = catSummaries.reduce((s, d) => s + d.net, 0);
+  const totalBonus = catSummaries.reduce((s, d) => s + d.bonusTotal, 0);
   const myPanIds = D.pans.filter(p => p.member === me?.id).map(p => p.id);
 
-  // Your retained share (exact, summed across all categories)
+  // Your retained share (exact, summed across all categories) — pool share
+  // plus your personal allotted-PAN bonus, on top, matching what
+  // finalizePayouts (screens-pool.jsx) actually wrote to the settlement.
   const myShare = categories.reduce((sum, cat) => {
     const ca = ipoAllots.filter(a => a.category === cat);
     const cr = window.ratesForCategory(selIpo, cat);
-    const shares = window.PoolMath.memberShares(ca, cr.stcg, cr.brok, panToMember);
-    return sum + (shares[me?.id]?.share || 0);
+    const shares  = window.PoolMath.memberShares(ca, cr.stcg, cr.brok, panToMember, cr.bonus);
+    const bonuses = window.PoolMath.memberBonuses(ca, cr.stcg, cr.brok, cr.bonus, panToMember);
+    return sum + (shares[me?.id]?.share || 0) + (bonuses[me?.id] || 0);
   }, 0);
 
   // Settlement rows for this IPO
@@ -117,16 +122,20 @@ function SettlementLedger({ navigate, id }) {
     const expected = {};
     categories.forEach(cat => {
       const cr = window.ratesForCategory(selIpo, cat);
-      const shares = window.PoolMath.memberShares(
-        ipoAllots.filter(a => a.category === cat), cr.stcg, cr.brok, panToMember);
-      // finalizePayouts (screens-pool.jsx) only ever writes a settlement row
-      // when share > 0 -- a member whose fair entitlement rounds down to
-      // exactly ₹0 legitimately gets no row. Mirror that filter here, or this
-      // permanently reports "stale" for any pool where at least one member's
-      // rounded share is ₹0: their absent row would forever look like a
-      // missing one, surviving even a fresh, fully correct re-finalize.
-      Object.keys(shares).forEach(mid => {
-        if (shares[mid].share > 0) expected[mid + '|' + cat] = shares[mid].share;
+      const catAllots = ipoAllots.filter(a => a.category === cat);
+      const shares  = window.PoolMath.memberShares(catAllots, cr.stcg, cr.brok, panToMember, cr.bonus);
+      const bonuses = window.PoolMath.memberBonuses(catAllots, cr.stcg, cr.brok, cr.bonus, panToMember);
+      // finalizePayouts (screens-pool.jsx) writes ONE row per (member,
+      // category) with amount = pool share + personal bonus, and only when
+      // that sum is > 0 -- a member whose fair entitlement rounds down to
+      // exactly ₹0 legitimately gets no row. Mirror both of those exactly, or
+      // this permanently reports "stale" for any pool where at least one
+      // member's rounded total is ₹0: their absent row would forever look
+      // like a missing one, surviving even a fresh, fully correct re-finalize.
+      const mids = new Set([...Object.keys(shares), ...Object.keys(bonuses)]);
+      mids.forEach(mid => {
+        const total = (shares[mid]?.share || 0) + (bonuses[mid] || 0);
+        if (total > 0) expected[mid + '|' + cat] = total;
       });
     });
     const seen = new Set();
@@ -135,7 +144,7 @@ function SettlementLedger({ navigate, id }) {
       seen.add(k);
       if (expected[k] === undefined || expected[k] !== r.amount) return true;
     }
-    // A member who now qualifies (share > 0) but has no ledger row is equally stale.
+    // A member who now qualifies (total > 0) but has no ledger row is equally stale.
     return Object.keys(expected).some(k => !seen.has(k));
   }, [rows, ipoAllots, categories, selIpo]);
 
@@ -158,13 +167,17 @@ function SettlementLedger({ navigate, id }) {
       if (panObj) memberReceived[panObj.member] = (memberReceived[panObj.member] || 0) + (a.gain || 0);
     });
 
-    // Total gross and total cost (STCG + brokerage) across categories. PoolMath
-    // gives net = gross − STCG − brokerage, so (gross − net) is exactly the cost.
+    // Total gross and total cost (STCG + brokerage only) across categories.
+    // The allotted-PAN bonus is deliberately NOT counted as a cost here: it is
+    // money the allottee keeps for themselves (already folded into `owed` via
+    // the settlement amount), not tax/brokerage that reduces what's really
+    // available from their gross receipt. Using (gross − net) would double
+    // count it as a cost AND as part of owed, throwing off every transfer.
     let grossTotal = 0, costTotal = 0;
     categories.forEach(cat => {
       const cr = window.ratesForCategory(selIpo, cat);
-      const m = window.PoolMath.category(ipoAllots.filter(a => a.category === cat), cr.stcg, cr.brok);
-      grossTotal += m.gross; costTotal += (m.gross - m.net);
+      const m = window.PoolMath.category(ipoAllots.filter(a => a.category === cat), cr.stcg, cr.brok, cr.bonus);
+      grossTotal += m.gross; costTotal += (m.stcgAmt + cr.brok);
     });
 
     const ids = new Set([...Object.keys(memberOwed), ...Object.keys(memberReceived)]);
@@ -175,7 +188,7 @@ function SettlementLedger({ navigate, id }) {
       out[id] = Math.round((received - costShare) - (memberOwed[id] || 0));
     });
     return out;
-  }, [rows, ipoAllots, categories, stcgRate, brokerageAmt]);
+  }, [rows, ipoAllots, categories, stcgRate, brokerageAmt, bonusRate]);
 
   // ── Minimal-transfer plan: greedy debt minimization over the net positions ────
   const transferPlan = useMemo(() => {
@@ -366,7 +379,8 @@ function SettlementLedger({ navigate, id }) {
               }).map(d => {
                 const n = ipoAllots.filter(a => a.category === d.cat && myPanIds.includes(a.pan)).length;
                 return `${d.cat}: ${n} PAN${n>1?'s':''} × ${f(d.perPan)}`;
-              }).join(' · ')} — already in your account
+              }).join(' · ')}
+              {bonusRate > 0 && <span style={{ color: 'var(--warn)', fontWeight: 700 }}> · includes your allotted-PAN bonus</span>} — already in your account
             </div>
           </div>
           <div className="num" style={{ fontSize: 28, fontWeight: 800, color: 'var(--brand)' }}>{f(myShare)}</div>
