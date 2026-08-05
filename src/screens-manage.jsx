@@ -198,8 +198,11 @@ function AdminPanel() {
       setIpos([...window.DB.ipos]);
       setNewIpoId(saved.id);
       // Pre-populate applicant selections — all unchecked, default category by board type
+      // Default category is always 'Retail' -- SME and Mainboard share the same
+      // Retail/sHNI/bHNI category set since SEBI's 1 Jul 2025 rule, 'SME' is not
+      // a selectable category value (see cats below).
       const defaults = {};
-      window.DB.pans.forEach(p => { defaults[p.id] = { selected: false, category: saved.type === 'SME' ? 'SME' : 'Retail' }; });
+      window.DB.pans.forEach(p => { defaults[p.id] = { selected: false, category: 'Retail' }; });
       setApplicantSel(defaults);
       setAddIpoStep('applicants');
     } catch(e) { setIpoErr(e.message); }
@@ -273,11 +276,13 @@ function AdminPanel() {
   };
 
   const openAddApplicants = (ipoId) => {
-    const ipoType = D.ipo(ipoId)?.type || 'SME';
     const alreadyApplied = new Set(D.allotments.filter(a => a.ipo === ipoId).map(a => a.pan));
+    // Default category is always 'Retail' -- SME and Mainboard share the same
+    // Retail/sHNI/bHNI category set since SEBI's 1 Jul 2025 rule, 'SME' is not
+    // a selectable category value (see cats in the modal below).
     const defaults = {};
     D.pans.filter(p => !alreadyApplied.has(p.id)).forEach(p => {
-      defaults[p.id] = { selected: false, category: ipoType === 'SME' ? 'SME' : 'Retail' };
+      defaults[p.id] = { selected: false, category: 'Retail' };
     });
     setAddAppSel(defaults);
     setAddAppIpoId(ipoId);
