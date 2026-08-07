@@ -1227,7 +1227,7 @@ function AdminPanel() {
                     <thead>
                       <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em', background: 'var(--surface-2)', position: 'sticky', top: 0, zIndex: 1 }}>
                         <th style={{ fontWeight: 700, padding: '9px 8px 9px 16px', textAlign: 'left' }}>Applicant</th>
-                        <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'left' }}>Cat</th>
+                        <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'left', width: 96 }}>Cat</th>
                         <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'center' }}>Status</th>
                         <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'right' }}>Shares</th>
                         <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'right' }}>
@@ -1263,7 +1263,7 @@ function AdminPanel() {
                                 return (
                                   <select value={category}
                                     onChange={e => setChange(a.id, 'category', e.target.value)}
-                                    style={{ ...inputSt, padding: '5px 6px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+                                    style={{ ...inputSt, width: 96, padding: '5px 6px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
                                     {options.map(c => <option key={c} value={c}>{vCatLabel(c)}</option>)}
                                   </select>
                                 );
