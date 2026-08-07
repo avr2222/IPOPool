@@ -274,6 +274,11 @@ function App() {
     const reload = () => {
       clearTimeout(timer);
       timer = setTimeout(async () => {
+        // Our own mutations already call loadDB() and this device already
+        // re-renders with fresh data (no remount needed) -- skip the extra
+        // full-screen remount that would otherwise fire for every row a save
+        // just touched. Only truly-external changes reach this point.
+        if (Date.now() - (window.__lastLocalWriteAt || 0) < 3000) return;
         try { await window.loadDB(); setDataVersion(v => v + 1); }
         catch (e) { console.error('[IPOPool] realtime reload failed', e); }
       }, 500);
