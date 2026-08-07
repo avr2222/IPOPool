@@ -610,6 +610,40 @@ function computeMemberProfits() {
   }).sort(function(a, b){ return b.profit - a.profit; });
 }
 
+// Same leaderboard, one row per PAN instead of rolled up by family/member --
+// lets the admin see exactly which PAN is carrying a member's total (relevant
+// once the allotted-PAN bonus makes individual PANs earn different amounts
+// within the same family). Reuses the identical per-category math as
+// computeMemberProfits, just keyed by PAN id instead of aggregated by member.
+function computePanProfits() {
+  var totals = {};   // panId -> { profit, apps }
+  _ipos.forEach(function(ipo) {
+    var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
+    if (!ipoAllots.length) return;
+
+    var cats = {};
+    ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
+    Object.keys(cats).forEach(function(cat) {
+      var r = ratesForCategory(ipo.id, cat);
+      var amounts = PoolMath.panAmounts(cats[cat], r.stcg, r.brok, r.bonus);
+      var bonuses = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
+      cats[cat].forEach(function(a) {
+        if (!totals[a.id]) totals[a.id] = { profit: 0, apps: 0 };
+        totals[a.id].profit += (amounts[a.id] || 0) + (bonuses[a.id] || 0);
+        totals[a.id].apps++;
+      });
+    });
+  });
+
+  return _pans.map(function(p) {
+    var t = totals[p.id] || { profit: 0, apps: 0 };
+    var m = _members.find(function(x){ return x.id === p.member; });
+    return { id: p.id, pan: p.pan, holder: p.holder, memberName: m ? m.name : '',
+             avatarHue: m ? m.avatarHue : 200, you: !!(m && m.you),
+             profit: Math.round(t.profit), apps: t.apps };
+  }).sort(function(a, b){ return b.profit - a.profit; });
+}
+
 // Pools worth showing: a profit pool is only meaningful once at least one PAN is
 // actually allotted. Marking an IPO's applicants all "not allotted" still upserts
 // a pool row (so the screen can list it), which would otherwise surface as an
@@ -1042,6 +1076,27 @@ async function loadDB() {
       },
     },
   };
+
+  // Every mutation already ends by calling loadDB() itself, so the admin who
+  // just made a change already sees fresh data through a normal re-render --
+  // no remount needed. Mark when that happens so the realtime listener (whose
+  // job is to catch changes made on OTHER devices) can skip the redundant,
+  // visually jarring full-screen remount it would otherwise trigger for the
+  // very client that just wrote the data. A multi-row save (e.g. bulk
+  // allotment edits) fires one realtime event per row, each far enough apart
+  // to dodge the short debounce below, so without this every row previously
+  // meant one more flicker.
+  Object.keys(window.DB.mutations).forEach(function(name) {
+    var orig = window.DB.mutations[name];
+    window.DB.mutations[name] = function() {
+      window.__lastLocalWriteAt = Date.now();
+      var result = orig.apply(this, arguments);
+      if (result && typeof result.then === 'function') {
+        result.then(function(){ window.__lastLocalWriteAt = Date.now(); }, function(){});
+      }
+      return result;
+    };
+  });
 }
 
 window.loadDB = loadDB;
