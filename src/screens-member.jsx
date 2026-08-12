@@ -384,6 +384,7 @@ function MemberApply({ ipo, session }) {
   }
 
   return (
+    <>
     <Card pad={0}>
       <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 700 }}>
@@ -503,6 +504,94 @@ function MemberApply({ ipo, session }) {
           </Button>
         </div>
       </div>
+    </Card>
+
+    {ipo && ipo.id && <IpoApplicantsGrid ipo={ipo} session={session} />}
+    </>
+  );
+}
+
+// Read-only, pool-wide "who applied" table -- every family's applications for
+// this one IPO, not just the logged-in member's own (that's the point: a
+// shared pool where everyone can see who applied under which category, and
+// once the admin records results, who got allotted what). Sits below the
+// editable apply form rather than replacing it.
+const STATUS_META = {
+  allotted:     { label: 'Allotted',     tone: 'profit',  icon: 'check' },
+  not_allotted: { label: 'Not allotted', tone: 'loss',    icon: 'x' },
+  pending:      { label: 'Pending',      tone: 'neutral', icon: undefined },
+};
+
+function IpoApplicantsGrid({ ipo, session }) {
+  const [rows,    setRows]    = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err,     setErr]     = useState('');
+  const [sort, onSort] = useSortState('holder', 'asc');
+  const f = (n, o) => (window.fmtINR ? window.fmtINR(n, o) : '₹' + (n || 0));
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true); setErr('');
+    window.MemberAPI.ipoApplicants(session.loginPan, ipo.id)
+      .then(d => { if (alive) { setRows(d || []); setLoading(false); } })
+      .catch(() => { if (alive) { setErr('Could not load applicants. Please try again.'); setLoading(false); } });
+    return () => { alive = false; };
+  }, [ipo.id, session.loginPan]);
+
+  const cols = [
+    { key: 'holder',     label: 'Applicant', align: 'left',  get: r => r.holder || '' },
+    { key: 'category',   label: 'Category',  align: 'left',  get: r => r.category || '' },
+    { key: 'status',     label: 'Status',    align: 'left',  get: r => r.status || '' },
+    { key: 'shares',     label: 'Shares',    align: 'right', get: r => r.shares || 0, defDir: 'desc' },
+    { key: 'sell_price', label: 'Sell price',align: 'right', get: r => r.sell_price || 0, defDir: 'desc' },
+    { key: 'gain',       label: 'Gain',      align: 'right', get: r => r.gain || 0, defDir: 'desc' },
+  ];
+  const sortedRows = sortRows(rows || [], sort, cols);
+
+  return (
+    <Card pad={0} style={{ marginTop: 14 }}>
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', fontSize: 14, fontWeight: 800 }}>
+        Who's applied
+      </div>
+      {loading ? (
+        <div style={{ padding: '22px 16px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>Loading…</div>
+      ) : err ? (
+        <div style={{ padding: '22px 16px', textAlign: 'center', color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{err}</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480 }}>
+            <thead>
+              <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                {cols.map(c => <SortTh key={c.key} col={c} sort={sort} onSort={onSort} style={{ padding: '10px 16px' }} />)}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRows.map(r => {
+                const catMeta    = (window.CAT_META || {})[r.category] || { label: r.category || '—', tone: 'neutral' };
+                const statusMeta = STATUS_META[r.status] || STATUS_META.pending;
+                return (
+                  <tr key={r.pan_id} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '11px 16px' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{r.holder}</div>
+                      <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{r.member_name}{r.pan_masked ? ' · ' + r.pan_masked : ''}</div>
+                    </td>
+                    <td style={{ padding: '11px 16px' }}><Badge tone={catMeta.tone}>{catMeta.label}</Badge></td>
+                    <td style={{ padding: '11px 16px' }}><Badge tone={statusMeta.tone} icon={statusMeta.icon}>{statusMeta.label}</Badge></td>
+                    <td className="num" style={{ padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{r.shares || '—'}</td>
+                    <td className="num" style={{ padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{r.sell_price ? f(r.sell_price) : '—'}</td>
+                    <td className="num" style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 700, color: r.gain > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{r.gain > 0 ? '+' + f(r.gain, { compact: true }) : '—'}</td>
+                  </tr>
+                );
+              })}
+              {sortedRows.length === 0 && (
+                <tr>
+                  <td colSpan={cols.length} style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No one has applied yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Card>
   );
 }

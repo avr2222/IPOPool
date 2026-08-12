@@ -1246,6 +1246,11 @@ window.MemberAPI = {
     if (res.error) throw res.error;
     return res.data || [];   // [{ pan_id, category, lots, allot_status }]
   },
+  ipoApplicants: async function (loginPan, ipoId) {
+    var res = await window.sb.rpc('ipo_applicants', { p_login_pan: loginPan, p_ipo: ipoId });
+    if (res.error) throw res.error;
+    return res.data || [];   // [{ pan_id, holder, pan_masked, member_name, category, lots, status, shares, sell_price, gain }]
+  },
 };
 
 })();
