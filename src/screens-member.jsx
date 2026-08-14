@@ -177,8 +177,8 @@ function MemberSummary({ session }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <Stat label={isFamily ? 'Profit till date' : 'Your profit'} value={f(d.total_profit, { compact: true })} tone="var(--profit)"
-          sub={(d.pending_profit > 0 ? f(d.pending_profit, { compact: true }) + ' pending' : 'all settled')} />
+        <Stat label={isFamily ? 'Profit till date' : 'Your profit'} value={f(d.total_profit, { compact: true })} tone={d.total_profit >= 0 ? 'var(--profit)' : 'var(--loss)'}
+          sub={(d.pending_profit !== 0 ? f(d.pending_profit, { compact: true }) + ' pending' : 'all settled')} />
         <Stat label="IPOs applied" value={d.ipos_applied || 0} />
         <Stat label="Allotments" value={allot} sub={applied + (isFamily ? ' PAN applications' : ' applications')} />
         <Stat label="Allotment rate" value={rate + '%'} />
@@ -206,7 +206,7 @@ function MemberSummary({ session }) {
                     </td>
                     <td className="num" style={{ padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.applied}</td>
                     <td className="num" style={{ padding: '11px 16px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.allotted || '—'}</td>
-                    <td className="num" style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 700, color: p.profit > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{p.profit > 0 ? f(p.profit, { compact: true }) : '—'}</td>
+                    <td className="num" style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 700, color: p.profit > 0 ? 'var(--profit)' : p.profit < 0 ? 'var(--loss)' : 'var(--ink-3)' }}>{p.profit !== 0 ? f(p.profit, { compact: true }) : '—'}</td>
                     <td style={{ padding: '11px 16px', textAlign: 'right' }}><Badge tone={st.tone} style={{ fontSize: 10 }}>{st.label}</Badge></td>
                   </tr>
                 );

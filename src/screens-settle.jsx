@@ -127,15 +127,17 @@ function SettlementLedger({ navigate, id }) {
       const bonuses = window.PoolMath.memberBonuses(catAllots, cr.stcg, cr.brok, cr.bonus, panToMember);
       // finalizePayouts (screens-pool.jsx) writes ONE row per (member,
       // category) with amount = pool share + personal bonus, and only when
-      // that sum is > 0 -- a member whose fair entitlement rounds down to
-      // exactly ₹0 legitimately gets no row. Mirror both of those exactly, or
-      // this permanently reports "stale" for any pool where at least one
-      // member's rounded total is ₹0: their absent row would forever look
-      // like a missing one, surviving even a fresh, fully correct re-finalize.
+      // that sum is NOT exactly ₹0 -- a member whose fair entitlement rounds
+      // down to exactly ₹0 legitimately gets no row, but a real loss (a
+      // negative sum) gets a row same as a profit. Mirror both of those
+      // exactly, or this permanently reports "stale" for any pool where at
+      // least one member's rounded total is ₹0: their absent row would
+      // forever look like a missing one, surviving even a fresh, fully
+      // correct re-finalize.
       const mids = new Set([...Object.keys(shares), ...Object.keys(bonuses)]);
       mids.forEach(mid => {
         const total = (shares[mid]?.share || 0) + (bonuses[mid] || 0);
-        if (total > 0) expected[mid + '|' + cat] = total;
+        if (total !== 0) expected[mid + '|' + cat] = total;
       });
     });
     const seen = new Set();
@@ -184,7 +186,10 @@ function SettlementLedger({ navigate, id }) {
     const out = {};
     ids.forEach(id => {
       const received  = memberReceived[id] || 0;
-      const costShare = grossTotal > 0 ? costTotal * (received / grossTotal) : 0;
+      // received/grossTotal is a valid proportional share whether both are
+      // negative (a loss category) or both positive -- only an exact ₹0
+      // grossTotal (nothing to attribute against) skips cost-sharing.
+      const costShare = grossTotal !== 0 ? costTotal * (received / grossTotal) : 0;
       out[id] = Math.round((received - costShare) - (memberOwed[id] || 0));
     });
     return out;
@@ -390,10 +395,18 @@ function SettlementLedger({ navigate, id }) {
       {/* KPI cards */}
       <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14 }}>
         <Card pad={18}>
-          <div style={{ fontSize: 12.5, color: 'var(--ink-2)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
-            <Icon name="wallet" size={15} color="var(--profit)" /> Total payout to group
-          </div>
-          <div className="num" style={{ fontSize: 28, fontWeight: 800, color: 'var(--profit)', margin: '8px 0 2px' }}>{f(rows.reduce((s,r) => s+r.amount, 0))}</div>
+          {(() => {
+            const totalAmount = rows.reduce((s, r) => s + r.amount, 0);
+            const tone = totalAmount >= 0 ? 'var(--profit)' : 'var(--loss)';
+            return (
+              <>
+                <div style={{ fontSize: 12.5, color: 'var(--ink-2)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <Icon name="wallet" size={15} color={tone} /> {totalAmount >= 0 ? 'Total payout to group' : 'Total owed back to pool'}
+                </div>
+                <div className="num" style={{ fontSize: 28, fontWeight: 800, color: tone, margin: '8px 0 2px' }}>{f(totalAmount)}</div>
+              </>
+            );
+          })()}
           <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{rows.length} recipient{rows.length !== 1 ? 's' : ''} · {catSummaries.map(d => `${d.cat} ₹${d.perPan.toLocaleString('en-IN')}/PAN`).join(' · ')}</div>
         </Card>
         <Card pad={18}>
@@ -488,7 +501,7 @@ function SettlementLedger({ navigate, id }) {
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, textAlign: 'right' }}>{r.pans} × {f(catPerPan)}</div>
                     </td>
-                    <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: 'var(--ink)' }}>{f(r.amount)}</td>
+                    <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: r.amount < 0 ? 'var(--loss)' : 'var(--ink)' }}>{f(r.amount)}</td>
                     <td style={{ padding: '12px 18px', textAlign: 'right' }}>
                       {isPaid ? (
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, color: 'var(--profit)' }}>
@@ -498,12 +511,17 @@ function SettlementLedger({ navigate, id }) {
                         <span style={{ fontSize: 13, color: 'var(--ink-3)', fontWeight: 600 }}>Pending</span>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
-                          <UpiPay receiver={m} amount={r.amount} />
+                          {/* A negative amount is money the MEMBER owes the pool (a
+                              pooled loss), not a payout -- UPI-pay only supports
+                              admin→member, so it's skipped here and collected
+                              outside the app. "Mark paid" doubles as "mark
+                              settled" for that direction. */}
+                          {r.amount > 0 && <UpiPay receiver={m} amount={r.amount} />}
                           <button
                             onClick={() => markPaid(r.id)}
                             disabled={marking === r.id}
                             style={{ border: '1px solid var(--profit)', borderRadius: 'var(--r-sm)', padding: '5px 12px', background: 'var(--profit-soft)', color: 'var(--profit)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', opacity: marking === r.id ? .6 : 1 }}>
-                            {marking === r.id ? '…' : '✓ Mark paid'}
+                            {marking === r.id ? '…' : (r.amount < 0 ? '✓ Mark settled' : '✓ Mark paid')}
                           </button>
                         </div>
                       )}
@@ -531,7 +549,7 @@ function SettlementLedger({ navigate, id }) {
               </div>
             </div>
             <div style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600 }}>
-              (without pooling this would be {rows.filter(r => r.amount > 0).length} transfers)
+              (without pooling this would be {rows.filter(r => r.amount !== 0).length} transfers)
             </div>
           </div>
           <div style={{ padding: '8px 18px 18px' }}>

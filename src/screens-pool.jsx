@@ -56,7 +56,7 @@ function MemberSharesTable({ D, shares, f, bonuses }) {
             {hasBonus && (
               <td className="num" style={{ padding: '10px 8px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: 'var(--warn)' }}>{bonus > 0 ? f(bonus) : '—'}</td>
             )}
-            <td className="num" style={{ padding: '10px 20px', textAlign: 'right', fontSize: 14, fontWeight: 800, color: m.you ? 'var(--brand)' : 'var(--profit)' }}>{f(share + bonus)}</td>
+            <td className="num" style={{ padding: '10px 20px', textAlign: 'right', fontSize: 14, fontWeight: 800, color: m.you ? 'var(--brand)' : ((share + bonus) < 0 ? 'var(--loss)' : 'var(--profit)') }}>{f(share + bonus)}</td>
           </tr>
         ))}
       </tbody>
@@ -162,10 +162,12 @@ function ProfitPooling({ navigate, id }) {
           const bonus     = d.memberBonuses[memberId] || 0;
           const pans      = d.memberShares[memberId]?.pans || 0;
           const amount    = poolShare + bonus;
-          if (amount > 0) rows.push({ memberId, category: d.cat, pans, amount: Math.round(amount) });
+          // A LOSS (amount < 0) gets a settlement row too, same as a profit
+          // -- only an exact ₹0 share is skipped, there's nothing to settle.
+          if (amount !== 0) rows.push({ memberId, category: d.cat, pans, amount: Math.round(amount) });
         });
       });
-      if (rows.length === 0) { setFinalErr('No profit to distribute yet.'); setFinalizing(false); return; }
+      if (rows.length === 0) { setFinalErr('Nothing to distribute yet.'); setFinalizing(false); return; }
       await D.mutations.createSettlements(sel, rows, { stcgRate, brokerage: brokerageAmt, bonusRate });
       navigate('settlement', { id: sel });
     } catch (e) {
@@ -225,7 +227,7 @@ function ProfitPooling({ navigate, id }) {
       )}
 
       {/* Your combined share */}
-      {myTotal > 0 && (
+      {myTotal !== 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 20px', background: 'var(--brand-tint)', borderRadius: 'var(--r-lg)', border: '1.5px solid var(--brand)' }}>
           <Avatar name={me.name} hue={me.avatarHue} size={44} you />
           <div style={{ flex: 1 }}>
@@ -247,7 +249,7 @@ function ProfitPooling({ navigate, id }) {
         {[
           { label: 'PANs applied',  value: totalPans,                       icon: 'pan',    tone: 'neutral' },
           { label: 'Allotted',      value: totalAllotted,                   icon: 'check',  tone: 'info' },
-          { label: 'Net profit',    value: f(totalNet + totalBonus, { compact: true }), icon: 'trend', tone: 'profit' },
+          { label: 'Net profit',    value: f(totalNet + totalBonus, { compact: true }), icon: 'trend', tone: (totalNet + totalBonus) >= 0 ? 'profit' : 'loss' },
           { label: 'Your share',    value: f(myTotal),                      icon: 'wallet', tone: 'brand' },
         ].map(s => (
           <Card key={s.label} pad={16} style={{ background: s.tone === 'brand' ? 'var(--brand-tint)' : 'var(--surface)', borderColor: s.tone === 'brand' ? 'var(--brand)' : 'var(--border)' }}>
@@ -257,16 +259,16 @@ function ProfitPooling({ navigate, id }) {
               </div>
               <span style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 600 }}>{s.label}</span>
             </div>
-            <div className="num" style={{ fontSize: 22, fontWeight: 800, color: s.tone === 'profit' ? 'var(--profit)' : s.tone === 'brand' ? 'var(--brand)' : 'var(--ink)' }}>{s.value}</div>
+            <div className="num" style={{ fontSize: 22, fontWeight: 800, color: s.tone === 'profit' ? 'var(--profit)' : s.tone === 'loss' ? 'var(--loss)' : s.tone === 'brand' ? 'var(--brand)' : 'var(--ink)' }}>{s.value}</div>
           </Card>
         ))}
       </div>
 
       {/* Total profit summary band */}
-      {totalNet > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 18px', background: 'var(--profit-soft)', borderRadius: 'var(--r-md)', border: '1px solid var(--profit)' }}>
-          <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--ink-2)' }}>Total net profit across all categories</span>
-          <span className="num" style={{ fontSize: 20, fontWeight: 800, color: 'var(--profit)' }}>{f(totalNet)}</span>
+      {totalNet !== 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 18px', background: totalNet > 0 ? 'var(--profit-soft)' : 'var(--loss-soft)', borderRadius: 'var(--r-md)', border: `1px solid ${totalNet > 0 ? 'var(--profit)' : 'var(--loss)'}` }}>
+          <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--ink-2)' }}>{totalNet > 0 ? 'Total net profit across all categories' : 'Total net loss across all categories'}</span>
+          <span className="num" style={{ fontSize: 20, fontWeight: 800, color: totalNet > 0 ? 'var(--profit)' : 'var(--loss)' }}>{f(totalNet)}</span>
         </div>
       )}
 
@@ -275,8 +277,10 @@ function ProfitPooling({ navigate, id }) {
         const meta    = CAT_META[d.cat] || { label: d.cat, tone: 'neutral', desc: '', textColor: 'var(--ink-2)' };
         // A category can legitimately have all its profit go to the bonus
         // (net rounds to 0 after a high bonus rate) and still have real
-        // money to show -- not just an empty "no allotments" category.
-        const hasProfit = d.net > 0 || d.bonusTotal > 0;
+        // money to show -- not just an empty "no allotments" category. A
+        // real LOSS (net < 0) counts too: it must still show its breakdown
+        // and split, not be mistaken for "no allotments in this category".
+        const hasProfit = d.net !== 0 || d.bonusTotal > 0;
         return (
           <Card key={d.cat} pad={0} style={{ borderColor: hasProfit ? 'var(--border)' : 'var(--border)', overflow: 'hidden' }}>
             {/* Category header */}
@@ -370,7 +374,7 @@ function ProfitPooling({ navigate, id }) {
                       {a.shares.toLocaleString('en-IN')} shares · {m?.name.split(' ')[0]}
                     </div>
                   </div>
-                  <div className="num" style={{ fontSize: 14, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>+{f(a.gain, { compact: true })}</div>
+                  <div className="num" style={{ fontSize: 14, fontWeight: 800, color: a.gain < 0 ? 'var(--loss)' : 'var(--profit)', whiteSpace: 'nowrap' }}>{a.gain > 0 ? '+' : ''}{f(a.gain, { compact: true })}</div>
                 </div>
               );
             })}
@@ -378,13 +382,15 @@ function ProfitPooling({ navigate, id }) {
         </Card>
       )}
 
-      {/* Finalize payouts */}
-      {totalAllotted > 0 && totalNet > 0 && pool?.status !== 'Settled' && (
+      {/* Finalize payouts. totalNet !== 0 (not just > 0) so a loss-only pool
+          can still be finalized -- a loss is distributed exactly like a
+          profit, it just isn't hidden behind a "profit found" gate. */}
+      {totalAllotted > 0 && (totalNet !== 0 || totalBonus > 0) && pool?.status !== 'Settled' && (
         <div style={{ padding: '16px 20px', background: 'var(--brand-tint)', borderRadius: 'var(--r-lg)', border: '1.5px solid var(--brand)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 800 }}>Ready to distribute</div>
+            <div style={{ fontSize: 14, fontWeight: 800 }}>{totalNet >= 0 ? 'Ready to distribute' : 'Ready to settle (loss)'}</div>
             <div style={{ fontSize: 12.5, color: 'var(--ink-2)', marginTop: 3 }}>
-              {catData.filter(d => d.net > 0).map(d => `${d.cat}: ${f(d.perPan)}/PAN × ${d.total} applicants`).join(' · ')}
+              {catData.filter(d => d.net !== 0).map(d => `${d.cat}: ${f(d.perPan)}/PAN × ${d.total} applicants`).join(' · ')}
             </div>
             {finalErr && <div style={{ fontSize: 12.5, color: 'var(--loss)', marginTop: 4, fontWeight: 600 }}>{finalErr}</div>}
           </div>

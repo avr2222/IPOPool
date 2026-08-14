@@ -266,17 +266,21 @@ var PoolMath = {
     }, 0);
     // No tax on a loss-making pool.
     var stcgAmt   = gross > 0 ? Math.round(gross * stcgRate / 100) : 0;
-    var afterTax  = Math.max(0, gross - stcgAmt);
+    var afterTax  = gross - stcgAmt;
     // The allotted-PAN bonus is carved out of the AGGREGATE after-tax amount
     // (not recomputed per PAN from scratch) so bonusRate=0 reproduces today's
     // net to the rupee, with zero rounding drift. panBonuses below then
     // divides bonusTotal back among allotted PANs pro-rata by their own gain
     // -- the same "distribute a shared total by individual contribution"
     // technique brokerageByCategory already uses, just one level deeper.
+    // Guarded on afterTax > 0, so a loss-making category never carves out a
+    // bonus -- the allotted-PAN bonus is profit-only by construction.
     var bonusTotal = (bonusRate > 0 && afterTax > 0) ? Math.round(afterTax * bonusRate / 100) : 0;
-    // A pool never distributes a negative amount: losses are visible per PAN
-    // (see rowGain) but nobody is ever asked to pay money back in.
-    var net       = Math.max(0, afterTax - bonusTotal - brokerageAmt);
+    // A LOSS is distributed exactly like a profit: split evenly across every
+    // applicant (see perPan/remainder below), same as a positive net. Nobody
+    // gets an extra bonus cut out of it (bonusTotal is already 0 whenever
+    // afterTax <= 0, see above) -- only the equal split applies to a loss.
+    var net       = afterTax - bonusTotal - brokerageAmt;
     var total     = catAllots.length;
     var perPan    = total > 0 ? Math.floor(net / total) : 0;
     var remainder = net - perPan * total;   // integer rupees, 0 .. total-1

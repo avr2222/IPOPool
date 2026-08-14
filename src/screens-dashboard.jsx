@@ -99,7 +99,7 @@ function ProfitByIpoCard({ D, navigate, f }) {
                 <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.applied}</td>
                 <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.allotted}</td>
                 <td className="num" style={{ padding: '12px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{p.gross > 0 ? f(p.gross, { compact: true }) : '—'}</td>
-                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 700, color: p.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{p.net > 0 ? f(p.net, { compact: true }) : '—'}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 700, color: p.net > 0 ? 'var(--profit)' : p.net < 0 ? 'var(--loss)' : 'var(--ink-3)' }}>{p.net !== 0 ? f(p.net, { compact: true }) : '—'}</td>
               </tr>
             ))}
             {rows.length > 0 && (
@@ -109,7 +109,7 @@ function ProfitByIpoCard({ D, navigate, f }) {
                 <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.applied}</td>
                 <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.allotted}</td>
                 <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.gross > 0 ? f(tot.gross, { compact: true }) : '—'}</td>
-                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: 'var(--profit)' }}>{tot.net > 0 ? f(tot.net, { compact: true }) : '—'}</td>
+                <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: tot.net < 0 ? 'var(--loss)' : 'var(--profit)' }}>{tot.net !== 0 ? f(tot.net, { compact: true }) : '—'}</td>
               </tr>
             )}
             {rows.length === 0 && (
@@ -163,7 +163,7 @@ function CategoryCard({ D, f }) {
               <div key={c.cat} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ width: 58, flexShrink: 0 }}><Badge tone={CAT_TONE[c.cat] || 'neutral'}>{c.cat}</Badge></div>
                 <div style={{ flex: 1, minWidth: 0 }}><Meter value={c.net} max={maxNet} color={CAT_COLOR[c.cat] || 'var(--brand)'} style={{ height: 8 }} /></div>
-                <div className="num" style={{ width: 72, textAlign: 'right', fontSize: 13, fontWeight: 800, color: c.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{c.net > 0 ? f(c.net, { compact: true }) : '—'}</div>
+                <div className="num" style={{ width: 72, textAlign: 'right', fontSize: 13, fontWeight: 800, color: c.net > 0 ? 'var(--profit)' : c.net < 0 ? 'var(--loss)' : 'var(--ink-3)' }}>{c.net !== 0 ? f(c.net, { compact: true }) : '—'}</div>
               </div>
             )); })()}
           </div>
@@ -190,7 +190,7 @@ function CategoryCard({ D, f }) {
                     <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{c.allotted}</td>
                     <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{c.allotRate}%</td>
                     <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{c.gross > 0 ? f(c.gross, { compact: true }) : '—'}</td>
-                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 700, color: c.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{c.net > 0 ? f(c.net, { compact: true }) : '—'}</td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 700, color: c.net > 0 ? 'var(--profit)' : c.net < 0 ? 'var(--loss)' : 'var(--ink-3)' }}>{c.net !== 0 ? f(c.net, { compact: true }) : '—'}</td>
                   </tr>
                 ))}
                 <tr style={{ borderTop: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
@@ -200,7 +200,7 @@ function CategoryCard({ D, f }) {
                   <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.allotted}</td>
                   <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.applied > 0 ? Math.round(tot.allotted / tot.applied * 100) : 0}%</td>
                   <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{tot.gross > 0 ? f(tot.gross, { compact: true }) : '—'}</td>
-                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800, color: 'var(--profit)' }}>{tot.net > 0 ? f(tot.net, { compact: true }) : '—'}</td>
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800, color: tot.net < 0 ? 'var(--loss)' : 'var(--profit)' }}>{tot.net !== 0 ? f(tot.net, { compact: true }) : '—'}</td>
                 </tr>
               </tbody>
             </table>
@@ -221,8 +221,9 @@ function Dashboard({ navigate, tweaks }) {
     { icon: 'check',    label: 'Total Allotments',    value: D.kpis.allotments,                             tone: 'neutral', nav: 'admin' },
     { icon: 'spark',    label: 'Allotment Rate',      value: D.kpis.allotRate + '%',                        tone: 'neutral', nav: 'admin' },
     { icon: 'wallet',   label: 'Total Investment',    value: f(D.kpis.invested, { compact: true }),         tone: 'neutral', nav: 'pooling', delta: { tone: 'neutral', label: 'this season' } },
-    { icon: 'trend',    label: 'Total Profit',        value: f(D.kpis.profit,   { compact: true }),         tone: 'profit',  nav: 'pooling',
-      delta: D.kpis.roi > 0 ? { tone: 'profit', label: '+' + D.kpis.roi + '% ROI' } : undefined },
+    { icon: 'trend',    label: 'Total Profit',        value: f(D.kpis.profit,   { compact: true }),         tone: D.kpis.profit >= 0 ? 'profit' : 'loss',  nav: 'pooling',
+      delta: D.kpis.roi > 0 ? { tone: 'profit', label: '+' + D.kpis.roi + '% ROI' }
+           : D.kpis.roi < 0 ? { tone: 'loss', label: D.kpis.roi + '% ROI' } : undefined },
     { icon: 'ledger',   label: 'Pending Settlements', value: D.kpis.pending,                                tone: 'warn',    nav: 'settlement',
       delta: D.kpis.pendingAmount > 0 ? { tone: 'warn', label: f(D.kpis.pendingAmount, { compact: true }) } : undefined },
   ];
@@ -304,7 +305,7 @@ function Dashboard({ navigate, tweaks }) {
                 <td style={{ padding: '13px 18px' }}><Badge tone={ipo.type === 'SME' ? 'sme' : 'mainboard'}>{ipo.type}</Badge></td>
                 <td className="num" style={{ padding: '13px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{applied || '—'}</td>
                 <td className="num" style={{ padding: '13px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{allotted || '—'}</td>
-                <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontWeight: 700, color: net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{net > 0 ? f(net, { compact: true }) : '—'}</td>
+                <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontWeight: 700, color: net > 0 ? 'var(--profit)' : net < 0 ? 'var(--loss)' : 'var(--ink-3)' }}>{net !== 0 ? f(net, { compact: true }) : '—'}</td>
                 <td style={{ padding: '13px 18px', textAlign: 'right' }}>
                   <Badge tone={ipo.status === 'Listed' ? 'profit' : ipo.status === 'Open' ? 'info' : 'neutral'}>{ipo.status}</Badge>
                 </td>
