@@ -124,6 +124,7 @@ function MemberSummary({ session }) {
   // "Rendered more hooks than during the previous render". useSortState is a
   // hook, so it lives up here, not next to the table it feeds.
   const [iposSort, onIposSort] = useSortState('profit', 'desc');
+  const [pansSort, onPansSort] = useSortState('total', 'desc');
   const f = (n, o) => (window.fmtINR ? window.fmtINR(n, o) : '₹' + (n || 0));
 
   useEffect(() => {
@@ -169,6 +170,12 @@ function MemberSummary({ session }) {
   ];
   const sortedIpos = sortRows(ipos, iposSort, cols);
 
+  // Pool share alone -- total minus the personal allotted-PAN bonus, so the
+  // "separate and together" figures always add back to total_profit exactly.
+  const totalBonus     = d.total_bonus || 0;
+  const totalPoolShare = (d.total_profit || 0) - totalBonus;
+  const familyPans     = d.pans || null;   // only present for the family head (migration 011)
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 700 }}>
@@ -178,7 +185,13 @@ function MemberSummary({ session }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <Stat label={isFamily ? 'Profit till date' : 'Your profit'} value={f(d.total_profit, { compact: true })} tone={d.total_profit >= 0 ? 'var(--profit)' : 'var(--loss)'}
-          sub={(d.pending_profit !== 0 ? f(d.pending_profit, { compact: true }) + ' pending' : 'all settled')} />
+          sub={totalBonus !== 0
+            ? `${f(totalPoolShare, { compact: true })} pool share + ${f(totalBonus, { compact: true })} bonus`
+            : (d.pending_profit !== 0 ? f(d.pending_profit, { compact: true }) + ' pending' : 'all settled')} />
+        {totalBonus !== 0 && (
+          <Stat label="Allotted-PAN bonus" value={f(totalBonus, { compact: true })} tone="var(--warn)"
+            sub="kept personally, on top of your pool share" />
+        )}
         <Stat label="IPOs applied" value={d.ipos_applied || 0} />
         <Stat label="Allotments" value={allot} sub={applied + (isFamily ? ' PAN applications' : ' applications')} />
         <Stat label="Allotment rate" value={rate + '%'} />
@@ -220,6 +233,47 @@ function MemberSummary({ session }) {
           </table>
         </div>
       </Card>
+
+      {isFamily && familyPans && familyPans.length > 0 && (() => {
+        const hasAnyBonus = familyPans.some(p => (p.bonus || 0) !== 0);
+        const pansCols = [
+          { key: 'holder',     label: 'Member',    align: 'left',  get: p => p.holder || '' },
+          ...(hasAnyBonus ? [{ key: 'bonus', label: 'Bonus', align: 'right', get: p => p.bonus || 0, defDir: 'desc' }] : []),
+          { key: 'total',      label: hasAnyBonus ? 'Total' : 'Profit', align: 'right', get: p => p.total || 0, defDir: 'desc' },
+        ];
+        const sortedPans = sortRows(familyPans, pansSort, pansCols);
+        return (
+          <Card pad={0}>
+            <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 14, fontWeight: 800 }}>Individual profit</div>
+              <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>Each family PAN's own pool share{hasAnyBonus ? ' + allotted-PAN bonus' : ''}, all-time</div>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 380 }}>
+                <thead>
+                  <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                    {pansCols.map(c => <SortTh key={c.key} col={c} sort={pansSort} onSort={onPansSort} style={{ padding: '10px 16px' }} />)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedPans.map(p => (
+                    <tr key={p.pan_id} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: '11px 16px' }}>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{p.holder}</div>
+                        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{p.relation}</div>
+                      </td>
+                      {hasAnyBonus && (
+                        <td className="num" style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 700, color: 'var(--warn)' }}>{p.bonus ? f(p.bonus, { compact: true }) : '—'}</td>
+                      )}
+                      <td className="num" style={{ padding: '11px 16px', textAlign: 'right', fontWeight: 800, color: p.total > 0 ? 'var(--profit)' : p.total < 0 ? 'var(--loss)' : 'var(--ink-3)' }}>{p.total !== 0 ? f(p.total, { compact: true }) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        );
+      })()}
     </div>
   );
 }

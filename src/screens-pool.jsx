@@ -152,6 +152,7 @@ function ProfitPooling({ navigate, id }) {
     setFinalizing(true); setFinalErr('');
     try {
       const rows = [];
+      const panRows = [];
       catData.forEach(d => {
         // A category whose pool net rounds to 0 (e.g. brokerage ate the rest)
         // can still owe personal bonuses -- the bonus is carved out BEFORE
@@ -164,11 +165,24 @@ function ProfitPooling({ navigate, id }) {
           const amount    = poolShare + bonus;
           // A LOSS (amount < 0) gets a settlement row too, same as a profit
           // -- only an exact ₹0 share is skipped, there's nothing to settle.
-          if (amount !== 0) rows.push({ memberId, category: d.cat, pans, amount: Math.round(amount) });
+          if (amount !== 0) rows.push({ memberId, category: d.cat, pans, amount: Math.round(amount), bonusAmount: Math.round(bonus) });
+        });
+        // Per-PAN breakdown (migration 011) -- same PoolMath split, one row
+        // per PAN instead of aggregated by family, so a member logging into
+        // their own portal can see each individual PAN's pool share + bonus,
+        // not just the family total.
+        const panAmounts = window.PoolMath.panAmounts(d.catAllots, stcgRate, d.brok, d.bonusRate);
+        const panBonuses = window.PoolMath.panBonuses(d.catAllots, stcgRate, d.brok, d.bonusRate);
+        d.catAllots.forEach(a => {
+          const poolShare = panAmounts[a.id] || 0;
+          const bonus     = panBonuses[a.id] || 0;
+          if (poolShare !== 0 || bonus !== 0) {
+            panRows.push({ panId: a.pan, category: d.cat, poolShare: Math.round(poolShare), bonusAmount: Math.round(bonus) });
+          }
         });
       });
       if (rows.length === 0) { setFinalErr('Nothing to distribute yet.'); setFinalizing(false); return; }
-      await D.mutations.createSettlements(sel, rows, { stcgRate, brokerage: brokerageAmt, bonusRate });
+      await D.mutations.createSettlements(sel, rows, { stcgRate, brokerage: brokerageAmt, bonusRate }, panRows);
       navigate('settlement', { id: sel });
     } catch (e) {
       setFinalErr(e.message || 'Failed to save settlements.');

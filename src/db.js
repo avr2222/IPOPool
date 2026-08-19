@@ -165,8 +165,9 @@ function txSettlements(rows) {
       ipo:      r.profit_pools.ipo_id,
       member:   r.member_id,
       category: r.category,
-      pans:     r.pans   || 1,
-      amount:   r.amount || 0,
+      pans:        r.pans   || 1,
+      amount:      r.amount || 0,
+      bonusAmount: r.bonus_amount || 0,   // 0 pre-migration-011; part of amount, not on top of it
       status:   r.status,
       date:     r.paid_date || null,
     };
@@ -982,12 +983,18 @@ async function loadDB() {
 
       // ─── Settlements ─────────────────────────────────────────────────────────
       // Generate settlement rows for an IPO from the current pool math.
-      // rows:  [{ memberId, category, pans, amount }]
-      // rates: { stcgRate, brokerage } — captured on the pool so the ledger
-      //        shows the same numbers on every device.
+      // rows:    [{ memberId, category, pans, amount, bonusAmount }] — family-
+      //          level, amount is pool share + bonusAmount combined (unchanged
+      //          meaning), bonusAmount just records how much of it was bonus.
+      // panRows: [{ panId, category, poolShare, bonusAmount }] — same finalize
+      //          snapshot, one row per PAN instead of per family, for the
+      //          member portal's individual breakdown. Optional: omitted (or
+      //          unsupported before migration 011) simply skips this table.
+      // rates:   { stcgRate, brokerage } — captured on the pool so the ledger
+      //          shows the same numbers on every device.
       // Already-Paid settlements are preserved: re-finalizing never resets a
       // payment back to Pending or changes its recorded amount/date.
-      async createSettlements(ipoId, rows, rates) {
+      async createSettlements(ipoId, rows, rates, panRows) {
         // Upsert WITHOUT status: a fresh pool gets the column default
         // ('Distributing'), and re-finalizing never downgrades a Settled pool —
         // the real status is reconciled from the ledger rows at the end.
@@ -1023,14 +1030,44 @@ async function loadDB() {
           newKeys[r.memberId + '|' + r.category] = true;
           if (paid[r.memberId + '|' + r.category]) continue;   // don't un-pay
           var { error } = await window.sb.from('settlements').upsert({
-            pool_id:   pool.id,
-            member_id: r.memberId,
-            category:  r.category,
-            pans:      r.pans,
-            amount:    r.amount,
-            status:    'Pending',
+            pool_id:      pool.id,
+            member_id:    r.memberId,
+            category:     r.category,
+            pans:         r.pans,
+            amount:       r.amount,
+            bonus_amount: r.bonusAmount || 0,
+            status:       'Pending',
           }, { onConflict: 'pool_id,member_id,category' });
           if (error) throw error;
+        }
+
+        // Per-PAN breakdown (migration 011+). Best-effort like the rate columns
+        // above: an older schema without this table just skips it, finalize
+        // still succeeds -- the family-level settlements row is what actually
+        // pays out, this is purely an informational breakdown of it.
+        if (panRows && panRows.length) {
+          var panNewKeys = {};
+          for (var p = 0; p < panRows.length; p++) {
+            var pr = panRows[p];
+            panNewKeys[pr.panId + '|' + pr.category] = true;
+            var { error: panErr } = await window.sb.from('settlement_pans').upsert({
+              pool_id:      pool.id,
+              pan_id:       pr.panId,
+              category:     pr.category,
+              pool_share:   pr.poolShare || 0,
+              bonus_amount: pr.bonusAmount || 0,
+            }, { onConflict: 'pool_id,pan_id,category' });
+            if (panErr) { console.warn('[IPOPool] settlement_pans missing — run migration 011:', panErr.message); break; }
+          }
+          var { data: existingPans, error: exPanErr } = await window.sb.from('settlement_pans')
+            .select('id, pan_id, category').eq('pool_id', pool.id);
+          if (!exPanErr) {
+            for (var q = 0; q < (existingPans || []).length; q++) {
+              var exPan = existingPans[q];
+              if (panNewKeys[exPan.pan_id + '|' + exPan.category]) continue;
+              await window.sb.from('settlement_pans').delete().eq('id', exPan.id);
+            }
+          }
         }
 
         // Remove stale Pending rows no longer in the finalized set (e.g. a member
@@ -1243,7 +1280,7 @@ window.MemberAPI = {
   summary: async function (loginPan) {
     var res = await window.sb.rpc('member_summary', { p_login_pan: loginPan });
     if (res.error) throw res.error;
-    return res.data;   // { name, total_profit, paid_profit, pending_profit, ipos_applied, pans_applied, allotments, ipos:[...] }
+    return res.data;   // { name, total_profit, total_bonus, paid_profit, pending_profit, ipos_applied, pans_applied, allotments, ipos:[...], pans:[...]|null (head only) }
   },
   myIpoApplications: async function (loginPan, ipoId) {
     var res = await window.sb.rpc('my_ipo_applications', { p_login_pan: loginPan, p_ipo: ipoId });
