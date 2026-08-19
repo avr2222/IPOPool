@@ -95,6 +95,19 @@ function SettlementLedger({ navigate, id }) {
   });
   const totalNet   = catSummaries.reduce((s, d) => s + d.net, 0);
   const totalBonus = catSummaries.reduce((s, d) => s + d.bonusTotal, 0);
+  // Per-member bonus, keyed by category, so the ledger row can show the
+  // amount split back into pool-share + bonus -- r.amount is the two summed
+  // together (see finalizePayouts in screens-pool.jsx), so the PANs column
+  // showing only "N × perPan" undercounted whenever a member's bonus was
+  // nonzero. Recomputed live from PoolMath, same as catPerPan just above --
+  // if allotments changed after finalize the ledgerStale banner already
+  // flags it, this doesn't need its own staleness check.
+  const catBonusByMember = {};
+  categories.forEach(cat => {
+    const ca = ipoAllots.filter(a => a.category === cat);
+    const cr = window.ratesForCategory(selIpo, cat);
+    catBonusByMember[cat] = window.PoolMath.memberBonuses(ca, cr.stcg, cr.brok, cr.bonus, panToMember);
+  });
   const myPanIds = D.pans.filter(p => p.member === me?.id).map(p => p.id);
 
   // Your retained share (exact, summed across all categories) — pool share
@@ -479,6 +492,7 @@ function SettlementLedger({ navigate, id }) {
                 const isPaid = r.status === 'Paid';
                 const catMeta = (window.CAT_META || {})[r.category] || { label: r.category || '—', tone: 'neutral' };
                 const catPerPan = catSummaries.find(d => d.cat === r.category)?.perPan || 0;
+                const bonus = (catBonusByMember[r.category] || {})[r.member] || 0;
                 return (
                   <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '12px 18px' }}>
@@ -499,7 +513,19 @@ function SettlementLedger({ navigate, id }) {
                           <div key={i} style={{ width: 9, height: 9, borderRadius: '50%', background: `hsl(${m.avatarHue} 55% 52%)` }} />
                         ))}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, textAlign: 'right' }}>{r.pans} × {f(catPerPan)}</div>
+                      {bonus !== 0 ? (
+                        // Pool share here is r.amount minus this member's own bonus
+                        // -- exact, not r.pans × the category's AVERAGE perPan,
+                        // which can be a rupee off whenever this member happened
+                        // to land on the remainder split. This way the two lines
+                        // always sum to the Amount column exactly.
+                        <>
+                          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, textAlign: 'right' }}>{f(r.amount - bonus)} pool share</div>
+                          <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 1, textAlign: 'right', fontWeight: 700 }}>+{f(bonus)} bonus</div>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, textAlign: 'right' }}>{r.pans} × {f(catPerPan)}</div>
+                      )}
                     </td>
                     <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: r.amount < 0 ? 'var(--loss)' : 'var(--ink)' }}>{f(r.amount)}</td>
                     <td style={{ padding: '12px 18px', textAlign: 'right' }}>
