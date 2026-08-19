@@ -492,7 +492,12 @@ function SettlementLedger({ navigate, id }) {
                 const isPaid = r.status === 'Paid';
                 const catMeta = (window.CAT_META || {})[r.category] || { label: r.category || '—', tone: 'neutral' };
                 const catPerPan = catSummaries.find(d => d.cat === r.category)?.perPan || 0;
-                const bonus = (catBonusByMember[r.category] || {})[r.member] || 0;
+                // Prefer the amount actually persisted at finalize time (frozen,
+                // like r.amount itself -- immune to allotments edited afterward,
+                // which the ledgerStale banner already flags separately). Only
+                // fall back to a live PoolMath recompute for a legacy row from
+                // before migration 011 added bonus_amount, where it's always 0.
+                const bonus = r.bonusAmount || (catBonusByMember[r.category] || {})[r.member] || 0;
                 return (
                   <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '12px 18px' }}>
