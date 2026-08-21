@@ -367,6 +367,54 @@ function Dashboard({ navigate, tweaks }) {
     </Card>
   );
 
+  // Same leaderboard, one row per PAN instead of rolled up by family (D.panProfits,
+  // same PoolMath split memberProfits uses -- see computePanProfits in db.js).
+  // Rolling up by family hides which PAN is actually carrying the total, which
+  // matters once the allotted-PAN bonus makes individual PANs in the same
+  // family earn different amounts.
+  const panRanks  = (D.panProfits || []).filter(p => p.profit > 0);
+  const topPanProfit = panRanks.length ? panRanks[0].profit : 0;
+
+  const PanLeaderboard = (
+    <Card pad={0}>
+      <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 14.5, fontWeight: 800 }}>PAN leaderboard</div>
+        <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 2 }}>Net profit earned per PAN · across all IPOs</div>
+      </div>
+      {panRanks.length > 0 ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px', background: 'var(--profit-soft)', borderBottom: '1px solid var(--border)' }}>
+            <Avatar name={panRanks[0].holder} hue={panRanks[0].avatarHue} size={44} you={panRanks[0].you} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Badge tone="profit" icon="spark">Top earner</Badge>
+              <div style={{ fontSize: 15, fontWeight: 800, marginTop: 5 }}>
+                {panRanks[0].holder}{panRanks[0].you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{panRanks[0].memberName} · {panRanks[0].apps} application{panRanks[0].apps === 1 ? '' : 's'}</div>
+            </div>
+            <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(panRanks[0].profit)}</div>
+          </div>
+          {panRanks.map((p, i) => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--border)', background: p.you ? 'var(--brand-tint)' : 'transparent' }}>
+              <span className="num" style={{ width: 18, textAlign: 'right', fontSize: 13, fontWeight: 700, color: 'var(--ink-3)' }}>{i + 1}</span>
+              <Avatar name={p.holder} hue={p.avatarHue} size={30} you={p.you} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {p.holder}{p.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
+                  <span style={{ fontWeight: 600, color: 'var(--ink-3)' }}> · {p.memberName}</span>
+                </div>
+                <div style={{ marginTop: 5 }}><Meter value={p.profit} max={topPanProfit} color="var(--profit)" style={{ height: 6 }} /></div>
+              </div>
+              <div className="num" style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>{f(p.profit, { compact: true })}</div>
+            </div>
+          ))}
+        </>
+      ) : (
+        <div style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No PAN profits yet.</div>
+      )}
+    </Card>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {/* Spotlight hero (variant) */}
@@ -419,6 +467,8 @@ function Dashboard({ navigate, tweaks }) {
       {ProfitByIpo}
 
       {MemberLeaderboard}
+
+      {PanLeaderboard}
 
       {RecentTable}
     </div>
