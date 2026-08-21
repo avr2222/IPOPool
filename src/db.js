@@ -633,9 +633,12 @@ function computePanProfits() {
       var amounts = PoolMath.panAmounts(cats[cat], r.stcg, r.brok, r.bonus);
       var bonuses = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
       cats[cat].forEach(function(a) {
-        if (!totals[a.id]) totals[a.id] = { profit: 0, apps: 0 };
-        totals[a.id].profit += (amounts[a.id] || 0) + (bonuses[a.id] || 0);
-        totals[a.id].apps++;
+        // Keyed by a.pan (the PAN id) here, NOT a.id (the allotment row's own
+        // id) -- amounts/bonuses above are keyed by allotment id since that's
+        // what PoolMath returns, but this map is looked up by PAN id below.
+        if (!totals[a.pan]) totals[a.pan] = { profit: 0, apps: 0 };
+        totals[a.pan].profit += (amounts[a.id] || 0) + (bonuses[a.id] || 0);
+        totals[a.pan].apps++;
       });
     });
   });
@@ -720,6 +723,7 @@ async function loadDB() {
     profitByIpo:  charts.profitByIpo,
     categoryStats: computeCategoryStats(),
     memberProfits: computeMemberProfits(),
+    panProfits:   computePanProfits(),
 
     me:     _members.find(function(m){ return m.you; }) || null,
     ipo:    function(id){ return _ipos.find(function(i){ return i.id === id; }); },
