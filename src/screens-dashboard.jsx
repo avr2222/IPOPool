@@ -322,6 +322,23 @@ function Dashboard({ navigate, tweaks }) {
     </Card>
   );
 
+  // Small "vs solo" delta line -- how much more (or less) this member/PAN got
+  // via pooling than they'd have kept just from their own allotment luck
+  // (D.memberProfits/panProfits.soloProfit, see PoolMath.panSolo in db.js).
+  // Omitted when there's nothing meaningful to show (no allotment history, or
+  // pooling made no difference).
+  const SoloDelta = ({ profit, soloProfit }) => {
+    if (soloProfit == null) return null;
+    const delta = Math.round(profit - soloProfit);
+    if (delta === 0) return null;
+    const up = delta > 0;
+    return (
+      <div style={{ fontSize: 11, fontWeight: 700, color: up ? 'var(--profit)' : 'var(--loss)', whiteSpace: 'nowrap' }}>
+        {up ? '▲' : '▼'} {f(Math.abs(delta), { compact: true })} vs solo
+      </div>
+    );
+  };
+
   // Member leaderboard — every member ranked by total net profit across all IPOs
   // (D.memberProfits, computed once in loadDB via PoolMath). Highlights the top
   // earner, then lists everyone with a relative profit bar.
@@ -345,7 +362,10 @@ function Dashboard({ navigate, tweaks }) {
               </div>
               <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{memberRanks[0].pans} PAN{memberRanks[0].pans === 1 ? '' : 's'} applied</div>
             </div>
-            <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(memberRanks[0].profit)}</div>
+            <div style={{ textAlign: 'right' }}>
+              <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(memberRanks[0].profit)}</div>
+              <SoloDelta profit={memberRanks[0].profit} soloProfit={memberRanks[0].soloProfit} />
+            </div>
           </div>
           {memberRanks.map((m, i) => (
             <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--border)', background: m.you ? 'var(--brand-tint)' : 'transparent' }}>
@@ -357,7 +377,10 @@ function Dashboard({ navigate, tweaks }) {
                 </div>
                 <div style={{ marginTop: 5 }}><Meter value={m.profit} max={topProfit} color="var(--profit)" style={{ height: 6 }} /></div>
               </div>
-              <div className="num" style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>{f(m.profit, { compact: true })}</div>
+              <div style={{ textAlign: 'right' }}>
+                <div className="num" style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>{f(m.profit, { compact: true })}</div>
+                <SoloDelta profit={m.profit} soloProfit={m.soloProfit} />
+              </div>
             </div>
           ))}
         </>
@@ -392,7 +415,10 @@ function Dashboard({ navigate, tweaks }) {
               </div>
               <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{panRanks[0].memberName} · {panRanks[0].apps} application{panRanks[0].apps === 1 ? '' : 's'}</div>
             </div>
-            <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(panRanks[0].profit)}</div>
+            <div style={{ textAlign: 'right' }}>
+              <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(panRanks[0].profit)}</div>
+              <SoloDelta profit={panRanks[0].profit} soloProfit={panRanks[0].soloProfit} />
+            </div>
           </div>
           {panRanks.map((p, i) => (
             <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--border)', background: p.you ? 'var(--brand-tint)' : 'transparent' }}>
@@ -405,7 +431,10 @@ function Dashboard({ navigate, tweaks }) {
                 </div>
                 <div style={{ marginTop: 5 }}><Meter value={p.profit} max={topPanProfit} color="var(--profit)" style={{ height: 6 }} /></div>
               </div>
-              <div className="num" style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>{f(p.profit, { compact: true })}</div>
+              <div style={{ textAlign: 'right' }}>
+                <div className="num" style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>{f(p.profit, { compact: true })}</div>
+                <SoloDelta profit={p.profit} soloProfit={p.soloProfit} />
+              </div>
             </div>
           ))}
         </>
