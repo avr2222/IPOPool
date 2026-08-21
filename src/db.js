@@ -343,6 +343,67 @@ var PoolMath = {
     return out;
   },
 
+  // What each PAN would have kept WITHOUT pooling -- i.e. if the profit had
+  // never been split evenly and everyone had just kept their own allotment
+  // luck. A non-allotted PAN gets 0 (ASBA refunds an unallotted application,
+  // no gain no loss).
+  //
+  // Two different deductions, two different bases, deliberately NOT lumped
+  // together:
+  //  - Brokerage is a flat cost of having sold at all, not a tax on the
+  //    profit -- split EQUALLY across every ALLOTTED PAN (gain or loss),
+  //    same as the pooled model implicitly does (category() subtracts it
+  //    from `net`, which is then divided evenly across every applicant).
+  //  - STCG only applies to the PANs that actually profited, pro-rata by
+  //    their own gain (same "distribute a shared cost proportionally"
+  //    technique panBonuses/brokerageByCategory already use) -- no tax on a
+  //    loss, matching the category-level rule.
+  //
+  // STCG here is computed on the POSITIVE gains only (each solo PAN taxed on
+  // its own gain alone), NOT on category.gross like the pooled calc, which
+  // nets a loss against other PANs' gains before taxing the remainder --
+  // that netting is itself a real benefit of pooling (family-level
+  // aggregation), one an actual separate taxpayer going solo couldn't claim
+  // against someone else's loss. So the two totals only match exactly when a
+  // category has no mixed gains-and-losses; otherwise pooled comes out
+  // higher by exactly that tax saving -- which is real, and fine to show as
+  // part of "the value of pooling," not a bug to paper over.
+  panSolo: function(catAllots, stcgRate, brokerageAmt) {
+    var out = {};
+    catAllots.forEach(function(a) { out[a.id] = a.status === 'allotted' ? (a.gain || 0) : 0; });
+    var allotted = catAllots.filter(function(a){ return a.status === 'allotted'; });
+    if (!allotted.length) return out;
+
+    var brok = brokerageAmt || 0;
+    if (brok > 0) {
+      var sortedAllotted = allotted.slice().sort(function(a, b){ return String(a.id).localeCompare(String(b.id)); });
+      var brokAssigned = 0;
+      sortedAllotted.forEach(function(a, i) {
+        var share = (i === sortedAllotted.length - 1)
+          ? brok - brokAssigned
+          : Math.round(brok / sortedAllotted.length);
+        out[a.id] -= share;
+        brokAssigned += share;
+      });
+    }
+
+    var eligible = allotted.filter(function(a){ return (a.gain || 0) > 0; });
+    if (eligible.length) {
+      var positiveGross = eligible.reduce(function(s, a){ return s + a.gain; }, 0);
+      var stcgAmt = Math.round(positiveGross * stcgRate / 100);
+      var sortedEligible = eligible.slice().sort(function(a, b){ return String(a.id).localeCompare(String(b.id)); });
+      var stcgAssigned = 0;
+      sortedEligible.forEach(function(a, i) {
+        var ded = (i === sortedEligible.length - 1)
+          ? stcgAmt - stcgAssigned
+          : Math.round(stcgAmt * a.gain / positiveGross);
+        out[a.id] -= ded;
+        stcgAssigned += ded;
+      });
+    }
+    return out;
+  },
+
   // Aggregate panBonuses by member -- the personal bonus a member should
   // receive ON TOP OF their memberShares pool share (added, never substituted).
   memberBonuses: function(catAllots, stcgRate, brokerageAmt, bonusRate, panToMember) {
@@ -579,13 +640,18 @@ function computeCategoryStats() {
 // so a member's leaderboard total equals the sum of their pool shares --
 // PLUS their personal allotted-PAN bonus (memberBonuses), since that money is
 // theirs too, just paid outside the equal pool split.
+//
+// Also totals soloProfit (PoolMath.panSolo, aggregated by member) -- what this
+// family would have kept had they never pooled with anyone else, just their
+// own allotment luck. Lets the dashboard show "pooling vs going solo" instead
+// of only ever the pooled number.
 function computeMemberProfits() {
   var panToMember = function(panId) {
     var p = _pans.find(function(x){ return x.id === panId; });
     return p ? p.member : null;
   };
 
-  var totals = {};   // memberId -> { profit, pans }
+  var totals = {};   // memberId -> { profit, solo, pans }
   _ipos.forEach(function(ipo) {
     var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
     if (!ipoAllots.length) return;
@@ -596,22 +662,29 @@ function computeMemberProfits() {
       var r = ratesForCategory(ipo.id, cat);
       var shares  = PoolMath.memberShares(cats[cat], r.stcg, r.brok, panToMember, r.bonus);
       var bonuses = PoolMath.memberBonuses(cats[cat], r.stcg, r.brok, r.bonus, panToMember);
+      var solos   = PoolMath.panSolo(cats[cat], r.stcg, r.brok);
       Object.keys(shares).forEach(function(mid) {
-        if (!totals[mid]) totals[mid] = { profit: 0, pans: 0 };
+        if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0 };
         totals[mid].profit += shares[mid].share;
         totals[mid].pans   += shares[mid].pans;
       });
       Object.keys(bonuses).forEach(function(mid) {
-        if (!totals[mid]) totals[mid] = { profit: 0, pans: 0 };
+        if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0 };
         totals[mid].profit += bonuses[mid];
+      });
+      cats[cat].forEach(function(a) {
+        var mid = panToMember(a.pan);
+        if (mid == null) return;
+        if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0 };
+        totals[mid].solo += (solos[a.id] || 0);
       });
     });
   });
 
   return _members.map(function(m) {
-    var t = totals[m.id] || { profit: 0, pans: 0 };
+    var t = totals[m.id] || { profit: 0, solo: 0, pans: 0 };
     return { id: m.id, name: m.name, avatarHue: m.avatarHue, you: m.you,
-             profit: Math.round(t.profit), pans: t.pans };
+             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), pans: t.pans };
   }).sort(function(a, b){ return b.profit - a.profit; });
 }
 
@@ -621,7 +694,7 @@ function computeMemberProfits() {
 // within the same family). Reuses the identical per-category math as
 // computeMemberProfits, just keyed by PAN id instead of aggregated by member.
 function computePanProfits() {
-  var totals = {};   // panId -> { profit, apps }
+  var totals = {};   // panId -> { profit, solo, apps }
   _ipos.forEach(function(ipo) {
     var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
     if (!ipoAllots.length) return;
@@ -632,23 +705,25 @@ function computePanProfits() {
       var r = ratesForCategory(ipo.id, cat);
       var amounts = PoolMath.panAmounts(cats[cat], r.stcg, r.brok, r.bonus);
       var bonuses = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
+      var solos   = PoolMath.panSolo(cats[cat], r.stcg, r.brok);
       cats[cat].forEach(function(a) {
         // Keyed by a.pan (the PAN id) here, NOT a.id (the allotment row's own
-        // id) -- amounts/bonuses above are keyed by allotment id since that's
-        // what PoolMath returns, but this map is looked up by PAN id below.
-        if (!totals[a.pan]) totals[a.pan] = { profit: 0, apps: 0 };
+        // id) -- amounts/bonuses/solos above are keyed by allotment id since
+        // that's what PoolMath returns, but this map is looked up by PAN id below.
+        if (!totals[a.pan]) totals[a.pan] = { profit: 0, solo: 0, apps: 0 };
         totals[a.pan].profit += (amounts[a.id] || 0) + (bonuses[a.id] || 0);
+        totals[a.pan].solo   += (solos[a.id] || 0);
         totals[a.pan].apps++;
       });
     });
   });
 
   return _pans.map(function(p) {
-    var t = totals[p.id] || { profit: 0, apps: 0 };
+    var t = totals[p.id] || { profit: 0, solo: 0, apps: 0 };
     var m = _members.find(function(x){ return x.id === p.member; });
     return { id: p.id, pan: p.pan, holder: p.holder, memberName: m ? m.name : '',
              avatarHue: m ? m.avatarHue : 200, you: !!(m && m.you),
-             profit: Math.round(t.profit), apps: t.apps };
+             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), apps: t.apps };
   }).sort(function(a, b){ return b.profit - a.profit; });
 }
 
