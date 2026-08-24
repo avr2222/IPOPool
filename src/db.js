@@ -1108,7 +1108,7 @@ async function loadDB() {
           var r = rows[i];
           newKeys[r.memberId + '|' + r.category] = true;
           if (paid[r.memberId + '|' + r.category]) continue;   // don't un-pay
-          var { error } = await window.sb.from('settlements').upsert({
+          var payload = {
             pool_id:      pool.id,
             member_id:    r.memberId,
             category:     r.category,
@@ -1116,8 +1116,20 @@ async function loadDB() {
             amount:       r.amount,
             bonus_amount: r.bonusAmount || 0,
             status:       'Pending',
-          }, { onConflict: 'pool_id,member_id,category' });
-          if (error) throw error;
+          };
+          var { error } = await window.sb.from('settlements').upsert(payload, { onConflict: 'pool_id,member_id,category' });
+          if (error && /bonus_amount/i.test(error.message || '')) {
+            // Best-effort like the rate columns above: an older schema without
+            // this column (migration 011 not yet run) must not block finalize
+            // entirely -- retry without it so the core payout still gets
+            // written; the bonus/pool-share split just won't show yet.
+            console.warn('[IPOPool] settlements.bonus_amount column missing — run migration 011:', error.message);
+            delete payload.bonus_amount;
+            var retry = await window.sb.from('settlements').upsert(payload, { onConflict: 'pool_id,member_id,category' });
+            if (retry.error) throw retry.error;
+          } else if (error) {
+            throw error;
+          }
         }
 
         // Per-PAN breakdown (migration 011+). Best-effort like the rate columns
