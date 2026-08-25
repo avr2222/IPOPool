@@ -802,26 +802,46 @@ function xirr(cashflows) {
 }
 window.xirr = xirr;
 
-// One pass building every dated cash-flow leg used by XIRR, each tagged with
-// the PAN and/or member it belongs to so callers can group by either.
+// One pass building every dated cash-flow leg used by XIRR, tagged per PAN
+// (and the member that PAN belongs to) so callers can group by either.
 //
-// Principal legs (one out/in pair per application, ALL applications -- not
-// just allotted ones, since a not-allotted ASBA application still blocks the
-// money for a few days): -lotValue*lots at the IPO's close (application
-// deadline, the best proxy we have for when it was actually blocked -- there
-// is no reliable per-application block date, see applied_at's doc comment in
-// txAllotments), then the same amount back at par at list/allot date once
-// that's passed, else at today (mark-to-date: still blocked, no gain/loss
-// assumed yet). Gain/loss is deliberately NOT in this leg -- see below.
+// Money isn't "returned" the instant an IPO lists -- it sits in a bank
+// account until it's actually redeployed into the next application (or, if
+// never redeployed, until today). An early version of this modeled that
+// idle stretch by adding a SEPARATE interest leg on top of an already-
+// immediate release -- tested and reverted, because adding a same-signed
+// positive leg to an already-fixed set of outflows can only push the solved
+// rate UP, never down (a pure zero-gain round trip solves to exactly 0%;
+// tack any extra positive leg onto it and it solves above 0%). What actually
+// dilutes an otherwise-tiny-and-huge-annualizing cycle is DEFERRING
+// recognition of the release itself -- so a same-day (block, release) 8
+// days apart doesn't become a same-day (block, release) 8 days apart PLUS a
+// bonus; it becomes a (block, release) pair 48 days apart, because that's
+// how long the money was actually out of use.
 //
-// Profit legs (one per ipo+category+member, from the exact same PoolMath call
-// computeMemberProfits/computePanProfits already use, so the amount can never
-// drift from the profit shown elsewhere): dated at the matching settlement's
-// paid_date once Paid, else today (mark-to-date, whether Pending or the pool
-// hasn't been finalized at all yet).
+// So: blocks are still real, immediate legs (money leaving IS immediate).
+// Everything the PAN is owed back -- principal at listing, profit at
+// settlement -- is a "contribution" that becomes available on some date but
+// isn't emitted as a leg there. Instead, when idleRate > 0, each
+// contribution is deferred to that SAME PAN's own next block date (or
+// today, if there isn't one), growing at idleRate for the wait; every
+// contribution landing on the same checkpoint date is summed into ONE leg.
+// When idleRate === 0 (Settings -> "Idle capital interest rate", "set to 0
+// to ignore idle time entirely"), contributions are emitted immediately at
+// their own date instead -- deferring the date alone, even with zero
+// growth, would still change the solved rate, so idleRate === 0 has to skip
+// deferral entirely, not just apply a 1.0 growth factor.
 function buildXirrLegs() {
-  var legs = [];   // { panId, memberId, date, amount }
   var today = new Date(); today.setHours(0, 0, 0, 0);
+  var idleRate = parseFloat(localStorage.getItem('idleRate') || '2.5');
+
+  var panToMember = function(panId) {
+    var p = _pans.find(function(x){ return x.id === panId; });
+    return p ? p.member : null;
+  };
+
+  var blocksByPan = {};    // panId -> [{ date, amount, memberId }]  (negative, real legs)
+  var contribByPan = {};   // panId -> [{ avail, amount, memberId }] (positive, not-yet-recognized)
 
   _allotments.forEach(function(a) {
     var ipo = _ipos.find(function(i){ return i.id === a.ipo; });
@@ -830,17 +850,12 @@ function buildXirrLegs() {
     var outDate = toDateOrNull(ipo.close) || toDateOrNull(ipo.open);
     if (!outDate) return;
     var amt = ipo.lotValue * (a.lots || 1);
-    legs.push({ panId: pan.id, memberId: pan.member, date: outDate, amount: -amt });
+    (blocksByPan[pan.id] = blocksByPan[pan.id] || []).push({ date: outDate, amount: -amt, memberId: pan.member });
 
     var listedDate = toDateOrNull(ipo.listDate) || toDateOrNull(ipo.allotDate);
-    var inDate = (listedDate && listedDate <= today) ? listedDate : today;
-    legs.push({ panId: pan.id, memberId: pan.member, date: inDate, amount: amt });
+    var availDate = (listedDate && listedDate <= today) ? listedDate : today;
+    (contribByPan[pan.id] = contribByPan[pan.id] || []).push({ avail: availDate, amount: amt, memberId: pan.member });
   });
-
-  var panToMember = function(panId) {
-    var p = _pans.find(function(x){ return x.id === panId; });
-    return p ? p.member : null;
-  };
 
   _ipos.forEach(function(ipo) {
     var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
@@ -851,10 +866,8 @@ function buildXirrLegs() {
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
     Object.keys(cats).forEach(function(cat) {
       var r = ratesForCategory(ipo.id, cat);
-      var shares      = PoolMath.memberShares(cats[cat], r.stcg, r.brok, panToMember, r.bonus);
-      var memBonuses  = PoolMath.memberBonuses(cats[cat], r.stcg, r.brok, r.bonus, panToMember);
-      var panAmounts  = PoolMath.panAmounts(cats[cat], r.stcg, r.brok, r.bonus);
-      var panBonuses  = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
+      var panAmounts = PoolMath.panAmounts(cats[cat], r.stcg, r.brok, r.bonus);
+      var panBonuses = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
 
       var settleDateFor = function(memberId) {
         var s = pool && _settlements.find(function(x){ return x.pool === pool.id && x.member === memberId && x.category === cat; });
@@ -862,18 +875,41 @@ function buildXirrLegs() {
         return today;
       };
 
-      Object.keys(shares).forEach(function(mid) {
-        var amt = (shares[mid].share || 0) + (memBonuses[mid] || 0);
-        if (!amt) return;
-        legs.push({ panId: null, memberId: mid, date: settleDateFor(mid), amount: amt });
-      });
-
       cats[cat].forEach(function(a) {
         var amt = (panAmounts[a.id] || 0) + (panBonuses[a.id] || 0);
         if (!amt) return;
         var mid = panToMember(a.pan);
-        legs.push({ panId: a.pan, memberId: mid, date: settleDateFor(mid), amount: amt });
+        (contribByPan[a.pan] = contribByPan[a.pan] || []).push({ avail: settleDateFor(mid), amount: amt, memberId: mid });
       });
+    });
+  });
+
+  var legs = [];   // { panId, memberId, date, amount }
+  Object.keys(blocksByPan).forEach(function(panId) {
+    var blocks = blocksByPan[panId];
+    var contribs = contribByPan[panId] || [];
+    blocks.forEach(function(b) { legs.push({ panId: panId, memberId: b.memberId, date: b.date, amount: b.amount }); });
+
+    if (idleRate <= 0) {
+      contribs.forEach(function(c) { legs.push({ panId: panId, memberId: c.memberId, date: c.avail, amount: c.amount }); });
+      return;
+    }
+
+    var blockDates = blocks.map(function(b){ return b.date; }).sort(function(x, y){ return x - y; });
+    var checkpoints = {};   // dateMs -> { date, amount, memberId }
+    contribs.forEach(function(c) {
+      var next = null;
+      for (var i = 0; i < blockDates.length; i++) { if (blockDates[i] > c.avail) { next = blockDates[i]; break; } }
+      var cpDate = next || today;
+      var idleDays = (cpDate - c.avail) / 86400000;
+      var grown = idleDays > 0 ? c.amount * (1 + idleRate / 100 * idleDays / 365) : c.amount;
+      var key = cpDate.getTime();
+      if (!checkpoints[key]) checkpoints[key] = { date: cpDate, amount: 0, memberId: c.memberId };
+      checkpoints[key].amount += grown;
+    });
+    Object.keys(checkpoints).forEach(function(key) {
+      var cp = checkpoints[key];
+      legs.push({ panId: panId, memberId: cp.memberId, date: cp.date, amount: Math.round(cp.amount) });
     });
   });
 
@@ -882,6 +918,11 @@ function buildXirrLegs() {
 
 // Groups buildXirrLegs() once and solves XIRR per member, per PAN, and for
 // the pool as a whole. Call once per loadDB() -- everything below reuses it.
+// Every leg above is tagged with exactly one PAN, and each PAN's own legs
+// already sum to the right member/pool total (panAmounts/panBonuses sum
+// exactly to the member aggregate PoolMath itself would give), so byMember
+// and pool are plain unions of the relevant PANs' legs -- no separate
+// aggregate leg, and nothing to double-count.
 function computeXirrData() {
   var legs = buildXirrLegs();
   var byMember = {}, byPan = {};
@@ -1548,7 +1589,8 @@ window.MemberAPI = {
     return res.data;   // { ok:true, count:N }
   },
   summary: async function (loginPan) {
-    var res = await window.sb.rpc('member_summary', { p_login_pan: loginPan });
+    var idleRate = parseFloat(localStorage.getItem('idleRate') || '2.5');
+    var res = await window.sb.rpc('member_summary', { p_login_pan: loginPan, p_idle_rate: idleRate });
     if (res.error) throw res.error;
     return res.data;   // { name, total_profit, total_bonus, paid_profit, pending_profit, ipos_applied, pans_applied, allotments, ipos:[...], pans:[...]|null (head only) }
   },
