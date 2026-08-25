@@ -126,6 +126,16 @@ function MemberSummary({ session }) {
   const [iposSort, onIposSort] = useSortState('profit', 'desc');
   const [pansSort, onPansSort] = useSortState('total', 'desc');
   const f = (n, o) => (window.fmtINR ? window.fmtINR(n, o) : '₹' + (n || 0));
+  // Annualised, money-weighted return -- solved client-side (window.xirr,
+  // src/db.js) from the raw dated cash-flow legs the member_summary RPC
+  // returns, so the same Newton-Raphson solver the Dashboard uses stays the
+  // single source of truth for this math. Must run before the early returns
+  // below like every other hook here (see comment above).
+  const cashflows = data && data.cashflows;
+  const xirr = useMemo(() => {
+    if (!window.xirr || !cashflows || !cashflows.length) return null;
+    return window.xirr(cashflows.map(c => ({ date: new Date(c.date), amount: c.amount })));
+  }, [cashflows]);
 
   useEffect(() => {
     let alive = true;
@@ -144,6 +154,7 @@ function MemberSummary({ session }) {
   const allot    = d.allotments || 0;
   const rate     = applied > 0 ? Math.round(allot / applied * 100) : 0;
   const isFamily = d.scope ? d.scope === 'family' : !!session.isHead;
+  const xirrLabel = xirr == null ? '—' : (xirr >= 0 ? '+' : '') + (Math.abs(xirr * 100) >= 1000 ? Math.round(xirr * 100) : +(xirr * 100).toFixed(1)) + '%';
 
   const SETTLE = {
     paid:     { label: 'Paid',      tone: 'profit' },
@@ -191,6 +202,10 @@ function MemberSummary({ session }) {
         {totalBonus !== 0 && (
           <Stat label="Allotted-PAN bonus" value={f(totalBonus, { compact: true })} tone="var(--warn)"
             sub="kept personally, on top of your pool share" />
+        )}
+        {xirr != null && (
+          <Stat label="Your XIRR" value={xirrLabel} tone={xirr >= 0 ? 'var(--profit)' : 'var(--loss)'}
+            sub="annualised return" />
         )}
         <Stat label="IPOs applied" value={d.ipos_applied || 0} />
         <Stat label="Allotments" value={allot} sub={applied + (isFamily ? ' PAN applications' : ' applications')} />

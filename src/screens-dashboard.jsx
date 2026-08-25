@@ -56,6 +56,15 @@ function Legend({ items }) {
 const CAT_TONE = { Retail: 'info', sHNI: 'brand', bHNI: 'warn', SME: 'sme' };
 const CAT_COLOR = { Retail: 'var(--info)', sHNI: 'var(--brand)', bHNI: 'var(--warn)', SME: 'var(--sme)' };
 
+// Annualised, money-weighted return (see computeXirrData/xirr in db.js) --
+// null when there isn't enough dated cash-flow history to solve one.
+function xirrLabel(rate) {
+  if (rate == null || !isFinite(rate)) return '—';
+  const pct = rate * 100;
+  const rounded = Math.abs(pct) >= 1000 ? Math.round(pct) : +pct.toFixed(1);
+  return (rounded > 0 ? '+' : '') + rounded + '%';
+}
+
 // Sortable "Profit by IPO" table (net profit per IPO + combined total row).
 function ProfitByIpoCard({ D, navigate, f }) {
   const cols = [
@@ -224,6 +233,7 @@ function Dashboard({ navigate, tweaks }) {
     { icon: 'trend',    label: 'Total Profit',        value: f(D.kpis.profit,   { compact: true }),         tone: D.kpis.profit >= 0 ? 'profit' : 'loss',  nav: 'pooling',
       delta: D.kpis.roi > 0 ? { tone: 'profit', label: '+' + D.kpis.roi + '% ROI' }
            : D.kpis.roi < 0 ? { tone: 'loss', label: D.kpis.roi + '% ROI' } : undefined },
+    { icon: 'spark',    label: 'Portfolio XIRR',      value: xirrLabel(D.kpis.xirr),                        tone: D.kpis.xirr == null ? 'neutral' : D.kpis.xirr >= 0 ? 'profit' : 'loss', nav: 'pooling' },
     { icon: 'ledger',   label: 'Pending Settlements', value: D.kpis.pending,                                tone: 'warn',    nav: 'settlement',
       delta: D.kpis.pendingAmount > 0 ? { tone: 'warn', label: f(D.kpis.pendingAmount, { compact: true }) } : undefined },
   ];
@@ -339,6 +349,18 @@ function Dashboard({ navigate, tweaks }) {
     );
   };
 
+  // Annualised return for this member/PAN (D.memberProfits/panProfits.xirr,
+  // see computeXirrData in db.js). Omitted when there isn't enough dated
+  // cash-flow history to solve one (e.g. no applications yet).
+  const XirrTag = ({ xirr }) => {
+    if (xirr == null) return null;
+    return (
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-3)', whiteSpace: 'nowrap' }}>
+        {xirrLabel(xirr)} XIRR
+      </div>
+    );
+  };
+
   // Member leaderboard — every member ranked by total net profit across all IPOs
   // (D.memberProfits, computed once in loadDB via PoolMath). Highlights the top
   // earner, then lists everyone with a relative profit bar.
@@ -365,6 +387,7 @@ function Dashboard({ navigate, tweaks }) {
             <div style={{ textAlign: 'right' }}>
               <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(memberRanks[0].profit)}</div>
               <SoloDelta profit={memberRanks[0].profit} soloProfit={memberRanks[0].soloProfit} />
+              <XirrTag xirr={memberRanks[0].xirr} />
             </div>
           </div>
           {memberRanks.map((m, i) => (
@@ -380,6 +403,7 @@ function Dashboard({ navigate, tweaks }) {
               <div style={{ textAlign: 'right' }}>
                 <div className="num" style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>{f(m.profit, { compact: true })}</div>
                 <SoloDelta profit={m.profit} soloProfit={m.soloProfit} />
+                <XirrTag xirr={m.xirr} />
               </div>
             </div>
           ))}
@@ -418,6 +442,7 @@ function Dashboard({ navigate, tweaks }) {
             <div style={{ textAlign: 'right' }}>
               <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(panRanks[0].profit)}</div>
               <SoloDelta profit={panRanks[0].profit} soloProfit={panRanks[0].soloProfit} />
+              <XirrTag xirr={panRanks[0].xirr} />
             </div>
           </div>
           {panRanks.map((p, i) => (
@@ -434,6 +459,7 @@ function Dashboard({ navigate, tweaks }) {
               <div style={{ textAlign: 'right' }}>
                 <div className="num" style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>{f(p.profit, { compact: true })}</div>
                 <SoloDelta profit={p.profit} soloProfit={p.soloProfit} />
+                <XirrTag xirr={p.xirr} />
               </div>
             </div>
           ))}
@@ -456,6 +482,7 @@ function Dashboard({ navigate, tweaks }) {
               <div className="num" style={{ fontSize: 44, fontWeight: 800, letterSpacing: '-.02em', margin: '6px 0' }}>{f(D.kpis.profit)}</div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {D.kpis.roi > 0 && <Badge tone="neutral" icon="arrowUp"><span style={{ color: '#fff' }}>+{D.kpis.roi}% ROI</span></Badge>}
+                {D.kpis.xirr != null && <span style={{ background: 'rgba(255,255,255,.16)', borderRadius: 999, padding: '3px 11px', fontSize: 12, fontWeight: 700 }}>{xirrLabel(D.kpis.xirr)} XIRR</span>}
                 <span style={{ background: 'rgba(255,255,255,.16)', borderRadius: 999, padding: '3px 11px', fontSize: 12, fontWeight: 700 }}>{D.kpis.allotments} IPOs allotted</span>
                 {D.kpis.pendingAmount > 0 && <span style={{ background: 'rgba(255,255,255,.16)', borderRadius: 999, padding: '3px 11px', fontSize: 12, fontWeight: 700 }}>{f(D.kpis.pendingAmount, { compact: true })} pending</span>}
               </div>
@@ -469,7 +496,7 @@ function Dashboard({ navigate, tweaks }) {
 
       {/* KPI grid */}
       {layout !== 'spotlight' && (
-        <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: layout === 'compact' ? 'repeat(3,1fr)' : 'repeat(6,1fr)', gap: 12 }}>
+        <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: layout === 'compact' ? 'repeat(3,1fr)' : `repeat(${kpiCards.length},1fr)`, gap: 12 }}>
           {kpiCards.map((k, i) => <KPICard key={i} {...k} onClick={k.nav ? () => navigate(k.nav) : undefined} />)}
         </div>
       )}
