@@ -727,6 +727,176 @@ function computePanProfits() {
   }).sort(function(a, b){ return b.profit - a.profit; });
 }
 
+// ── XIRR (annualised, money-weighted return) ──────────────────────────────────
+// The same blocked capital gets reused across many IPOs -- applied, released a
+// few days later, applied again -- so a flat profit figure (or even the ROI%
+// above) hides how efficiently that capital was recycled. XIRR is the standard
+// broker-app answer: treat every capital block/release and every profit payout
+// as its own dated cash flow and solve for the single annualised rate that
+// discounts them all to zero.
+
+function toDateOrNull(s) {
+  if (!s) return null;
+  var d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// Generic Newton-Raphson XIRR solver. cashflows: [{ date: Date, amount }].
+// Needs at least one negative and one positive amount to have a solution.
+// Returns a decimal rate (0.42 = 42%/yr), or null if it can't be solved.
+function xirr(cashflows) {
+  var flows = (cashflows || []).filter(function(c){ return c && c.date && isFinite(c.amount) && c.amount !== 0; });
+  if (flows.length < 2) return null;
+  var hasNeg = flows.some(function(c){ return c.amount < 0; });
+  var hasPos = flows.some(function(c){ return c.amount > 0; });
+  if (!hasNeg || !hasPos) return null;
+
+  var sorted = flows.slice().sort(function(a, b){ return a.date - b.date; });
+  var d0 = sorted[0].date;
+  var years = sorted.map(function(c){ return (c.date - d0) / 86400000 / 365; });
+
+  function npv(rate) {
+    var sum = 0;
+    for (var i = 0; i < sorted.length; i++) sum += sorted[i].amount / Math.pow(1 + rate, years[i]);
+    return sum;
+  }
+  function dnpv(rate) {
+    var sum = 0;
+    for (var i = 0; i < sorted.length; i++) {
+      if (years[i] === 0) continue;
+      sum -= years[i] * sorted[i].amount / Math.pow(1 + rate, years[i] + 1);
+    }
+    return sum;
+  }
+
+  var rate = 0.1;
+  var converged = false;
+  for (var iter = 0; iter < 100; iter++) {
+    var f = npv(rate);
+    var fp = dnpv(rate);
+    if (Math.abs(fp) < 1e-9) break;
+    var next = rate - f / fp;
+    if (!isFinite(next) || next <= -0.999999) { next = (rate + -0.999999) / 2; }
+    if (Math.abs(next - rate) < 1e-7) { rate = next; converged = true; break; }
+    rate = next;
+  }
+
+  // Newton failed (e.g. bad seed) -- fall back to bisection over a wide,
+  // sane range. NPV is monotonically decreasing in rate whenever there's a
+  // real solution, so a sign change brackets it reliably.
+  if (!converged || !isFinite(rate)) {
+    var lo = -0.999999, hi = 100;
+    var flo = npv(lo), fhi = npv(hi);
+    if ((flo > 0) === (fhi > 0)) return null;   // no sign change -- can't bracket a root
+    for (var b = 0; b < 200; b++) {
+      var mid = (lo + hi) / 2;
+      var fm = npv(mid);
+      if (Math.abs(fm) < 1e-6) { rate = mid; converged = true; break; }
+      if ((fm > 0) === (flo > 0)) { lo = mid; flo = fm; } else { hi = mid; }
+      rate = mid;
+    }
+    converged = true;
+  }
+
+  return converged && isFinite(rate) ? rate : null;
+}
+window.xirr = xirr;
+
+// One pass building every dated cash-flow leg used by XIRR, each tagged with
+// the PAN and/or member it belongs to so callers can group by either.
+//
+// Principal legs (one out/in pair per application, ALL applications -- not
+// just allotted ones, since a not-allotted ASBA application still blocks the
+// money for a few days): -lotValue*lots at the IPO's close (application
+// deadline, the best proxy we have for when it was actually blocked -- there
+// is no reliable per-application block date, see applied_at's doc comment in
+// txAllotments), then the same amount back at par at list/allot date once
+// that's passed, else at today (mark-to-date: still blocked, no gain/loss
+// assumed yet). Gain/loss is deliberately NOT in this leg -- see below.
+//
+// Profit legs (one per ipo+category+member, from the exact same PoolMath call
+// computeMemberProfits/computePanProfits already use, so the amount can never
+// drift from the profit shown elsewhere): dated at the matching settlement's
+// paid_date once Paid, else today (mark-to-date, whether Pending or the pool
+// hasn't been finalized at all yet).
+function buildXirrLegs() {
+  var legs = [];   // { panId, memberId, date, amount }
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+
+  _allotments.forEach(function(a) {
+    var ipo = _ipos.find(function(i){ return i.id === a.ipo; });
+    var pan = _pans.find(function(p){ return p.id === a.pan; });
+    if (!ipo || !pan || !ipo.lotValue) return;
+    var outDate = toDateOrNull(ipo.close) || toDateOrNull(ipo.open);
+    if (!outDate) return;
+    var amt = ipo.lotValue * (a.lots || 1);
+    legs.push({ panId: pan.id, memberId: pan.member, date: outDate, amount: -amt });
+
+    var listedDate = toDateOrNull(ipo.listDate) || toDateOrNull(ipo.allotDate);
+    var inDate = (listedDate && listedDate <= today) ? listedDate : today;
+    legs.push({ panId: pan.id, memberId: pan.member, date: inDate, amount: amt });
+  });
+
+  var panToMember = function(panId) {
+    var p = _pans.find(function(x){ return x.id === panId; });
+    return p ? p.member : null;
+  };
+
+  _ipos.forEach(function(ipo) {
+    var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
+    if (!ipoAllots.length) return;
+    var pool = _pools.find(function(p){ return p.ipo === ipo.id; });
+
+    var cats = {};
+    ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
+    Object.keys(cats).forEach(function(cat) {
+      var r = ratesForCategory(ipo.id, cat);
+      var shares      = PoolMath.memberShares(cats[cat], r.stcg, r.brok, panToMember, r.bonus);
+      var memBonuses  = PoolMath.memberBonuses(cats[cat], r.stcg, r.brok, r.bonus, panToMember);
+      var panAmounts  = PoolMath.panAmounts(cats[cat], r.stcg, r.brok, r.bonus);
+      var panBonuses  = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
+
+      var settleDateFor = function(memberId) {
+        var s = pool && _settlements.find(function(x){ return x.pool === pool.id && x.member === memberId && x.category === cat; });
+        if (s && s.status === 'Paid') return toDateOrNull(s.date) || today;
+        return today;
+      };
+
+      Object.keys(shares).forEach(function(mid) {
+        var amt = (shares[mid].share || 0) + (memBonuses[mid] || 0);
+        if (!amt) return;
+        legs.push({ panId: null, memberId: mid, date: settleDateFor(mid), amount: amt });
+      });
+
+      cats[cat].forEach(function(a) {
+        var amt = (panAmounts[a.id] || 0) + (panBonuses[a.id] || 0);
+        if (!amt) return;
+        var mid = panToMember(a.pan);
+        legs.push({ panId: a.pan, memberId: mid, date: settleDateFor(mid), amount: amt });
+      });
+    });
+  });
+
+  return legs;
+}
+
+// Groups buildXirrLegs() once and solves XIRR per member, per PAN, and for
+// the pool as a whole. Call once per loadDB() -- everything below reuses it.
+function computeXirrData() {
+  var legs = buildXirrLegs();
+  var byMember = {}, byPan = {};
+  legs.forEach(function(l) {
+    if (l.memberId != null) (byMember[l.memberId] = byMember[l.memberId] || []).push(l);
+    if (l.panId    != null) (byPan[l.panId]       = byPan[l.panId]       || []).push(l);
+  });
+  var rate = function(arr) { return xirr(arr.map(function(l){ return { date: l.date, amount: l.amount }; })); };
+
+  var out = { pool: rate(legs), byMember: {}, byPan: {} };
+  Object.keys(byMember).forEach(function(mid){ out.byMember[mid] = rate(byMember[mid]); });
+  Object.keys(byPan).forEach(function(pid){ out.byPan[pid] = rate(byPan[pid]); });
+  return out;
+}
+
 // Pools worth showing: a profit pool is only meaningful once at least one PAN is
 // actually allotted. Marking an IPO's applicants all "not allotted" still upserts
 // a pool row (so the screen can list it), which would otherwise surface as an
@@ -781,6 +951,15 @@ async function loadDB() {
   });
 
   var charts = computeCharts();
+  var xirrData = computeXirrData();
+  var kpis = computeKpis();
+  kpis.xirr = xirrData.pool;
+  var memberProfits = computeMemberProfits().map(function(m) {
+    return Object.assign({}, m, { xirr: xirrData.byMember[m.id] != null ? xirrData.byMember[m.id] : null });
+  });
+  var panProfits = computePanProfits().map(function(p) {
+    return Object.assign({}, p, { xirr: xirrData.byPan[p.id] != null ? xirrData.byPan[p.id] : null });
+  });
 
   window.DB = {
     fmtINR:       fmtINR,
@@ -791,14 +970,14 @@ async function loadDB() {
     allotments:   _allotments,
     pools:        activePools(),
     settlements:  _settlements,
-    kpis:         computeKpis(),
+    kpis:         kpis,
     monthlyProfit: charts.monthlyProfit,
     smeVsMain:    charts.smeVsMain,
     allotHistory: charts.allotHistory,
     profitByIpo:  charts.profitByIpo,
     categoryStats: computeCategoryStats(),
-    memberProfits: computeMemberProfits(),
-    panProfits:   computePanProfits(),
+    memberProfits: memberProfits,
+    panProfits:   panProfits,
 
     me:     _members.find(function(m){ return m.you; }) || null,
     ipo:    function(id){ return _ipos.find(function(i){ return i.id === id; }); },
