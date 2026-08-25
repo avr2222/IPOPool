@@ -119,8 +119,8 @@ function Topbar({ route, navigate, dark, setDark }) {
   return (
     <header className="topbar" style={{ height: 'var(--header-h)', background: 'var(--surface)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', position: 'sticky', top: 0, zIndex: 30, gap: 16 }}>
       <div className="topbar-title">
-        <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-.01em' }}>{title}</div>
-        <div className="topbar-sub" style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>{sub}</div>
+        <div style={{ fontSize: 21, fontWeight: 700, color: 'var(--ink)', letterSpacing: '-.01em' }}>{title}</div>
+        <div className="topbar-sub" style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>{sub}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         {window.DB?.kpis?.profit > 0 && (
@@ -319,7 +319,7 @@ function App() {
     // Keep the mobile browser status bar in sync with the live theme: the accent
     // brand in light mode, the app's dark background in dark mode.
     const themeMeta = document.querySelector('meta[name="theme-color"]');
-    if (themeMeta) themeMeta.setAttribute('content', t.dark ? '#0B0E12' : a[0]);
+    if (themeMeta) themeMeta.setAttribute('content', t.dark ? '#0C0F0D' : a[0]);
   }, [t.accent, t.dark]);
 
   // Per-screen browser tab title, so multiple open tabs are distinguishable.

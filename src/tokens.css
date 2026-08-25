@@ -1,51 +1,52 @@
 /* ============================================================
    IPO Pool — Design System tokens
-   Clean, restrained fintech. Light-first with dark mode.
+   Refreshed to the "IPO Admin Panel" Claude Design export: warmer
+   green-grey neutrals, system font stack (no external font load),
+   tighter card radii. Light-first with a derived dark mode.
    ============================================================ */
-@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap');
 
 :root {
   /* Brand */
-  --brand: #0B8A4B;
-  --brand-600: #0A7A42;
-  --brand-700: #086B3A;
-  --brand-tint: #E8F5EE;
-  --brand-tint-2: #D6EEE0;
+  --brand: #0F7A4C;
+  --brand-600: #0D6A41;
+  --brand-700: #0A5636;
+  --brand-tint: #E7F5EC;
+  --brand-tint-2: #D8EEE0;
 
   /* Semantic profit / loss */
-  --profit: #0B8A4B;
-  --profit-soft: #E8F5EE;
-  --loss: #E5484D;
-  --loss-soft: #FCEBEC;
-  --info: #2563EB;
-  --info-soft: #E8F0FE;
-  --warn: #C2870B;
-  --warn-soft: #FBF1DC;
+  --profit: #0F7A4C;
+  --profit-soft: #E7F5EC;
+  --loss: #DC2626;
+  --loss-soft: #FDECEA;
+  --info: #2B6CB0;
+  --info-soft: #E6EEFB;
+  --warn: #B7791F;
+  --warn-soft: #FBF1E0;
 
   /* Category hues */
-  --sme: #C2870B;       /* amber */
-  --sme-soft: #FBF1DC;
-  --mainboard: #2563EB; /* blue */
-  --mainboard-soft: #E8F0FE;
+  --sme: #B7791F;       /* amber */
+  --sme-soft: #FBF1E0;
+  --mainboard: #2B6CB0; /* blue */
+  --mainboard-soft: #E6EEFB;
 
-  /* Neutrals (light) */
-  --bg: #F6F7F9;
+  /* Neutrals (light) — warm, slightly green-tinted greys */
+  --bg: #F7F8F7;
   --surface: #FFFFFF;
-  --surface-2: #FBFBFC;
+  --surface-2: #FAFBFA;
   --elevated: #FFFFFF;
-  --border: #ECEEF1;
-  --border-strong: #DFE2E7;
-  --ink: #15181D;
-  --ink-2: #5B6472;
-  --ink-3: #98A1B0;
+  --border: #ECEEEC;
+  --border-strong: #E0E3E0;
+  --ink: #0F172A;
+  --ink-2: #43524A;
+  --ink-3: #8B9891;
   --ink-inv: #FFFFFF;
 
-  /* Radii */
+  /* Radii — tighter, denser than before */
   --r-xs: 6px;
-  --r-sm: 9px;
+  --r-sm: 8px;
   --r-md: 12px;
-  --r-lg: 18px;
-  --r-xl: 26px;
+  --r-lg: 14px;
+  --r-xl: 20px;
   --r-pill: 999px;
 
   /* Shadows — soft, layered, modern */
@@ -59,10 +60,10 @@
 
   color-scheme: light;
 
-  /* Type */
-  --font: 'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  /* Type — system stack, no external font load */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
 
-  --side-w: 248px;
+  --side-w: 236px;
   --header-h: 64px;
 }
 
@@ -75,35 +76,36 @@
 
   --profit: #36C588;
   --profit-soft: #122A20;
-  --loss: #FF6166;
-  --loss-soft: #2C1517;
-  --info: #6AA0FF;
-  --info-soft: #15233E;
-  --warn: #E6B23E;
+  --loss: #FF6B5E;
+  --loss-soft: #2C1815;
+  --info: #6FA8DC;
+  --info-soft: #172A3E;
+  --warn: #E0AC4F;
   --warn-soft: #2A2210;
 
-  --sme: #E6B23E;
+  --sme: #E0AC4F;
   --sme-soft: #2A2210;
-  --mainboard: #6AA0FF;
-  --mainboard-soft: #15233E;
+  --mainboard: #6FA8DC;
+  --mainboard-soft: #172A3E;
 
-  --bg: #0B0E12;
-  --surface: #141821;
-  --surface-2: #11151D;
-  --elevated: #1A1F29;
-  --border: #232A35;
-  --border-strong: #2E3744;
-  --ink: #EEF1F5;
-  --ink-2: #9BA6B5;
-  --ink-3: #69748A;
-  --ink-inv: #0B0E12;
+  /* Same warm/green-tinted undertone as the light neutrals, darkened. */
+  --bg: #0C0F0D;
+  --surface: #151A17;
+  --surface-2: #121612;
+  --elevated: #1B211D;
+  --border: #232B26;
+  --border-strong: #2E3831;
+  --ink: #EEF1EE;
+  --ink-2: #A6B3AB;
+  --ink-3: #71807A;
+  --ink-inv: #0C0F0D;
 
   --sh-sm: 0 1px 2px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.3);
   --sh-md: 0 4px 12px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.35);
   --sh-lg: 0 16px 40px rgba(0,0,0,.5), 0 4px 12px rgba(0,0,0,.4);
   --sh-pop: 0 24px 64px rgba(0,0,0,.6), 0 8px 20px rgba(0,0,0,.45);
 
-  --glass: rgba(20,24,33,.78);
+  --glass: rgba(21,26,23,.78);
 
   color-scheme: dark;
 }
