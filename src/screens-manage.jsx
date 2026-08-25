@@ -369,6 +369,7 @@ function AdminPanel() {
 
   // ── Members state ──
   const [members, setMembers] = useState(D.members);
+  const [profileMember, setProfileMember] = useState(null);   // member id, for the profile modal
   const [showAddMember, setShowAddMember] = useState(false);
   const [memberForm, setMemberForm] = useState({ name: '', email: '', phone: '', upi: '', pan: '', bank: '' });
   const [memberSaving, setMemberSaving] = useState(false);
@@ -640,11 +641,11 @@ function AdminPanel() {
                     <Card key={m.id} pad={0} style={{ overflow: 'hidden' }}>
                       {/* Member header */}
                       <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0, cursor: 'pointer' }} onClick={() => setProfileMember(m.id)} title="View profile">
                           <Avatar name={m.name} hue={m.avatarHue} size={40} you={m.you} />
                           <div style={{ minWidth: 0 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 14.5, fontWeight: 800 }}>{m.name}</span>
+                              <span style={{ fontSize: 14.5, fontWeight: 800, textDecoration: 'underline', textDecorationColor: 'transparent' }} onMouseEnter={e => e.currentTarget.style.textDecorationColor = 'var(--ink-3)'} onMouseLeave={e => e.currentTarget.style.textDecorationColor = 'transparent'}>{m.name}</span>
                               {m.you && <span style={{ fontSize: 10.5, color: 'var(--brand)', fontWeight: 700, background: 'var(--brand-tint)', padding: '2px 7px', borderRadius: 999 }}>You</span>}
                               <Badge tone={m.role === 'Admin' ? 'brand' : 'neutral'}>{m.role}</Badge>
                             </div>
@@ -674,7 +675,7 @@ function AdminPanel() {
                               background: p.status === 'Inactive' ? 'var(--surface-2)' : 'transparent',
                             }}>
                               {/* Name + relation */}
-                              <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 7 }}>
+                              <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }} onClick={() => setProfileMember(m.id)} title="View profile">
                                 <span style={{ fontSize: 13, fontWeight: 700, color: p.status === 'Inactive' ? 'var(--ink-3)' : 'var(--ink)' }}>{p.holder}</span>
                                 <Badge tone={{ Self: 'brand', Spouse: 'info', Friend: 'neutral' }[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
                                 {p.bank && <span style={{ fontSize: 11.5, color: 'var(--ink-3)', background: 'var(--surface-2)', padding: '1px 7px', borderRadius: 6 }}>{p.bank}</span>}
@@ -834,6 +835,178 @@ function AdminPanel() {
               </Button>
             </div>
           </Modal>
+        );
+      })()}
+
+      {/* ── Member profile modal ── */}
+      {profileMember && (() => {
+        const m = D.members.find(x => x.id === profileMember);
+        if (!m) return null;
+        const mPans   = D.pans.filter(p => p.member === m.id);
+        const mPanIds = mPans.map(p => p.id);
+        const memberProfit = (D.memberProfits || []).find(mp => mp.id === m.id) || { profit: 0, soloProfit: 0, pans: 0 };
+        const panProfitMap = {};
+        (D.panProfits || []).forEach(pp => { panProfitMap[pp.id] = pp; });
+        const memberAllots = D.allotments.filter(a => mPanIds.includes(a.pan));
+        const appliedCount  = memberAllots.length;
+        const allottedCount = memberAllots.filter(a => a.status === 'allotted').length;
+        const allotRate     = appliedCount > 0 ? Math.round(allottedCount / appliedCount * 100) : 0;
+        const iposApplied   = new Set(memberAllots.map(a => a.ipo)).size;
+        const memberSettlements = D.settlements.filter(s => s.member === m.id);
+        const paidTotal    = memberSettlements.filter(s => s.status === 'Paid').reduce((s, r) => s + (r.amount || 0), 0);
+        const pendingTotal = memberSettlements.filter(s => s.status === 'Pending').reduce((s, r) => s + (r.amount || 0), 0);
+        const delta = Math.round(memberProfit.profit - memberProfit.soloProfit);
+
+        // Newest IPO first (D.ipos is already ordered by open_date desc from loadDB).
+        const ipoOrder = {};
+        D.ipos.forEach((ip, i) => { ipoOrder[ip.id] = i; });
+        const appRows = memberAllots.slice().sort((a, b) => (ipoOrder[a.ipo] ?? 999) - (ipoOrder[b.ipo] ?? 999));
+
+        const STATUS_META = {
+          allotted:     { label: 'Allotted',     tone: 'profit' },
+          not_allotted: { label: 'Not allotted', tone: 'loss' },
+          pending:      { label: 'Pending',      tone: 'neutral' },
+        };
+
+        return (
+          <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 12 }}>
+            <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 760, boxShadow: 'var(--sh-pop)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <Avatar name={m.name} hue={m.avatarHue} size={40} you={m.you} />
+                  <div>
+                    <div style={{ fontSize: 15.5, fontWeight: 800 }}>{m.name}{m.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}</div>
+                    <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{m.email || m.phone || 'No contact on file'} · {mPans.length} PAN{mPans.length !== 1 ? 's' : ''}</div>
+                  </div>
+                </div>
+                <IconButton name="x" size={32} onClick={() => setProfileMember(null)} />
+              </div>
+
+              {/* Body (scrollable) */}
+              <div style={{ padding: '18px 20px 22px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+                {/* KPI stats */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
+                  <div style={{ padding: 14, borderRadius: 'var(--r-md)', background: 'var(--surface-2)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>Total profit</div>
+                    <div className="num" style={{ fontSize: 19, fontWeight: 800, color: memberProfit.profit >= 0 ? 'var(--profit)' : 'var(--loss)' }}>{f(memberProfit.profit, { compact: true })}</div>
+                    {delta !== 0 && (
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: delta > 0 ? 'var(--profit)' : 'var(--loss)', marginTop: 2 }}>
+                        {delta > 0 ? '▲' : '▼'} {f(Math.abs(delta), { compact: true })} vs solo
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ padding: 14, borderRadius: 'var(--r-md)', background: 'var(--surface-2)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>IPOs applied</div>
+                    <div className="num" style={{ fontSize: 19, fontWeight: 800 }}>{iposApplied}</div>
+                  </div>
+                  <div style={{ padding: 14, borderRadius: 'var(--r-md)', background: 'var(--surface-2)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>Allotments</div>
+                    <div className="num" style={{ fontSize: 19, fontWeight: 800 }}>{allottedCount}<span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600 }}> / {appliedCount}</span></div>
+                  </div>
+                  <div style={{ padding: 14, borderRadius: 'var(--r-md)', background: 'var(--surface-2)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>Allotment rate</div>
+                    <div className="num" style={{ fontSize: 19, fontWeight: 800 }}>{allotRate}%</div>
+                  </div>
+                </div>
+
+                {/* Settlement status */}
+                {(paidTotal !== 0 || pendingTotal !== 0) && (
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <div style={{ flex: 1, padding: '10px 14px', borderRadius: 'var(--r-md)', border: '1px solid var(--profit)', background: 'var(--profit-soft)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--ink-2)', fontWeight: 600 }}>Paid</div>
+                      <div className="num" style={{ fontSize: 15, fontWeight: 800, color: 'var(--profit)' }}>{f(paidTotal)}</div>
+                    </div>
+                    <div style={{ flex: 1, padding: '10px 14px', borderRadius: 'var(--r-md)', border: '1px solid var(--warn)', background: 'var(--warn-soft)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--ink-2)', fontWeight: 600 }}>Pending</div>
+                      <div className="num" style={{ fontSize: 15, fontWeight: 800, color: 'var(--warn)' }}>{f(pendingTotal)}</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Per-PAN breakdown, only when there's more than one PAN */}
+                {mPans.length > 1 && (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Per-PAN breakdown</div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ fontSize: 10.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                            <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 700 }}>PAN</th>
+                            <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700 }}>Applications</th>
+                            <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700 }}>Profit</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {mPans.map(p => {
+                            const pp = panProfitMap[p.id] || { profit: 0, soloProfit: 0, apps: 0 };
+                            const d = Math.round(pp.profit - pp.soloProfit);
+                            return (
+                              <tr key={p.id} style={{ borderTop: '1px solid var(--border)' }}>
+                                <td style={{ padding: '8px 8px' }}>
+                                  <div style={{ fontSize: 12.5, fontWeight: 700 }}>{p.holder}</div>
+                                  <div style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>{p.relation}</div>
+                                </td>
+                                <td className="num" style={{ padding: '8px 8px', textAlign: 'right', color: 'var(--ink-2)' }}>{pp.apps}</td>
+                                <td className="num" style={{ padding: '8px 8px', textAlign: 'right' }}>
+                                  <div style={{ fontWeight: 800, color: pp.profit >= 0 ? 'var(--profit)' : 'var(--loss)' }}>{f(pp.profit, { compact: true })}</div>
+                                  {d !== 0 && <div style={{ fontSize: 10, fontWeight: 700, color: d > 0 ? 'var(--profit)' : 'var(--loss)' }}>{d > 0 ? '▲' : '▼'} {f(Math.abs(d), { compact: true })} vs solo</div>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Applications & allotments */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Applications &amp; allotments</div>
+                  {appRows.length === 0 ? (
+                    <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--ink-3)', fontSize: 12.5 }}>No applications yet.</div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
+                        <thead>
+                          <tr style={{ fontSize: 10.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                            <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 700 }}>IPO</th>
+                            <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 700 }}>PAN</th>
+                            <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 700 }}>Category</th>
+                            <th style={{ textAlign: 'center', padding: '6px 8px', fontWeight: 700 }}>Status</th>
+                            <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700 }}>Shares</th>
+                            <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700 }}>Gain</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {appRows.map(a => {
+                            const ipoObj  = D.ipo(a.ipo);
+                            const panObj  = D.pan(a.pan);
+                            const catMeta = (window.CAT_META || {})[a.category] || { label: a.category || '—', tone: 'neutral' };
+                            const st      = STATUS_META[a.status] || STATUS_META.pending;
+                            return (
+                              <tr key={a.id} style={{ borderTop: '1px solid var(--border)' }}>
+                                <td style={{ padding: '8px 8px' }}>
+                                  <div style={{ fontSize: 12.5, fontWeight: 700 }}>{ipoObj?.short || ipoObj?.name || '—'}</div>
+                                  <div style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>{ipoObj?.type}</div>
+                                </td>
+                                <td style={{ padding: '8px 8px', fontSize: 12, color: 'var(--ink-2)' }}>{panObj?.holder || '—'}</td>
+                                <td style={{ padding: '8px 8px' }}><Badge tone={catMeta.tone} style={{ fontSize: 10 }}>{catMeta.label}</Badge></td>
+                                <td style={{ padding: '8px 8px', textAlign: 'center' }}><Badge tone={st.tone} style={{ fontSize: 10 }}>{st.label}</Badge></td>
+                                <td className="num" style={{ padding: '8px 8px', textAlign: 'right', color: 'var(--ink-2)' }}>{a.shares || '—'}</td>
+                                <td className="num" style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700, color: a.gain > 0 ? 'var(--profit)' : a.gain < 0 ? 'var(--loss)' : 'var(--ink-3)' }}>{a.gain ? f(a.gain, { compact: true }) : '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         );
       })()}
 

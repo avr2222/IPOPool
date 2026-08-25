@@ -65,7 +65,7 @@ function Card({ children, pad = 18, className = '', style = {}, hover = false, o
     <div onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       className={className}
       style={{
-        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)',
+        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)',
         padding: pad, boxShadow: hover && h ? 'var(--sh-md)' : 'var(--sh-sm)',
         transition: 'box-shadow .2s, transform .2s, border-color .2s',
         transform: hover && h ? 'translateY(-2px)' : 'none',
@@ -93,8 +93,8 @@ function Badge({ children, tone = 'neutral', size = 'sm', icon, style = {} }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 4, color: c, background: bg,
-      fontWeight: 700, fontSize: size === 'sm' ? 11.5 : 13, padding: size === 'sm' ? '3px 9px' : '5px 12px',
-      borderRadius: 999, lineHeight: 1.3, whiteSpace: 'nowrap', ...style,
+      fontWeight: 700, fontSize: size === 'sm' ? 11.5 : 13, padding: size === 'sm' ? '2px 8px' : '4px 11px',
+      borderRadius: 'var(--r-xs)', lineHeight: 1.3, whiteSpace: 'nowrap', ...style,
     }}>
       {icon && <Icon name={icon} size={size === 'sm' ? 12 : 14} stroke={2.4} />}
       {children}
@@ -107,8 +107,8 @@ function Button({ children, variant = 'primary', size = 'md', icon, iconRight, o
   const [h, setH] = useState(false);
   const base = {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontWeight: 700,
-    borderRadius: 'var(--r-md)', border: '1px solid transparent', transition: 'all .15s', whiteSpace: 'nowrap',
-    fontSize: size === 'sm' ? 13 : size === 'lg' ? 16 : 14, padding: size === 'sm' ? '7px 13px' : size === 'lg' ? '13px 22px' : '10px 17px',
+    borderRadius: 'var(--r-sm)', border: '1px solid transparent', transition: 'all .15s', whiteSpace: 'nowrap',
+    fontSize: size === 'sm' ? 12.5 : size === 'lg' ? 16 : 14, padding: size === 'sm' ? '7px 13px' : size === 'lg' ? '13px 22px' : '10px 17px',
     minHeight: size === 'sm' ? 34 : size === 'lg' ? 50 : 42,
     width: full ? '100%' : 'auto', opacity: disabled ? 0.5 : 1, pointerEvents: disabled ? 'none' : 'auto',
   };
@@ -136,7 +136,7 @@ function IconButton({ name, onClick, active, size = 38, tip, spin, disabled }) {
     <button className="iconbtn" onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       onClick={disabled ? undefined : onClick} title={tip} disabled={disabled}
       style={{
-        width: size, height: size, display: 'grid', placeItems: 'center', borderRadius: 'var(--r-md)',
+        width: size, height: size, display: 'grid', placeItems: 'center', borderRadius: 'var(--r-xs)',
         border: '1px solid', borderColor: active ? 'var(--brand)' : h ? 'var(--border-strong)' : 'var(--border)',
         background: active ? 'var(--brand-tint)' : h ? 'var(--surface-2)' : 'var(--surface)',
         color: active ? 'var(--brand)' : 'var(--ink-2)', transition: 'all .15s', position: 'relative',
@@ -155,7 +155,7 @@ function Avatar({ name, hue = 200, size = 36, you = false }) {
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%', flexShrink: 0,
-      background: `linear-gradient(135deg, hsl(${hue} 60% 52%), hsl(${hue + 24} 64% 42%))`,
+      background: `hsl(${hue} 58% 46%)`,
       color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: size * 0.38,
       boxShadow: you ? '0 0 0 2px var(--surface), 0 0 0 4px var(--brand)' : 'none',
     }}>{init}</div>
@@ -179,8 +179,8 @@ function SectionTitle({ title, sub, action }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 14, gap: 12 }}>
       <div>
-        <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-.01em' }}>{title}</div>
-        {sub && <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>{sub}</div>}
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>{title}</div>
+        {sub && <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>{sub}</div>}
       </div>
       {action}
     </div>
