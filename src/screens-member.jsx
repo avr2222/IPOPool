@@ -416,6 +416,11 @@ function MemberApply({ ipo, session }) {
   const setRow = (id, patch) => setRows(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   const selected    = pans.filter(p => rows[p.id] && rows[p.id].on);
   const hasExisting = Object.keys(appliedIds).length > 0;
+  // Once the IPO's own close date has passed, a member can no longer submit
+  // or edit their application — only the admin still can (submit_applications
+  // enforces this server-side too; this is just so a member sees a clear
+  // message instead of a raw error after filling out the form).
+  const isClosed = ipo && ipo.close_date && new Date(ipo.close_date) < new Date(new Date().toDateString());
 
   const submit = async () => {
     if (!selected.length) { setErr('Select at least one PAN that applied.'); return; }
@@ -435,6 +440,23 @@ function MemberApply({ ipo, session }) {
   };
 
   if (loading) return <Card pad={28} style={{ textAlign: 'center', color: 'var(--ink-3)', fontSize: 13.5 }}>Loading…</Card>;
+
+  if (isClosed) {
+    return (
+      <Card pad={28} style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+        <div style={{ width: 52, height: 52, borderRadius: 14, background: 'var(--warn-soft)', color: 'var(--warn)', display: 'grid', placeItems: 'center' }}>
+          <Icon name="lock" size={24} />
+        </div>
+        <div style={{ fontSize: 17, fontWeight: 800 }}>Applications closed</div>
+        <div style={{ fontSize: 13.5, color: 'var(--ink-3)', maxWidth: 340, lineHeight: 1.6 }}>
+          {ipo.name} stopped accepting applications on <strong>{new Date(ipo.close_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</strong>.
+          {hasExisting
+            ? ` Your saved application for ${Object.keys(appliedIds).length} PAN${Object.keys(appliedIds).length === 1 ? '' : 's'} is locked in — contact the admin if it needs to change.`
+            : ' Contact the admin if you still need to apply.'}
+        </div>
+      </Card>
+    );
+  }
 
   if (done) {
     return (
