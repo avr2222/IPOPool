@@ -9,12 +9,14 @@ function SettingsScreen() {
   const [stcg,       setStcg]       = useState(() => parseFloat(localStorage.getItem('stcg')       || '15'));
   const [brokerage,  setBrokerage]  = useState(() => parseFloat(localStorage.getItem('brokerage')   || '0'));
   const [bonusRate,  setBonusRate]  = useState(() => parseFloat(localStorage.getItem('allotBonus')  || '0'));
+  const [idleRate,   setIdleRate]   = useState(() => parseFloat(localStorage.getItem('idleRate')    || '2.5'));
   const [saved,      setSaved]      = useState(false);
 
   const handleSave = () => {
     localStorage.setItem('stcg',       String(stcg));
     localStorage.setItem('brokerage',  String(brokerage));
     localStorage.setItem('allotBonus', String(bonusRate));
+    localStorage.setItem('idleRate',   String(idleRate));
     setSaved(true);
     setTimeout(() => setSaved(false), 2200);
   };
@@ -140,17 +142,38 @@ function SettingsScreen() {
             ))}
           </div>
         </div>
+      </Card>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 20, flexWrap: 'wrap' }}>
-          <Button variant="primary" icon={saved ? 'check' : undefined} onClick={handleSave} style={{ minWidth: 140 }}>
-            {saved ? 'Saved!' : 'Save settings'}
-          </Button>
-          <button onClick={() => { setStcg(15); setBrokerage(0); setBonusRate(0); }} style={{ background: 'none', border: 'none', color: 'var(--ink-3)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
-            Reset to defaults (15% STCG, ₹0 brokerage, 0% bonus)
-          </button>
-          {saved && <span style={{ fontSize: 13, color: 'var(--profit)', fontWeight: 600 }}>Settings applied to all profit calculations.</span>}
+      {/* XIRR settings */}
+      <Card pad={24}>
+        <SectionTitle title="XIRR settings" sub="How annualised return is estimated for time your capital isn't blocked in an IPO" />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20, marginTop: 4 }}>
+          <Field
+            label="Idle capital interest rate"
+            sub="While your money isn't blocked in an IPO, XIRR assumes it earns this rate in a savings account — like a fixed deposit or sweep account. Doesn't affect any actual profit split, only how XIRR is calculated. Set to 0 to ignore idle time entirely."
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="number" min="0" max="15" step="0.1"
+                value={idleRate}
+                onChange={e => setIdleRate(parseFloat(e.target.value) || 0)}
+                style={{ ...inputStyle, maxWidth: 100 }}
+              />
+              <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--ink-2)' }}>%</span>
+            </div>
+          </Field>
         </div>
       </Card>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <Button variant="primary" icon={saved ? 'check' : undefined} onClick={handleSave} style={{ minWidth: 140 }}>
+          {saved ? 'Saved!' : 'Save settings'}
+        </Button>
+        <button onClick={() => { setStcg(15); setBrokerage(0); setBonusRate(0); setIdleRate(2.5); }} style={{ background: 'none', border: 'none', color: 'var(--ink-3)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+          Reset to defaults (15% STCG, ₹0 brokerage, 0% bonus, 2.5% idle rate)
+        </button>
+        {saved && <span style={{ fontSize: 13, color: 'var(--profit)', fontWeight: 600 }}>Settings applied to all profit and XIRR calculations.</span>}
+      </div>
 
     </div>
   );

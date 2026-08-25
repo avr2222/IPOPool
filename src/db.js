@@ -830,11 +830,11 @@ function buildXirrLegs() {
     var outDate = toDateOrNull(ipo.close) || toDateOrNull(ipo.open);
     if (!outDate) return;
     var amt = ipo.lotValue * (a.lots || 1);
-    legs.push({ panId: pan.id, memberId: pan.member, date: outDate, amount: -amt });
+    legs.push({ panId: pan.id, memberId: pan.member, date: outDate, amount: -amt, kind: 'principal' });
 
     var listedDate = toDateOrNull(ipo.listDate) || toDateOrNull(ipo.allotDate);
     var inDate = (listedDate && listedDate <= today) ? listedDate : today;
-    legs.push({ panId: pan.id, memberId: pan.member, date: inDate, amount: amt });
+    legs.push({ panId: pan.id, memberId: pan.member, date: inDate, amount: amt, kind: 'principal' });
   });
 
   var panToMember = function(panId) {
@@ -865,33 +865,75 @@ function buildXirrLegs() {
       Object.keys(shares).forEach(function(mid) {
         var amt = (shares[mid].share || 0) + (memBonuses[mid] || 0);
         if (!amt) return;
-        legs.push({ panId: null, memberId: mid, date: settleDateFor(mid), amount: amt });
+        legs.push({ panId: null, memberId: mid, date: settleDateFor(mid), amount: amt, kind: 'profit' });
       });
 
       cats[cat].forEach(function(a) {
         var amt = (panAmounts[a.id] || 0) + (panBonuses[a.id] || 0);
         if (!amt) return;
         var mid = panToMember(a.pan);
-        legs.push({ panId: a.pan, memberId: mid, date: settleDateFor(mid), amount: amt });
+        legs.push({ panId: a.pan, memberId: mid, date: settleDateFor(mid), amount: amt, kind: 'profit' });
       });
     });
   });
+
+  // Idle-capital legs: money isn't blocked in an IPO application 100% of the
+  // time -- between one release/profit payout and the next application, it
+  // sits in a bank account earning a baseline rate (Settings -> "Idle
+  // capital interest rate"). Walk each PAN's own legs above (blocks,
+  // releases, profit -- already dated and signed) in date order with a
+  // running balance floored at 0, and credit interest on whatever's sitting
+  // free in each gap. Floor-at-zero matters: right after a block the running
+  // total usually goes negative (an application typically costs more than
+  // whatever was just freed up), and no interest should accrue on money this
+  // model never actually saw arrive.
+  var idleRate = parseFloat(localStorage.getItem('idleRate') || '2.5');
+  if (idleRate > 0) {
+    var byPan = {};
+    legs.forEach(function(l) { if (l.panId != null) (byPan[l.panId] = byPan[l.panId] || []).push(l); });
+    Object.keys(byPan).forEach(function(panId) {
+      var events = byPan[panId].slice().sort(function(a, b){ return a.date - b.date; });
+      var balance = 0;
+      for (var i = 0; i < events.length; i++) {
+        balance = Math.max(0, balance + events[i].amount);
+        var gapEnd  = (i + 1 < events.length) ? events[i + 1].date : today;
+        var gapDays = (gapEnd - events[i].date) / 86400000;
+        if (balance > 0 && gapDays > 0) {
+          var interest = Math.round(balance * idleRate / 100 * gapDays / 365);
+          if (interest) legs.push({ panId: panId, memberId: events[i].memberId, date: gapEnd, amount: interest, kind: 'idle' });
+        }
+      }
+    });
+  }
 
   return legs;
 }
 
 // Groups buildXirrLegs() once and solves XIRR per member, per PAN, and for
 // the pool as a whole. Call once per loadDB() -- everything below reuses it.
+//
+// A 'profit' leg exists TWICE per (ipo, category, member) -- once as the
+// member-level aggregate (panId: null, the member's total share) and once
+// PER PAN the member applied with in that category (panId: X). The two
+// per-PAN amounts sum EXACTLY to the aggregate (same PoolMath call, see
+// buildXirrLegs above), so byPan wants the per-PAN ones and pool/byMember
+// want ONLY the aggregate -- including both there would double the profit
+// leg for anyone whose group has any applying PANs. 'principal' and 'idle'
+// legs have no such aggregate/per-PAN duplicate and are always counted once.
 function computeXirrData() {
   var legs = buildXirrLegs();
+  var memberSafe = legs.filter(function(l){ return l.kind !== 'profit' || l.panId === null; });
+
   var byMember = {}, byPan = {};
-  legs.forEach(function(l) {
+  memberSafe.forEach(function(l) {
     if (l.memberId != null) (byMember[l.memberId] = byMember[l.memberId] || []).push(l);
-    if (l.panId    != null) (byPan[l.panId]       = byPan[l.panId]       || []).push(l);
+  });
+  legs.forEach(function(l) {
+    if (l.panId != null) (byPan[l.panId] = byPan[l.panId] || []).push(l);
   });
   var rate = function(arr) { return xirr(arr.map(function(l){ return { date: l.date, amount: l.amount }; })); };
 
-  var out = { pool: rate(legs), byMember: {}, byPan: {} };
+  var out = { pool: rate(memberSafe), byMember: {}, byPan: {} };
   Object.keys(byMember).forEach(function(mid){ out.byMember[mid] = rate(byMember[mid]); });
   Object.keys(byPan).forEach(function(pid){ out.byPan[pid] = rate(byPan[pid]); });
   return out;
