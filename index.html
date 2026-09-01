@@ -131,6 +131,14 @@
       .login-mobile-logo { display: block !important; }
     }
 
+    /* ── Member self-service portal (#/me, #/apply/<id>) ────
+       Mobile-card width by default; widen on tablet/laptop so the
+       5-column "Your IPOs" table isn't squeezed into a 460px card
+       with the Status column clipped off. */
+    .member-portal { max-width: 460px; }
+    @media (min-width: 640px)  { .member-portal { max-width: 620px; } }
+    @media (min-width: 1000px) { .member-portal { max-width: 760px; } }
+
     /* ── Modern app feel ─────────────────────────────────── */
     /* Dynamic viewport: keep layout stable as the mobile URL bar collapses */
     @supports (height: 100dvh) {
