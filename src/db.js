@@ -1592,7 +1592,7 @@ window.MemberAPI = {
     var idleRate = parseFloat(localStorage.getItem('idleRate') || '2.5');
     var res = await window.sb.rpc('member_summary', { p_login_pan: loginPan, p_idle_rate: idleRate });
     if (res.error) throw res.error;
-    return res.data;   // { name, total_profit, total_bonus, paid_profit, pending_profit, ipos_applied, pans_applied, allotments, ipos:[...], pans:[...]|null (head only) }
+    return res.data;   // { name, total_profit, total_bonus, paid_profit, pending_profit, ipos_applied, pans_applied, allotments, rank, total_members, ipos:[...], pans:[...]|null (head only) }
   },
   myIpoApplications: async function (loginPan, ipoId) {
     var res = await window.sb.rpc('my_ipo_applications', { p_login_pan: loginPan, p_ipo: ipoId });

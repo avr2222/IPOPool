@@ -194,6 +194,28 @@ function MemberSummary({ session }) {
         {(() => { const pool = d.name || session.name; const who = session.holder || d.login_holder; return pool && who && pool !== who ? <span style={{ fontWeight: 600, color: 'var(--ink-4, var(--ink-3))' }}> · {pool}'s pool</span> : null; })()}
       </div>
 
+      {d.rank && d.total_members > 1 && (
+        <Card pad={16} style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          background: d.rank === 1 ? 'var(--profit-soft)' : 'var(--surface)',
+          border: d.rank === 1 ? '1px solid var(--profit)' : undefined,
+        }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 12, flexShrink: 0, display: 'grid', placeItems: 'center',
+            fontSize: 18, fontWeight: 800, background: d.rank === 1 ? 'var(--profit)' : 'var(--brand-tint)',
+            color: d.rank === 1 ? '#fff' : 'var(--brand)',
+          }}>
+            {d.rank <= 3 ? '🏆' : '#' + d.rank}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 800 }}>
+              {d.rank === 1 ? "You're #1" : `Ranked #${d.rank}`} of {d.total_members} members
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>by total profit across the pool</div>
+          </div>
+        </Card>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <Stat label={isFamily ? 'Profit till date' : 'Your profit'} value={f(d.total_profit, { compact: true })} tone={d.total_profit >= 0 ? 'var(--profit)' : 'var(--loss)'}
           sub={totalBonus !== 0
