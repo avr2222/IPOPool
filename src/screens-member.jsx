@@ -463,7 +463,9 @@ function MemberApply({ ipo, session }) {
 
   if (loading) return <Card pad={28} style={{ textAlign: 'center', color: 'var(--ink-3)', fontSize: 13.5 }}>Loading…</Card>;
 
-  if (isClosed) {
+  // Nothing was ever saved and the window is closed -- no application to show
+  // read-only, so there's nothing worth rendering the (empty) form for.
+  if (isClosed && !hasExisting) {
     return (
       <Card pad={28} style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
         <div style={{ width: 52, height: 52, borderRadius: 14, background: 'var(--warn-soft)', color: 'var(--warn)', display: 'grid', placeItems: 'center' }}>
@@ -471,10 +473,7 @@ function MemberApply({ ipo, session }) {
         </div>
         <div style={{ fontSize: 17, fontWeight: 800 }}>Applications closed</div>
         <div style={{ fontSize: 13.5, color: 'var(--ink-3)', maxWidth: 340, lineHeight: 1.6 }}>
-          {ipo.name} stopped accepting applications on <strong>{new Date(ipo.close_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</strong>.
-          {hasExisting
-            ? ` Your saved application for ${Object.keys(appliedIds).length} PAN${Object.keys(appliedIds).length === 1 ? '' : 's'} is locked in — contact the admin if it needs to change.`
-            : ' Contact the admin if you still need to apply.'}
+          {ipo.name} stopped accepting applications on <strong>{new Date(ipo.close_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</strong>. Contact the admin if you still need to apply.
         </div>
       </Card>
     );
@@ -506,11 +505,13 @@ function MemberApply({ ipo, session }) {
         </div>
         <div style={{ fontSize: 16, fontWeight: 800, marginTop: 2 }}>{ipo ? ipo.name : 'Apply'}</div>
         <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 3 }}>
-          {hasExisting
-            ? 'Your saved application is loaded below — adjust and update.'
-            : 'Tick the PANs that applied, pick a category and the number of lots.'}
+          {isClosed
+            ? <>Applications closed on <strong>{new Date(ipo.close_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</strong> — your saved application below is read-only.</>
+            : hasExisting
+              ? 'Your saved application is loaded below — adjust and update.'
+              : 'Tick the PANs that applied, pick a category and the number of lots.'}
         </div>
-        {lotValue > 0 && (
+        {!isClosed && lotValue > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
             {MEMBER_CATS.map(c => {
               // SME's Individual bucket is a fixed 2 lots (SEBI, since 1 Jul
@@ -537,12 +538,15 @@ function MemberApply({ ipo, session }) {
             No PANs are registered under your name yet. Ask the admin to add them.
           </div>
         )}
-        {pans.map(p => {
+        {/* Closed: only the PANs that actually applied are worth showing —
+            nothing else can be added now, so an unchecked row is just noise. */}
+        {(isClosed ? pans.filter(p => appliedIds[p.id]) : pans).map(p => {
           const r = rows[p.id] || {};
           return (
             <div key={p.id} style={{ padding: '13px 20px', borderTop: '1px solid var(--border)', background: r.on ? 'var(--brand-tint)' : 'transparent' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 11, cursor: 'pointer' }}>
-                <input type="checkbox" checked={!!r.on} onChange={e => setRow(p.id, { on: e.target.checked })}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 11, cursor: isClosed ? 'default' : 'pointer' }}>
+                <input type="checkbox" checked={!!r.on} disabled={isClosed}
+                  onChange={e => setRow(p.id, { on: e.target.checked })}
                   style={{ width: 18, height: 18, accentColor: 'var(--brand)', flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{p.holder}</div>
@@ -572,9 +576,9 @@ function MemberApply({ ipo, session }) {
                     // keep it selectable rather than silently reassigning it.
                     const options = MEMBER_CATS.includes(r.category) ? MEMBER_CATS : [...MEMBER_CATS, r.category];
                     return (
-                      <select value={r.category}
+                      <select value={r.category} disabled={isClosed}
                         onChange={e => { const cat = e.target.value; setRow(p.id, { category: cat, lots: defaultLots(cat) }); }}
-                        style={{ border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 13, fontWeight: 600, background: 'var(--surface)', color: 'var(--ink)' }}>
+                        style={{ border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 13, fontWeight: 600, background: 'var(--surface)', color: 'var(--ink)', opacity: isClosed ? .75 : 1, cursor: isClosed ? 'default' : 'pointer' }}>
                         {options.map(c => {
                           if (c === 'SME') return <option key={c} value={c}>SME (legacy)</option>;
                           const isSmeRetail = isSME && c === 'Retail';
@@ -588,8 +592,9 @@ function MemberApply({ ipo, session }) {
                   })()}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                     <span style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 600 }}>Lots</span>
-                    <input type="number" min="1" value={r.lots} onChange={e => setRow(p.id, { lots: e.target.value })}
-                      style={{ width: 64, border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 13, fontWeight: 700, background: 'var(--surface)', color: 'var(--ink)' }} />
+                    <input type="number" min="1" value={r.lots} disabled={isClosed}
+                      onChange={e => setRow(p.id, { lots: e.target.value })}
+                      style={{ width: 64, border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 13, fontWeight: 700, background: 'var(--surface)', color: 'var(--ink)', opacity: isClosed ? .75 : 1 }} />
                   </div>
                   {lotSize > 0 && (
                     <span style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 600 }}>
@@ -606,16 +611,25 @@ function MemberApply({ ipo, session }) {
       </div>
 
       <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
-        {err && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{err}</div>}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 600 }}>
-            {selected.length} PAN{selected.length === 1 ? '' : 's'} selected
+        {isClosed ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 600 }}>
+            <Icon name="lock" size={14} style={{ flexShrink: 0 }} />
+            Locked in — contact the admin if this needs to change.
           </div>
-          <Button variant="primary" icon="check" onClick={submit}
-            style={{ opacity: saving || !selected.length ? .6 : 1, pointerEvents: saving || !selected.length ? 'none' : 'auto' }}>
-            {saving ? 'Saving…' : (hasExisting ? 'Update application' : 'Submit application')}
-          </Button>
-        </div>
+        ) : (
+          <>
+            {err && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{err}</div>}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-3)', fontWeight: 600 }}>
+                {selected.length} PAN{selected.length === 1 ? '' : 's'} selected
+              </div>
+              <Button variant="primary" icon="check" onClick={submit}
+                style={{ opacity: saving || !selected.length ? .6 : 1, pointerEvents: saving || !selected.length ? 'none' : 'auto' }}>
+                {saving ? 'Saving…' : (hasExisting ? 'Update application' : 'Submit application')}
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </Card>
 
