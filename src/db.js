@@ -94,6 +94,29 @@ function txIpos(rows) {
   });
 }
 
+// Sorts a list of transformed IPOs newest-first, in place, for every screen
+// that wants "recent IPOs" (dashboard's allotment-history chart, the admin
+// IPO list's sort order, etc). NOT the same as the `ipos` table fetch's own
+// `.order('open_date', { ascending: false })` -- that alone isn't enough:
+// open_date is a nullable column, and Postgres's default null ordering for
+// DESC is NULLS FIRST, so any IPO missing an open_date (easy to leave blank
+// when adding one quickly, or before the admin has dated it) would jump to
+// the very front, ahead of genuinely recent dated IPOs. This re-sorts by the
+// best date actually available per IPO, falling back all the way to
+// created_at (never null) so an undated IPO still lands by when it was
+// added instead of at either extreme.
+function sortIposByRecency(ipos) {
+  ipos.sort(function(a, b) {
+    var da = toDateOrNull(a.listDate || a.allotDate || a.close || a.open || a.createdAt);
+    var db = toDateOrNull(b.listDate || b.allotDate || b.close || b.open || b.createdAt);
+    if (!da && !db) return 0;
+    if (!da) return 1;
+    if (!db) return -1;
+    return db - da;
+  });
+  return ipos;
+}
+
 // Live IPO status. The stored ipos.status is left at its 'Upcoming' default and
 // never maintained, so we compute the real phase from actual activity first
 // (allotment results marked or a profit pool exists ⇒ it has listed), then fall
@@ -552,7 +575,8 @@ function computeKpis() {
 function computeCharts() {
   var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-  // Per-IPO profit breakdown (every IPO the pool applied to, newest first).
+  // Per-IPO profit breakdown (every IPO the pool applied to, newest first --
+  // relies on `_ipos` already being sorted that way; see sortIposByRecency()).
   // Net is summed per (ipo, category) via PoolMath so it matches the pool
   // screen and the settlement ledger exactly.
   var profitByIpo = _ipos
@@ -980,7 +1004,7 @@ async function loadDB() {
 
   _members     = txMembers    (membersRes.data  || []);
   _pans        = txPans       (pansRes.data     || []);
-  _ipos        = txIpos       (iposRes.data     || []);
+  _ipos        = sortIposByRecency(txIpos(iposRes.data || []));
   _allotments  = txAllotments (allotRes.data    || []);
   _pools       = txPools      (poolsRes.data    || []);
   _settlements = txSettlements(settleRes.data   || []);
@@ -1121,6 +1145,7 @@ async function loadDB() {
         if (error) throw error;
         var transformed = txIpos([data])[0];
         _ipos.unshift(transformed);
+        sortIposByRecency(_ipos);   // a backdated open/list date shouldn't jump the queue
         window.DB.ipos = _ipos;
         return transformed;
       },
