@@ -382,7 +382,9 @@ function Dashboard({ navigate, tweaks }) {
               <div style={{ fontSize: 15, fontWeight: 800, marginTop: 5 }}>
                 {memberRanks[0].name}{memberRanks[0].you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
               </div>
-              <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{memberRanks[0].pans} PAN{memberRanks[0].pans === 1 ? '' : 's'} applied</div>
+              <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
+                {memberRanks[0].iposApplied} IPO{memberRanks[0].iposApplied === 1 ? '' : 's'} · {memberRanks[0].pans} PAN{memberRanks[0].pans === 1 ? '' : 's'} applied
+              </div>
             </div>
             <div style={{ textAlign: 'right' }}>
               <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(memberRanks[0].profit)}</div>
@@ -398,6 +400,7 @@ function Dashboard({ navigate, tweaks }) {
                 <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {m.name}{m.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
                 </div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 1 }}>{m.iposApplied} IPO{m.iposApplied === 1 ? '' : 's'}</div>
                 <div style={{ marginTop: 5 }}><Meter value={m.profit} max={topProfit} color="var(--profit)" style={{ height: 6 }} /></div>
               </div>
               <div style={{ textAlign: 'right' }}>
@@ -437,7 +440,7 @@ function Dashboard({ navigate, tweaks }) {
               <div style={{ fontSize: 15, fontWeight: 800, marginTop: 5 }}>
                 {panRanks[0].holder}{panRanks[0].you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
               </div>
-              <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{panRanks[0].memberName} · {panRanks[0].apps} application{panRanks[0].apps === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{panRanks[0].memberName} · {panRanks[0].apps} IPO{panRanks[0].apps === 1 ? '' : 's'}</div>
             </div>
             <div style={{ textAlign: 'right' }}>
               <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(panRanks[0].profit)}</div>
@@ -454,6 +457,7 @@ function Dashboard({ navigate, tweaks }) {
                   {p.holder}{p.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
                   <span style={{ fontWeight: 600, color: 'var(--ink-3)' }}> · {p.memberName}</span>
                 </div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 1 }}>{p.apps} IPO{p.apps === 1 ? '' : 's'}</div>
                 <div style={{ marginTop: 5 }}><Meter value={p.profit} max={topPanProfit} color="var(--profit)" style={{ height: 6 }} /></div>
               </div>
               <div style={{ textAlign: 'right' }}>

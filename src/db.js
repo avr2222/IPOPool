@@ -675,10 +675,24 @@ function computeMemberProfits() {
     return p ? p.member : null;
   };
 
-  var totals = {};   // memberId -> { profit, solo, pans }
+  var totals = {};   // memberId -> { profit, solo, pans, iposSet }
+  var touch = function(mid) {
+    if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0, iposSet: {} };
+    return totals[mid];
+  };
+
   _ipos.forEach(function(ipo) {
     var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
     if (!ipoAllots.length) return;
+
+    // Every member with at least one PAN in this IPO counts it once toward
+    // their "IPOs applied" total, regardless of how many PANs/categories --
+    // computed from the raw applications, not the per-category loop below,
+    // so it can't double-count a member with 2 PANs in the same IPO.
+    ipoAllots.forEach(function(a) {
+      var mid = panToMember(a.pan);
+      if (mid != null) touch(mid).iposSet[ipo.id] = true;
+    });
 
     var cats = {};
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
@@ -688,27 +702,25 @@ function computeMemberProfits() {
       var bonuses = PoolMath.memberBonuses(cats[cat], r.stcg, r.brok, r.bonus, panToMember);
       var solos   = PoolMath.panSolo(cats[cat], r.stcg, r.brok);
       Object.keys(shares).forEach(function(mid) {
-        if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0 };
-        totals[mid].profit += shares[mid].share;
-        totals[mid].pans   += shares[mid].pans;
+        touch(mid).profit += shares[mid].share;
+        touch(mid).pans   += shares[mid].pans;
       });
       Object.keys(bonuses).forEach(function(mid) {
-        if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0 };
-        totals[mid].profit += bonuses[mid];
+        touch(mid).profit += bonuses[mid];
       });
       cats[cat].forEach(function(a) {
         var mid = panToMember(a.pan);
         if (mid == null) return;
-        if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0 };
-        totals[mid].solo += (solos[a.id] || 0);
+        touch(mid).solo += (solos[a.id] || 0);
       });
     });
   });
 
   return _members.map(function(m) {
-    var t = totals[m.id] || { profit: 0, solo: 0, pans: 0 };
+    var t = totals[m.id] || { profit: 0, solo: 0, pans: 0, iposSet: {} };
     return { id: m.id, name: m.name, avatarHue: m.avatarHue, you: m.you,
-             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), pans: t.pans };
+             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), pans: t.pans,
+             iposApplied: Object.keys(t.iposSet).length };
   }).sort(function(a, b){ return b.profit - a.profit; });
 }
 
