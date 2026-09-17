@@ -44,6 +44,105 @@ function UpiPay({ receiver, amount, payer, note }) {
   );
 }
 
+// Renders a minimal-transfer plan (payer→receiver arrows + UPI-pay) plus its
+// net-position breakdown. Shared by the single-IPO view and the combined-
+// across-pools view below, driven by whichever transferPlan/netPositions the
+// caller passes in, so the two presentations can never drift apart.
+function TransferPlanCard({ D, f, transferPlan, netPositions, title, subtitle, naiveCount, footnote }) {
+  if (!transferPlan.length) return null;
+  return (
+    <Card pad={0}>
+      <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 14.5, fontWeight: 800 }}>{title}</div>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
+            {subtitle} · {transferPlan.length} transfer{transferPlan.length !== 1 ? 's' : ''} needed
+          </div>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600 }}>
+          (without pooling this would be {naiveCount} transfers)
+        </div>
+      </div>
+      <div style={{ padding: '8px 18px 18px' }}>
+        {transferPlan.map((t, i) => {
+          const payer    = D.member(t.from);
+          const receiver = D.member(t.to);
+          if (!payer || !receiver) return null;
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: i < transferPlan.length - 1 ? '1px solid var(--border)' : 'none', flexWrap: 'wrap' }}>
+              {/* Payer */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 130 }}>
+                <Avatar name={payer.name} hue={payer.avatarHue} size={36} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{payer.name}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--loss)', fontWeight: 600 }}>Pays</div>
+                </div>
+              </div>
+
+              {/* Arrow + amount */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, minWidth: 120 }}>
+                <div className="num" style={{ fontSize: 18, fontWeight: 900, color: 'var(--ink)' }}>{f(t.amount)}</div>
+                <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 0 }}>
+                  <div style={{ flex: 1, height: 2, background: 'var(--border)' }} />
+                  <div style={{ fontSize: 16, color: 'var(--ink-3)', lineHeight: 1, padding: '0 4px' }}>→</div>
+                  <div style={{ flex: 1, height: 2, background: 'var(--brand)', opacity: .5 }} />
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>UPI / bank</div>
+              </div>
+
+              {/* Receiver */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 130, justifyContent: 'flex-end', flexDirection: 'row-reverse' }}>
+                <Avatar name={receiver.name} hue={receiver.avatarHue} size={36} />
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{receiver.name}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--profit)', fontWeight: 600 }}>Receives</div>
+                </div>
+              </div>
+
+              {/* Pay action (wraps to its own line) */}
+              <div style={{ flexBasis: '100%', display: 'flex', justifyContent: 'flex-end' }}>
+                <UpiPay receiver={receiver} payer={payer} amount={t.amount} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Net-position breakdown */}
+      <div style={{ borderTop: '1px solid var(--border)', padding: '12px 18px' }}>
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Net positions</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {(() => {
+            const entries = Object.entries(netPositions).filter(([id]) => D.member(id));
+            const maxBar  = Math.max(1, ...entries.map(([, net]) => Math.abs(net)));
+            return entries.map(([id, net]) => {
+              const m       = D.member(id);
+              const isPayer = net > 0;
+              const barPct  = Math.abs(net) / maxBar * 100;
+              return (
+                <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Avatar name={m.name} hue={m.avatarHue} size={28} />
+                  <div style={{ width: 100, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{m.name}</div>
+                  <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 999, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: barPct + '%', background: isPayer ? 'var(--loss)' : 'var(--profit)', borderRadius: 999 }} />
+                  </div>
+                  <div className="num" style={{ fontSize: 13, fontWeight: 800, color: isPayer ? 'var(--loss)' : 'var(--profit)', width: 90, textAlign: 'right' }}>
+                    {isPayer ? '−' : '+'}{f(Math.abs(net))}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--ink-3)', width: 50, textAlign: 'right', fontWeight: 600 }}>
+                    {isPayer ? 'pays' : 'gets'}
+                  </div>
+                </div>
+              );
+            });
+          })()}
+        </div>
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--ink-3)' }}>{footnote}</div>
+      </div>
+    </Card>
+  );
+}
+
 function SettlementLedger({ navigate, id }) {
   const D = window.DB;
   const f = (n, o) => D.fmtINR(n, o);
@@ -163,20 +262,26 @@ function SettlementLedger({ navigate, id }) {
     return Object.keys(expected).some(k => !seen.has(k));
   }, [rows, ipoAllots, categories, selIpo]);
 
-  // ── Net position per member (single source for both the transfer plan and the
-  // net-position display, so the two can never drift) ───────────────────────────
+  // ── Net position per member, for ONE IPO's pool (single source for both the
+  // transfer plan and the net-position display, so the two can never drift,
+  // and shared by the combined-across-pools view further below so it can't
+  // compute this any differently either) ─────────────────────────────────────
   //   received = gross gain from their allotted PANs (money already in account)
   //   holdings = received − their pro-rata share of total cost (STCG + brokerage)
   //   owed     = their pooled entitlement (sum of settlement shares)
   //   net = holdings − owed   (+ve → overfunded → PAYER, −ve → RECEIVER)
   // Cost is attributed proportional to gross gain, so Σ net = 0 (payers exactly
   // fund receivers) — unlike a bare (1 − STCG%) which omits brokerage.
-  const netPositions = useMemo(() => {
+  const computeNetPositionsForIpo = (ipoId) => {
+    const allots     = D.allotments.filter(a => a.ipo === ipoId);
+    const settleRows = D.settlements.filter(s => s.ipo === ipoId);
+    const cats       = CAT_ORDER.filter(c => allots.some(a => a.category === c));
+
     const memberOwed = {};
-    rows.forEach(r => { memberOwed[r.member] = (memberOwed[r.member] || 0) + r.amount; });
+    settleRows.forEach(r => { memberOwed[r.member] = (memberOwed[r.member] || 0) + r.amount; });
 
     const memberReceived = {};
-    ipoAllots.forEach(a => {
+    allots.forEach(a => {
       if (a.status !== 'allotted') return;
       const panObj = D.pan(a.pan);
       if (panObj) memberReceived[panObj.member] = (memberReceived[panObj.member] || 0) + (a.gain || 0);
@@ -189,9 +294,9 @@ function SettlementLedger({ navigate, id }) {
     // available from their gross receipt. Using (gross − net) would double
     // count it as a cost AND as part of owed, throwing off every transfer.
     let grossTotal = 0, costTotal = 0;
-    categories.forEach(cat => {
-      const cr = window.ratesForCategory(selIpo, cat);
-      const m = window.PoolMath.category(ipoAllots.filter(a => a.category === cat), cr.stcg, cr.brok, cr.bonus);
+    cats.forEach(cat => {
+      const cr = window.ratesForCategory(ipoId, cat);
+      const m = window.PoolMath.category(allots.filter(a => a.category === cat), cr.stcg, cr.brok, cr.bonus);
       grossTotal += m.gross; costTotal += (m.stcgAmt + cr.brok);
     });
 
@@ -206,16 +311,21 @@ function SettlementLedger({ navigate, id }) {
       out[id] = Math.round((received - costShare) - (memberOwed[id] || 0));
     });
     return out;
-  }, [rows, ipoAllots, categories, stcgRate, brokerageAmt, bonusRate]);
+  };
+  const netPositions = useMemo(() => computeNetPositionsForIpo(selIpo),
+    [rows, ipoAllots, categories, stcgRate, brokerageAmt, bonusRate, selIpo]);
 
-  // ── Minimal-transfer plan: greedy debt minimization over the net positions ────
-  const transferPlan = useMemo(() => {
-    const netPos = Object.entries(netPositions)
+  // ── Minimal-transfer plan: greedy debt minimization over a set of net
+  // positions. Matches the largest payer against the largest receiver
+  // repeatedly -- fewest possible transfers to bring every balance to zero.
+  // Shared by the single-IPO and combined-across-pools views.
+  const greedyTransferPlan = (netPos) => {
+    const entries = Object.entries(netPos)
       .filter(([, net]) => Math.abs(net) > 5)
       .map(([id, net]) => ({ id, net }));
 
-    const payers    = netPos.filter(n => n.net > 0).map(n => ({ ...n, bal: n.net  })).sort((a,b) => b.bal - a.bal);
-    const receivers = netPos.filter(n => n.net < 0).map(n => ({ ...n, bal: -n.net })).sort((a,b) => b.bal - a.bal);
+    const payers    = entries.filter(n => n.net > 0).map(n => ({ ...n, bal: n.net  })).sort((a,b) => b.bal - a.bal);
+    const receivers = entries.filter(n => n.net < 0).map(n => ({ ...n, bal: -n.net })).sort((a,b) => b.bal - a.bal);
 
     const transfers = [];
     let pi = 0, ri = 0;
@@ -228,7 +338,8 @@ function SettlementLedger({ navigate, id }) {
       if (r.bal < 5) ri++;
     }
     return transfers;
-  }, [netPositions]);
+  };
+  const transferPlan = useMemo(() => greedyTransferPlan(netPositions), [netPositions]);
 
   const [tab,     setTab]     = useState('All');
   const [marking, setMarking] = useState(null);
@@ -343,6 +454,25 @@ function SettlementLedger({ navigate, id }) {
   const combinedTotal   = combinedRows.reduce((s, r) => s + r.amount, 0);
   const combinedPending = combinedRows.filter(r => r.status === 'Pending').reduce((s, r) => s + r.amount, 0);
   const combinedPaid    = combinedRows.filter(r => r.status === 'Paid').reduce((s, r) => s + r.amount, 0);
+
+  // Net positions are additive per member across independent pools, so summing
+  // each open IPO's own net position (computeNetPositionsForIpo, same math the
+  // single-IPO view uses) and running the SAME greedy minimizer once over the
+  // combined totals gives the fewest transfers across all open IPOs together —
+  // not just the smallest transfers within each IPO separately, which is what
+  // running the per-IPO plan N times would otherwise leave you with (the same
+  // two people can end up paying each other in one IPO and getting paid back
+  // in another, when one combined transfer would have covered both).
+  const combinedNetPositions = (() => {
+    const totals = {};
+    activeTabPools.forEach(p => {
+      Object.entries(computeNetPositionsForIpo(p.ipo)).forEach(([mid, net]) => {
+        totals[mid] = (totals[mid] || 0) + net;
+      });
+    });
+    return totals;
+  })();
+  const combinedTransferPlan = greedyTransferPlan(combinedNetPositions);
 
   const settlePoolsIfComplete = async () => {
     for (const p of activeTabPools) {
@@ -540,6 +670,15 @@ function SettlementLedger({ navigate, id }) {
               </div>
             </Card>
           )}
+
+          {/* Combined minimal transfer plan: net positions summed across every
+              open pool, then minimized once -- not the per-IPO plan run N
+              times, which can leave the same two people paying each other in
+              one IPO and getting paid back in another. */}
+          <TransferPlanCard D={D} f={f} transferPlan={combinedTransferPlan} netPositions={combinedNetPositions}
+            title="Minimal transfer plan" subtitle={`Fewest transfers to settle all balances across ${activeTabPools.length} pools`}
+            naiveCount={combinedRows.filter(r => r.amount !== 0).length}
+            footnote="Net = allotted gain − STCG − charges − pool share, combined across every open IPO (each using its own finalized rates). Positive = owes others; negative = owed by others." />
         </>
       )}
 
@@ -758,99 +897,10 @@ function SettlementLedger({ navigate, id }) {
       </Card>}
 
       {/* ── Minimal Transfer Plan ── */}
-      {transferPlan.length > 0 && (
-        <Card pad={0}>
-          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 14.5, fontWeight: 800 }}>Minimal transfer plan</div>
-              <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
-                Fewest transfers to settle all balances · {transferPlan.length} transfer{transferPlan.length !== 1 ? 's' : ''} needed
-              </div>
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600 }}>
-              (without pooling this would be {rows.filter(r => r.amount !== 0).length} transfers)
-            </div>
-          </div>
-          <div style={{ padding: '8px 18px 18px' }}>
-            {transferPlan.map((t, i) => {
-              const payer    = D.member(t.from);
-              const receiver = D.member(t.to);
-              if (!payer || !receiver) return null;
-              return (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: i < transferPlan.length - 1 ? '1px solid var(--border)' : 'none', flexWrap: 'wrap' }}>
-                  {/* Payer */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 130 }}>
-                    <Avatar name={payer.name} hue={payer.avatarHue} size={36} />
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>{payer.name}</div>
-                      <div style={{ fontSize: 11.5, color: 'var(--loss)', fontWeight: 600 }}>Pays</div>
-                    </div>
-                  </div>
-
-                  {/* Arrow + amount */}
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, minWidth: 120 }}>
-                    <div className="num" style={{ fontSize: 18, fontWeight: 900, color: 'var(--ink)' }}>{f(t.amount)}</div>
-                    <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 0 }}>
-                      <div style={{ flex: 1, height: 2, background: 'var(--border)' }} />
-                      <div style={{ fontSize: 16, color: 'var(--ink-3)', lineHeight: 1, padding: '0 4px' }}>→</div>
-                      <div style={{ flex: 1, height: 2, background: 'var(--brand)', opacity: .5 }} />
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>UPI / bank</div>
-                  </div>
-
-                  {/* Receiver */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 130, justifyContent: 'flex-end', flexDirection: 'row-reverse' }}>
-                    <Avatar name={receiver.name} hue={receiver.avatarHue} size={36} />
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>{receiver.name}</div>
-                      <div style={{ fontSize: 11.5, color: 'var(--profit)', fontWeight: 600 }}>Receives</div>
-                    </div>
-                  </div>
-
-                  {/* Pay action (wraps to its own line) */}
-                  <div style={{ flexBasis: '100%', display: 'flex', justifyContent: 'flex-end' }}>
-                    <UpiPay receiver={receiver} payer={payer} amount={t.amount} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Net-position breakdown */}
-          <div style={{ borderTop: '1px solid var(--border)', padding: '12px 18px' }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Net positions</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {(() => {
-                const entries = Object.entries(netPositions).filter(([id]) => D.member(id));
-                const maxBar  = Math.max(1, ...entries.map(([, net]) => Math.abs(net)));
-                return entries.map(([id, net]) => {
-                  const m       = D.member(id);
-                  const isPayer = net > 0;
-                  const barPct  = Math.abs(net) / maxBar * 100;
-                  return (
-                    <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <Avatar name={m.name} hue={m.avatarHue} size={28} />
-                      <div style={{ width: 100, fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{m.name}</div>
-                      <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 999, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: barPct + '%', background: isPayer ? 'var(--loss)' : 'var(--profit)', borderRadius: 999 }} />
-                      </div>
-                      <div className="num" style={{ fontSize: 13, fontWeight: 800, color: isPayer ? 'var(--loss)' : 'var(--profit)', width: 90, textAlign: 'right' }}>
-                        {isPayer ? '−' : '+'}{f(Math.abs(net))}
-                      </div>
-                      <div style={{ fontSize: 11.5, color: 'var(--ink-3)', width: 50, textAlign: 'right', fontWeight: 600 }}>
-                        {isPayer ? 'pays' : 'gets'}
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--ink-3)' }}>
-              Net = allotted gain − {stcgRate}% STCG − charges − pool share. Positive = owes others; negative = owed by others.
-            </div>
-          </div>
-        </Card>
-      )}
+      <TransferPlanCard D={D} f={f} transferPlan={transferPlan} netPositions={netPositions}
+        title="Minimal transfer plan" subtitle="Fewest transfers to settle all balances"
+        naiveCount={rows.filter(r => r.amount !== 0).length}
+        footnote={`Net = allotted gain − ${stcgRate}% STCG − charges − pool share. Positive = owes others; negative = owed by others.`} />
       </>
       )}
 
