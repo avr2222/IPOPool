@@ -94,6 +94,29 @@ function txIpos(rows) {
   });
 }
 
+// Sorts a list of transformed IPOs newest-first, in place, for every screen
+// that wants "recent IPOs" (dashboard's allotment-history chart, the admin
+// IPO list's sort order, etc). NOT the same as the `ipos` table fetch's own
+// `.order('open_date', { ascending: false })` -- that alone isn't enough:
+// open_date is a nullable column, and Postgres's default null ordering for
+// DESC is NULLS FIRST, so any IPO missing an open_date (easy to leave blank
+// when adding one quickly, or before the admin has dated it) would jump to
+// the very front, ahead of genuinely recent dated IPOs. This re-sorts by the
+// best date actually available per IPO, falling back all the way to
+// created_at (never null) so an undated IPO still lands by when it was
+// added instead of at either extreme.
+function sortIposByRecency(ipos) {
+  ipos.sort(function(a, b) {
+    var da = toDateOrNull(a.listDate || a.allotDate || a.close || a.open || a.createdAt);
+    var db = toDateOrNull(b.listDate || b.allotDate || b.close || b.open || b.createdAt);
+    if (!da && !db) return 0;
+    if (!da) return 1;
+    if (!db) return -1;
+    return db - da;
+  });
+  return ipos;
+}
+
 // Live IPO status. The stored ipos.status is left at its 'Upcoming' default and
 // never maintained, so we compute the real phase from actual activity first
 // (allotment results marked or a profit pool exists ⇒ it has listed), then fall
@@ -552,7 +575,8 @@ function computeKpis() {
 function computeCharts() {
   var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-  // Per-IPO profit breakdown (every IPO the pool applied to, newest first).
+  // Per-IPO profit breakdown (every IPO the pool applied to, newest first --
+  // relies on `_ipos` already being sorted that way; see sortIposByRecency()).
   // Net is summed per (ipo, category) via PoolMath so it matches the pool
   // screen and the settlement ledger exactly.
   var profitByIpo = _ipos
@@ -651,10 +675,24 @@ function computeMemberProfits() {
     return p ? p.member : null;
   };
 
-  var totals = {};   // memberId -> { profit, solo, pans }
+  var totals = {};   // memberId -> { profit, solo, pans, iposSet }
+  var touch = function(mid) {
+    if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0, iposSet: {} };
+    return totals[mid];
+  };
+
   _ipos.forEach(function(ipo) {
     var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
     if (!ipoAllots.length) return;
+
+    // Every member with at least one PAN in this IPO counts it once toward
+    // their "IPOs applied" total, regardless of how many PANs/categories --
+    // computed from the raw applications, not the per-category loop below,
+    // so it can't double-count a member with 2 PANs in the same IPO.
+    ipoAllots.forEach(function(a) {
+      var mid = panToMember(a.pan);
+      if (mid != null) touch(mid).iposSet[ipo.id] = true;
+    });
 
     var cats = {};
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
@@ -664,27 +702,25 @@ function computeMemberProfits() {
       var bonuses = PoolMath.memberBonuses(cats[cat], r.stcg, r.brok, r.bonus, panToMember);
       var solos   = PoolMath.panSolo(cats[cat], r.stcg, r.brok);
       Object.keys(shares).forEach(function(mid) {
-        if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0 };
-        totals[mid].profit += shares[mid].share;
-        totals[mid].pans   += shares[mid].pans;
+        touch(mid).profit += shares[mid].share;
+        touch(mid).pans   += shares[mid].pans;
       });
       Object.keys(bonuses).forEach(function(mid) {
-        if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0 };
-        totals[mid].profit += bonuses[mid];
+        touch(mid).profit += bonuses[mid];
       });
       cats[cat].forEach(function(a) {
         var mid = panToMember(a.pan);
         if (mid == null) return;
-        if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0 };
-        totals[mid].solo += (solos[a.id] || 0);
+        touch(mid).solo += (solos[a.id] || 0);
       });
     });
   });
 
   return _members.map(function(m) {
-    var t = totals[m.id] || { profit: 0, solo: 0, pans: 0 };
+    var t = totals[m.id] || { profit: 0, solo: 0, pans: 0, iposSet: {} };
     return { id: m.id, name: m.name, avatarHue: m.avatarHue, you: m.you,
-             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), pans: t.pans };
+             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), pans: t.pans,
+             iposApplied: Object.keys(t.iposSet).length };
   }).sort(function(a, b){ return b.profit - a.profit; });
 }
 
@@ -980,7 +1016,7 @@ async function loadDB() {
 
   _members     = txMembers    (membersRes.data  || []);
   _pans        = txPans       (pansRes.data     || []);
-  _ipos        = txIpos       (iposRes.data     || []);
+  _ipos        = sortIposByRecency(txIpos(iposRes.data || []));
   _allotments  = txAllotments (allotRes.data    || []);
   _pools       = txPools      (poolsRes.data    || []);
   _settlements = txSettlements(settleRes.data   || []);
@@ -1121,6 +1157,7 @@ async function loadDB() {
         if (error) throw error;
         var transformed = txIpos([data])[0];
         _ipos.unshift(transformed);
+        sortIposByRecency(_ipos);   // a backdated open/list date shouldn't jump the queue
         window.DB.ipos = _ipos;
         return transformed;
       },

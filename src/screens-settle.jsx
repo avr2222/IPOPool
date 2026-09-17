@@ -314,16 +314,100 @@ function SettlementLedger({ navigate, id }) {
     a.click();
   };
 
+  // ── Combined settlement across every open ("Distributing") pool ───────────────
+  // Several small IPOs each owing a member ₹15-45 is the common case for a
+  // family pool -- this rolls every PENDING row for a member, across every
+  // non-settled pool, into one figure/UPI-pay/mark-paid action instead of
+  // making the admin repeat the same small transfer per IPO. Not memoized --
+  // recomputed straight from D.settlements/D.pools each render (cheap at this
+  // pool's scale), and `combineTick` below forces a re-render after a
+  // combined mutation since mutating window.DB.settlements in place doesn't
+  // itself trigger one.
+  const [combineMode, setCombineMode] = useState(false);
+  const [combineTick, setCombineTick] = useState(0);   // eslint-disable-line no-unused-vars
+  const poolsWithPending = activeTabPools.filter(p => D.settlements.some(s => s.ipo === p.ipo && s.status === 'Pending'));
+  const combinedRows = (() => {
+    const poolIds = new Set(activeTabPools.map(p => p.ipo));
+    return D.settlements.filter(s => poolIds.has(s.ipo));
+  })();
+  const combinedPendingGroups = (() => {
+    const map = {};
+    combinedRows.forEach(r => {
+      if (r.status !== 'Pending') return;
+      if (!map[r.member]) map[r.member] = { member: r.member, pending: 0, ipoAmounts: {} };
+      map[r.member].pending += r.amount;
+      map[r.member].ipoAmounts[r.ipo] = (map[r.member].ipoAmounts[r.ipo] || 0) + r.amount;
+    });
+    return Object.values(map).sort((a, b) => Math.abs(b.pending) - Math.abs(a.pending));
+  })();
+  const combinedTotal   = combinedRows.reduce((s, r) => s + r.amount, 0);
+  const combinedPending = combinedRows.filter(r => r.status === 'Pending').reduce((s, r) => s + r.amount, 0);
+  const combinedPaid    = combinedRows.filter(r => r.status === 'Paid').reduce((s, r) => s + r.amount, 0);
+
+  const settlePoolsIfComplete = async () => {
+    for (const p of activeTabPools) {
+      const poolRows = D.settlements.filter(s => s.ipo === p.ipo);
+      if (poolRows.length > 0 && poolRows.every(s => s.status === 'Paid')) {
+        await D.mutations.markPoolSettled(p.ipo);
+      }
+    }
+  };
+
+  const [combineMarking, setCombineMarking] = useState(null);   // memberId being marked, or 'all'
+  const markMemberCombinedPaid = async (memberId) => {
+    setCombineMarking(memberId); setPayErr('');
+    try {
+      const pending = combinedRows.filter(r => r.member === memberId && r.status === 'Pending');
+      for (const r of pending) await D.mutations.markSettlementPaid(r.id);
+      await settlePoolsIfComplete();
+      setCombineTick(t => t + 1);
+    } catch (e) { console.error(e); setPayErr(e.message || 'Could not mark this payment as paid.'); }
+    setCombineMarking(null);
+  };
+  const markAllCombinedPaid = async () => {
+    const pending = combinedRows.filter(r => r.status === 'Pending');
+    if (!pending.length) return;
+    setCombineMarking('all'); setPayErr('');
+    try {
+      for (const r of pending) await D.mutations.markSettlementPaid(r.id);
+      await settlePoolsIfComplete();
+      setCombineTick(t => t + 1);
+    } catch (e) { console.error(e); setPayErr(e.message || 'Could not mark these payments as paid.'); }
+    setCombineMarking(null);
+  };
+
+  const exportCombinedCSV = () => {
+    const esc = v => `"${String(v).replace(/"/g,'""')}"`;
+    const header = ['Member', 'IPO', 'Category', 'PANs', 'Amount', 'Status', 'Date'];
+    const lines = combinedRows.map(r => {
+      const m  = D.member(r.member);
+      const ip = D.ipo(r.ipo);
+      return [m?.name || r.member, ip?.short || r.ipo, r.category, r.pans, r.amount, r.status, r.date || ''].map(esc).join(',');
+    });
+    const csv = [header.map(esc).join(','), ...lines].join('\n');
+    const a = document.createElement('a');
+    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = `settlements-combined-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
 
       {/* IPO switcher */}
       <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2, alignItems: 'center' }}>
+        {poolsWithPending.length > 1 && (
+          <button onClick={() => setCombineMode(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 'var(--r-md)', flexShrink: 0, border: '1px solid', borderColor: combineMode ? 'var(--brand)' : 'var(--border)', background: combineMode ? 'var(--brand-tint)' : 'var(--surface)', cursor: 'pointer' }}>
+            <Icon name="ledger" size={16} color={combineMode ? 'var(--brand)' : 'var(--ink-3)'} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: combineMode ? 'var(--brand)' : 'var(--ink)' }}>Combine pending ({poolsWithPending.length})</span>
+          </button>
+        )}
         {visiblePools.map(p => {
           const ip = D.ipo(p.ipo);
-          const active = p.ipo === selIpo;
+          const active = !combineMode && p.ipo === selIpo;
           return (
-            <button key={p.ipo} onClick={() => { setSelIpo(p.ipo); setRows(D.settlements.filter(s => s.ipo === p.ipo)); setTab('All'); }}
+            <button key={p.ipo} onClick={() => { setCombineMode(false); setSelIpo(p.ipo); setRows(D.settlements.filter(s => s.ipo === p.ipo)); setTab('All'); }}
               style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 'var(--r-md)', flexShrink: 0, border: '1px solid', borderColor: active ? 'var(--brand)' : 'var(--border)', background: active ? 'var(--brand-tint)' : 'var(--surface)', cursor: 'pointer', opacity: p.status === 'Settled' ? 0.72 : 1 }}>
               <IpoLogo ipo={ip} size={24} />
               <span style={{ fontSize: 13, fontWeight: 700, color: active ? 'var(--brand)' : 'var(--ink)' }}>{ip.short}</span>
@@ -357,10 +441,112 @@ function SettlementLedger({ navigate, id }) {
         </div>
       )}
 
+      {/* ── Combined settlement across every open pool ── */}
+      {combineMode && (
+        <>
+          <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14 }}>
+            <Card pad={18}>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-2)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
+                <Icon name="wallet" size={15} color={combinedTotal >= 0 ? 'var(--profit)' : 'var(--loss)'} /> Total across {activeTabPools.length} pools
+              </div>
+              <div className="num" style={{ fontSize: 28, fontWeight: 800, color: combinedTotal >= 0 ? 'var(--profit)' : 'var(--loss)', margin: '8px 0 2px' }}>{f(combinedTotal)}</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{combinedRows.length} settlement rows · {activeTabPools.map(p => D.ipo(p.ipo).short).join(' · ')}</div>
+            </Card>
+            <Card pad={18}>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-2)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
+                <Icon name="clock" size={15} color="var(--warn)" /> Still to transfer
+              </div>
+              <div className="num" style={{ fontSize: 28, fontWeight: 800, color: 'var(--warn)', margin: '8px 0 2px' }}>{f(combinedPending)}</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{combinedPendingGroups.length} member{combinedPendingGroups.length !== 1 ? 's' : ''} to pay</div>
+            </Card>
+            <Card pad={18}>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-2)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
+                <Icon name="check" size={15} color="var(--brand)" /> Transferred
+              </div>
+              <div className="num" style={{ fontSize: 28, fontWeight: 800, margin: '8px 0 2px' }}>{f(combinedPaid)}</div>
+              <Meter value={combinedRows.filter(r => r.status === 'Paid').length} max={combinedRows.length} color="var(--brand)" style={{ marginTop: 8 }} />
+            </Card>
+          </div>
+
+          {combinedPendingGroups.length === 0 ? (
+            <Card pad={28} style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+              <Icon name="check" size={26} color="var(--profit)" />
+              <div style={{ fontSize: 14.5, fontWeight: 800 }}>Nothing pending across these {activeTabPools.length} pools</div>
+              <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>Every member is already settled in each open IPO.</div>
+            </Card>
+          ) : (
+            <Card pad={0}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: 14.5, fontWeight: 800 }}>Combined distribution ledger</div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>One pending total per member, summed across every open IPO</div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Button variant="primary" size="sm" icon="check" onClick={markAllCombinedPaid}
+                    style={{ opacity: combineMarking ? .7 : 1, pointerEvents: combineMarking ? 'none' : 'auto' }}>
+                    {combineMarking === 'all' ? 'Marking…' : `Mark all paid (${combinedPendingGroups.length})`}
+                  </Button>
+                  <Button variant="ghost" size="sm" icon="download" onClick={exportCombinedCSV}>Export</Button>
+                </div>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+                  <thead>
+                    <tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                      <th style={{ padding: '11px 18px', textAlign: 'left' }}>Member</th>
+                      <th style={{ padding: '11px 18px', textAlign: 'left' }}>IPOs</th>
+                      <th style={{ padding: '11px 18px', textAlign: 'right' }}>Amount</th>
+                      <th style={{ padding: '11px 18px', textAlign: 'right' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {combinedPendingGroups.map(g => {
+                      const m = D.member(g.member);
+                      if (!m) return null;
+                      const breakdown = Object.entries(g.ipoAmounts).map(([ipoId, amt]) => `${D.ipo(ipoId).short} ${f(amt, { compact: true })}`).join(' · ');
+                      const ipoCount = Object.keys(g.ipoAmounts).length;
+                      return (
+                        <tr key={g.member} style={{ borderTop: '1px solid var(--border)' }}>
+                          <td style={{ padding: '12px 18px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <Avatar name={m.name} hue={m.avatarHue} size={32} />
+                              <div>
+                                <div style={{ fontSize: 13.5, fontWeight: 700 }}>{m.name}</div>
+                                <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{m.email}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td style={{ padding: '12px 18px' }}>
+                            <div style={{ fontSize: 12.5, color: 'var(--ink-2)', fontWeight: 600 }}>{ipoCount} IPO{ipoCount === 1 ? '' : 's'}</div>
+                            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>{breakdown}</div>
+                          </td>
+                          <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: g.pending < 0 ? 'var(--loss)' : 'var(--ink)' }}>{f(g.pending)}</td>
+                          <td style={{ padding: '12px 18px', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+                              {g.pending > 0 && <UpiPay receiver={m} amount={g.pending} note={`IPO settlement · ${ipoCount} pools`} />}
+                              <button
+                                onClick={() => markMemberCombinedPaid(g.member)}
+                                disabled={!!combineMarking}
+                                style={{ border: '1px solid var(--profit)', borderRadius: 'var(--r-sm)', padding: '5px 12px', background: 'var(--profit-soft)', color: 'var(--profit)', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', opacity: combineMarking ? .6 : 1 }}>
+                                {combineMarking === g.member ? '…' : (g.pending < 0 ? '✓ Mark settled' : '✓ Mark paid')}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+
       {/* Stale-ledger warning. Deliberately does NOT rewrite the amounts: some
           of these rows may already have been paid, so correcting them silently
           would be worse than saying so and letting the admin re-finalize. */}
-      {ledgerStale && (
+      {!combineMode && ledgerStale && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 20px', background: 'var(--loss-soft)', borderRadius: 'var(--r-lg)', border: '1px solid var(--loss)' }}>
           <Icon name="refresh" size={18} color="var(--loss)" />
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -373,6 +559,8 @@ function SettlementLedger({ navigate, id }) {
         </div>
       )}
 
+      {!combineMode && (
+      <>
       {/* Settled completion banner */}
       {isSettled && rows.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 20px', background: 'var(--profit-soft)', borderRadius: 'var(--r-lg)', border: '1px solid var(--profit)' }}>
@@ -662,6 +850,8 @@ function SettlementLedger({ navigate, id }) {
             </div>
           </div>
         </Card>
+      )}
+      </>
       )}
 
     </div>
