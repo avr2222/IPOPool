@@ -12,6 +12,26 @@ function SettingsScreen() {
   const [idleRate,   setIdleRate]   = useState(() => parseFloat(localStorage.getItem('idleRate')    || '2.5'));
   const [saved,      setSaved]      = useState(false);
 
+  // Repairs settlement_pans (migration 011's per-PAN settlement breakdown)
+  // for any IPO finalized before that table existed -- those pools have real
+  // `settlements` rows (so the member portal's family total is correct) but
+  // no per-PAN rows, so a member's "Individual profit" table there silently
+  // undercounts. Safe to run any time: createSettlements never touches an
+  // already-Paid settlement's amount, this only adds/fixes the breakdown.
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState(null);
+  const [backfillErr, setBackfillErr] = useState('');
+  const runBackfill = async () => {
+    setBackfilling(true); setBackfillErr(''); setBackfillResult(null);
+    try {
+      const result = await D.mutations.backfillSettlementBreakdown();
+      setBackfillResult(result);
+    } catch (e) {
+      setBackfillErr(e.message || 'Backfill failed.');
+    }
+    setBackfilling(false);
+  };
+
   const handleSave = () => {
     localStorage.setItem('stcg',       String(stcg));
     localStorage.setItem('brokerage',  String(brokerage));
@@ -161,6 +181,36 @@ function SettingsScreen() {
               />
               <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--ink-2)' }}>%</span>
             </div>
+          </Field>
+        </div>
+      </Card>
+
+      {/* Data repair */}
+      <Card pad={24}>
+        <SectionTitle title="Data repair" sub="One-time fixes for data written before a feature existed" />
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <Field
+            label="Backfill per-PAN settlement breakdown"
+            sub="IPOs finalized before the per-PAN breakdown feature shipped have a correct family total but no per-PAN split, so a member's 'Individual profit' table on their own portal can add up to less than the total shown above it. Safe to run any time — it never changes an already-paid amount, it only fills in or corrects the per-PAN breakdown."
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <Button variant="ghost" icon={backfilling ? undefined : 'refresh'} onClick={runBackfill}
+                style={{ opacity: backfilling ? .7 : 1, pointerEvents: backfilling ? 'none' : 'auto' }}>
+                {backfilling ? 'Repairing…' : 'Backfill now'}
+              </Button>
+              {backfillResult && (
+                <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
+                  Checked {backfillResult.total} IPO{backfillResult.total === 1 ? '' : 's'} · repaired {backfillResult.updated} · {backfillResult.skipped} had nothing to distribute
+                  {backfillResult.failed.length > 0 && <span style={{ color: 'var(--loss)', fontWeight: 700 }}> · {backfillResult.failed.length} failed</span>}
+                </span>
+              )}
+            </div>
+            {backfillErr && <div style={{ color: 'var(--loss)', fontSize: 12.5, fontWeight: 600, marginTop: 6 }}>{backfillErr}</div>}
+            {backfillResult && backfillResult.failed.length > 0 && (
+              <div style={{ marginTop: 6, fontSize: 12, color: 'var(--loss)' }}>
+                {backfillResult.failed.map(f => `${D.ipo(f.ipo)?.short || f.ipo}: ${f.message}`).join(' · ')}
+              </div>
+            )}
           </Field>
         </div>
       </Card>

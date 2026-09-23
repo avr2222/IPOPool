@@ -147,42 +147,17 @@ function ProfitPooling({ navigate, id }) {
   const totalNet      = catData.reduce((s, d) => s + d.net, 0);
   const totalBonus    = catData.reduce((s, d) => s + d.bonusTotal, 0);
 
-  // Build settlement rows from computed catData and save to Supabase
+  // Build settlement rows and save to Supabase. Delegates the actual row/
+  // panRow computation to window.buildFinalizePayload (db.js) -- the same
+  // function the Settings screen's backfill repair reuses for every
+  // historical IPO -- so this screen's live Finalize can never compute a
+  // different payload than that repair does.
   const finalizePayouts = async () => {
     setFinalizing(true); setFinalErr('');
     try {
-      const rows = [];
-      const panRows = [];
-      catData.forEach(d => {
-        // A category whose pool net rounds to 0 (e.g. brokerage ate the rest)
-        // can still owe personal bonuses -- the bonus is carved out BEFORE
-        // net, not from what's left of it -- so this no longer skips the
-        // whole category just because d.net <= 0.
-        Object.keys(d.memberShares).forEach(memberId => {
-          const poolShare = d.memberShares[memberId]?.share || 0;
-          const bonus     = d.memberBonuses[memberId] || 0;
-          const pans      = d.memberShares[memberId]?.pans || 0;
-          const amount    = poolShare + bonus;
-          // A LOSS (amount < 0) gets a settlement row too, same as a profit
-          // -- only an exact ₹0 share is skipped, there's nothing to settle.
-          if (amount !== 0) rows.push({ memberId, category: d.cat, pans, amount: Math.round(amount), bonusAmount: Math.round(bonus) });
-        });
-        // Per-PAN breakdown (migration 011) -- same PoolMath split, one row
-        // per PAN instead of aggregated by family, so a member logging into
-        // their own portal can see each individual PAN's pool share + bonus,
-        // not just the family total.
-        const panAmounts = window.PoolMath.panAmounts(d.catAllots, stcgRate, d.brok, d.bonusRate);
-        const panBonuses = window.PoolMath.panBonuses(d.catAllots, stcgRate, d.brok, d.bonusRate);
-        d.catAllots.forEach(a => {
-          const poolShare = panAmounts[a.id] || 0;
-          const bonus     = panBonuses[a.id] || 0;
-          if (poolShare !== 0 || bonus !== 0) {
-            panRows.push({ panId: a.pan, category: d.cat, poolShare: Math.round(poolShare), bonusAmount: Math.round(bonus) });
-          }
-        });
-      });
-      if (rows.length === 0) { setFinalErr('Nothing to distribute yet.'); setFinalizing(false); return; }
-      await D.mutations.createSettlements(sel, rows, { stcgRate, brokerage: brokerageAmt, bonusRate }, panRows);
+      const payload = window.buildFinalizePayload(sel);
+      if (payload.rows.length === 0) { setFinalErr('Nothing to distribute yet.'); setFinalizing(false); return; }
+      await D.mutations.createSettlements(sel, payload.rows, payload.rates, payload.panRows);
       navigate('settlement', { id: sel });
     } catch (e) {
       setFinalErr(e.message || 'Failed to save settlements.');
