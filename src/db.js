@@ -512,6 +512,55 @@ function ratesForCategory(ipoId, category) {
   return { stcg: r.stcg, brok: brokerageByCategory(ipoId, r.brok)[category] || 0, bonus: r.bonus };
 }
 
+// Recomputes exactly what Finalize payouts (screens-pool.jsx) would write for
+// one IPO right now: family-level settlement rows (rows), the per-PAN
+// breakdown (panRows, migration 011's settlement_pans table), and the rates
+// used. Extracted here, rather than duplicated in screens-pool.jsx, so the
+// live Finalize button and backfillSettlementBreakdown() below (which
+// re-finalizes every historical IPO to fill in settlement_pans rows that
+// predate migration 011, or a finalize that ran before panRows existed) can
+// never compute this differently.
+function buildFinalizePayload(ipoId) {
+  var ipoAllots  = _allotments.filter(function(a){ return a.ipo === ipoId; });
+  var CAT_ORDER  = ['SME', 'Retail', 'sHNI', 'bHNI'];
+  var categories = CAT_ORDER.filter(function(c){ return ipoAllots.some(function(a){ return a.category === c; }); });
+  var panToMember = function(panId) {
+    var p = _pans.find(function(x){ return x.id === panId; });
+    return p ? p.member : null;
+  };
+  var r0 = ratesForIpo(ipoId);
+
+  var rows = [], panRows = [];
+  categories.forEach(function(cat) {
+    var catAllots = ipoAllots.filter(function(a){ return a.category === cat; });
+    var cr = ratesForCategory(ipoId, cat);
+    var memberShares  = PoolMath.memberShares(catAllots, cr.stcg, cr.brok, panToMember, cr.bonus);
+    var memberBonuses = PoolMath.memberBonuses(catAllots, cr.stcg, cr.brok, cr.bonus, panToMember);
+    Object.keys(memberShares).forEach(function(memberId) {
+      var poolShare = (memberShares[memberId] && memberShares[memberId].share) || 0;
+      var bonus     = memberBonuses[memberId] || 0;
+      var pans      = (memberShares[memberId] && memberShares[memberId].pans) || 0;
+      var amount    = poolShare + bonus;
+      // A LOSS (amount < 0) gets a settlement row too -- only an exact ₹0
+      // share is skipped, mirroring finalizePayouts exactly.
+      if (amount !== 0) rows.push({ memberId: memberId, category: cat, pans: pans, amount: Math.round(amount), bonusAmount: Math.round(bonus) });
+    });
+
+    var panAmounts = PoolMath.panAmounts(catAllots, cr.stcg, cr.brok, cr.bonus);
+    var panBonuses = PoolMath.panBonuses(catAllots, cr.stcg, cr.brok, cr.bonus);
+    catAllots.forEach(function(a) {
+      var poolShare = panAmounts[a.id] || 0;
+      var bonus     = panBonuses[a.id] || 0;
+      if (poolShare !== 0 || bonus !== 0) {
+        panRows.push({ panId: a.pan, category: cat, poolShare: Math.round(poolShare), bonusAmount: Math.round(bonus) });
+      }
+    });
+  });
+
+  return { rows: rows, panRows: panRows, rates: { stcgRate: r0.stcg, brokerage: r0.brok, bonusRate: r0.bonus } };
+}
+window.buildFinalizePayload = buildFinalizePayload;
+
 // Total REALISED profit across a set of allotments, grouped by (ipo,
 // category) so STCG and brokerage are applied per category exactly as the
 // pool screen does. Each group is priced with its own IPO's finalized rates
@@ -1330,7 +1379,7 @@ async function loadDB() {
       //          shows the same numbers on every device.
       // Already-Paid settlements are preserved: re-finalizing never resets a
       // payment back to Pending or changes its recorded amount/date.
-      async createSettlements(ipoId, rows, rates, panRows) {
+      async createSettlements(ipoId, rows, rates, panRows, opts) {
         // Upsert WITHOUT status: a fresh pool gets the column default
         // ('Distributing'), and re-finalizing never downgrades a Settled pool —
         // the real status is reconciled from the ledger rows at the end.
@@ -1437,7 +1486,38 @@ async function loadDB() {
           await window.sb.from('profit_pools')
             .update({ status: allPaid ? 'Settled' : 'Distributing' }).eq('id', pool.id);
         }
+        // Callers doing many of these in a row (backfillSettlementBreakdown)
+        // pass skipReload and reload once at the end themselves, rather than
+        // this refetching the entire dataset after every single IPO.
+        if (!opts || !opts.skipReload) await loadDB();
+      },
+
+      // One-time repair: re-runs Finalize's exact computation (buildFinalizePayload)
+      // for every IPO that already has settlement rows, so ones finalized before
+      // migration 011 added the per-PAN settlement_pans table (or before this app
+      // started passing panRows) get it backfilled. Without this, a member's
+      // "Individual profit" breakdown on the member portal silently omits any
+      // IPO whose settlement predates that table -- the family total (read from
+      // `settlements`, always complete) stays correct, but the per-PAN rows next
+      // to it undercount. Already-Paid settlement amounts are never touched
+      // (createSettlements preserves them); this only ever adds/corrects the
+      // per-PAN breakdown and any still-Pending rows.
+      async backfillSettlementBreakdown() {
+        var ipoIds = Array.from(new Set(_settlements.map(function(s){ return s.ipo; })));
+        var result = { total: ipoIds.length, updated: 0, skipped: 0, failed: [] };
+        for (var i = 0; i < ipoIds.length; i++) {
+          var ipoId = ipoIds[i];
+          try {
+            var payload = buildFinalizePayload(ipoId);
+            if (!payload.rows.length) { result.skipped++; continue; }
+            await window.DB.mutations.createSettlements(ipoId, payload.rows, payload.rates, payload.panRows, { skipReload: true });
+            result.updated++;
+          } catch (e) {
+            result.failed.push({ ipo: ipoId, message: (e && e.message) || String(e) });
+          }
+        }
         await loadDB();
+        return result;
       },
 
       async markSettlementPaid(settlementId) {
