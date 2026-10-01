@@ -30,7 +30,7 @@ function friendlyDbError(e) {
 // ── Shared modal wrapper ──────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (
-    <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 16 }}>
+    <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 65, display: 'grid', placeItems: 'center', padding: 16 }}>
       <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 460, boxShadow: 'var(--sh-pop)', overflow: 'hidden', animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 15, fontWeight: 800 }}>{title}</div>
@@ -332,6 +332,10 @@ function AdminPanel() {
   // Bulk paste of registrar results (see parseAllotmentPaste in db.js)
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
+  // Allotments window: search / sort / status filter for long applicant lists.
+  const [allotQuery,  setAllotQuery]  = useState('');
+  const [allotSort,   setAllotSort]   = useState('name');
+  const [allotFilter, setAllotFilter] = useState('all');
 
   const setChange = (id, field, val) =>
     setChanges(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: val } }));
@@ -1016,7 +1020,7 @@ function AdminPanel() {
         };
 
         return (
-          <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 12 }}>
+          <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 65, display: 'grid', placeItems: 'center', padding: 12 }}>
             <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 760, boxShadow: 'var(--sh-pop)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
               {/* Header */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -1364,7 +1368,33 @@ function AdminPanel() {
         const countBy = s => vAllots.filter(a => (changes[a.id]?.status ?? a.status) === s).length;
         const allotted = countBy('allotted'), notAllot = countBy('not_allotted'), pending = countBy('pending');
         const hasDirty = vAllots.some(a => changes[a.id]);
-        const discardView = () => { setViewIpoId(null); setChanges({}); setSaved(false); setViewListPrice(''); setPasteOpen(false); setPasteText(''); };
+        const discardView = () => { setViewIpoId(null); setChanges({}); setSaved(false); setViewListPrice(''); setPasteOpen(false); setPasteText(''); setAllotQuery(''); setAllotFilter('all'); };
+
+        // ── Search / sort / filter (display only — counts, Save and "All got"
+        // still cover every applicant). Sorting uses the SAVED status and
+        // category, not unsaved edits, so a row doesn't jump away the moment
+        // you tap ✓ or change its category.
+        const rowInfo = (a) => {
+          const p = D.pan(a.pan), m = p ? D.member(p.member) : null;
+          return { holder: p?.holder || '', member: m?.name || '', pan: p?.pan || '' };
+        };
+        const CAT_RANK = { bHNI: 0, sHNI: 1, Retail: 2, SME: 3 };
+        const STATUS_RANK = { pending: 0, allotted: 1, not_allotted: 2 };
+        const byName = (a, b) => rowInfo(a).holder.localeCompare(rowInfo(b).holder, 'en', { sensitivity: 'base', numeric: true });
+        const ALLOT_SORTS = {
+          name:     ['Name A–Z',      byName],
+          member:   ['Member',        (a, b) => rowInfo(a).member.localeCompare(rowInfo(b).member, 'en', { sensitivity: 'base', numeric: true }) || byName(a, b)],
+          category: ['Category',      (a, b) => (CAT_RANK[a.category] ?? 9) - (CAT_RANK[b.category] ?? 9) || byName(a, b)],
+          status:   ['Status',        (a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || byName(a, b)],
+          lots:     ['Lots applied',  (a, b) => (b.lots || 1) - (a.lots || 1) || byName(a, b)],
+        };
+        const curStatus = a => changes[a.id]?.status ?? a.status;
+        const ALLOT_FILTERS = [['all', 'All'], ['pending', '— Pending'], ['allotted', '✓ Got'], ['not_allotted', '✗ Not got']];
+        const aq = allotQuery.trim().toLowerCase();
+        const shownAllots = vAllots
+          .filter(a => allotFilter === 'all' || curStatus(a) === allotFilter)
+          .filter(a => { if (!aq) return true; const r = rowInfo(a); return (r.holder + ' ' + r.member + ' ' + r.pan).toLowerCase().includes(aq); })
+          .sort((ALLOT_SORTS[allotSort] || ALLOT_SORTS.name)[1]);
         // Typed-in results are only in memory until Save — don't drop them on a stray tap.
         const closeView = () => hasDirty
           ? askConfirm('Discard unsaved changes?',
@@ -1448,7 +1478,7 @@ function AdminPanel() {
         };
 
         return (
-          <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 12 }}>
+          <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 65, display: 'grid', placeItems: 'center', padding: 12 }}>
             <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 680, boxShadow: 'var(--sh-pop)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
 
               {/* Header */}
@@ -1553,6 +1583,31 @@ function AdminPanel() {
                 </div>
               )}
 
+              {/* Search / sort / filter */}
+              {vAllots.length > 1 && (
+                <div style={{ padding: '8px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
+                  <input value={allotQuery} onChange={e => setAllotQuery(e.target.value)} placeholder="Search name, member or PAN…" aria-label="Search applicants"
+                    style={{ ...inputSt, flex: '1 1 160px', maxWidth: 230, padding: '6px 10px', fontSize: 13 }} />
+                  <select value={allotSort} onChange={e => setAllotSort(e.target.value)} aria-label="Sort applicants"
+                    style={{ ...inputSt, width: 'auto', padding: '6px 8px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+                    {Object.entries(ALLOT_SORTS).map(([k, [label]]) => <option key={k} value={k}>Sort: {label}</option>)}
+                  </select>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {ALLOT_FILTERS.map(([k, label]) => {
+                      const n = k === 'all' ? vAllots.length : vAllots.filter(a => curStatus(a) === k).length;
+                      const on = allotFilter === k;
+                      return (
+                        <button key={k} onClick={() => setAllotFilter(k)} style={{
+                          border: '1px solid ' + (on ? 'var(--brand)' : 'var(--border)'), borderRadius: 999,
+                          background: on ? 'var(--brand-tint)' : 'var(--surface)', color: on ? 'var(--brand)' : 'var(--ink-2)',
+                          fontSize: 11.5, fontWeight: 700, padding: '4px 9px', cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}>{label} <span style={{ opacity: .7 }}>{n}</span></button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Body — editable table */}
               <div style={{ overflowY: 'auto', flex: 1 }}>
                 {vAllots.length === 0 ? (
@@ -1575,7 +1630,13 @@ function AdminPanel() {
                       </tr>
                     </thead>
                     <tbody>
-                      {vAllots.map(a => {
+                      {shownAllots.length === 0 && (
+                        <tr><td colSpan={6} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+                          No applicants match.{' '}
+                          <button onClick={() => { setAllotQuery(''); setAllotFilter('all'); }} style={{ border: 'none', background: 'none', color: 'var(--brand)', fontWeight: 700, cursor: 'pointer', padding: 0 }}>Show all</button>
+                        </td></tr>
+                      )}
+                      {shownAllots.map(a => {
                         const panObj  = D.pan(a.pan);
                         const mem     = panObj ? D.member(panObj.member) : null;
                         const category  = changes[a.id]?.category  ?? a.category;
@@ -1674,12 +1735,12 @@ function AdminPanel() {
               </div>
 
               {/* Footer */}
-              <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: 'var(--surface-2)', gap: 10 }}>
+              <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, background: 'var(--surface-2)', gap: 10, flexWrap: 'wrap' }}>
                 <div style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
                   {saved && <span style={{ color: 'var(--profit)', fontWeight: 700 }}>✓ Changes saved</span>}
                   {!saved && hasDirty && <span style={{ color: 'var(--warn)', fontWeight: 600 }}>Unsaved changes</span>}
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', marginLeft: 'auto' }}>
                   <Button variant="ghost" icon="plus" onClick={() => openAddApplicants(viewIpoId)}>Add applicants</Button>
                   <Button variant="ghost" onClick={closeView}>Close</Button>
                   {vAllots.length > 0 && (
