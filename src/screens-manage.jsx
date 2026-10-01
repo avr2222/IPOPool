@@ -103,7 +103,7 @@ function PanManagement() {
 
       <div className="pan-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px,1fr))', gap: 14 }}>
         {pans.map((p, i) => {
-          const apps = D.allotments.filter(a => a.pan === p.id).length;
+          const apps = D.allotsOfPan(p.id).length;
           const relColors = { Self: 'brand', Spouse: 'info', Father: 'mainboard', Mother: 'sme', Son: 'profit', Daughter: 'profit', Brother: 'warn', Sister: 'warn', Friend: 'neutral' };
           return (
             <Card key={p.id} pad={0} style={{ overflow: 'hidden' }}>
@@ -276,7 +276,7 @@ function AdminPanel() {
   };
 
   const openAddApplicants = (ipoId) => {
-    const alreadyApplied = new Set(D.allotments.filter(a => a.ipo === ipoId).map(a => a.pan));
+    const alreadyApplied = new Set(D.allotsOfIpo(ipoId).map(a => a.pan));
     // Default category is always 'Retail' -- SME and Mainboard share the same
     // Retail/sHNI/bHNI category set since SEBI's 1 Jul 2025 rule, 'SME' is not
     // a selectable category value (see cats in the modal below).
@@ -427,7 +427,7 @@ function AdminPanel() {
   const deleteMember = (id, name) => {
     const memberPans   = D.pans.filter(p => p.member === id);
     const panIds       = memberPans.map(p => p.id);
-    const allotCount   = D.allotments.filter(a => panIds.includes(a.pan)).length;
+    const allotCount   = panIds.reduce((n, id) => n + D.allotsOfPan(id).length, 0);
     const memberSetts  = D.settlements.filter(s => s.member === id);
     const paidCount    = memberSetts.filter(s => s.status === 'Paid').length;
 
@@ -485,8 +485,8 @@ function AdminPanel() {
   // Rows carry their applied/allotted counts so those columns are sortable too.
   const ipoRows = ipos.map(ip => ({
     ...ip,
-    applied:  D.allotments.filter(a => a.ipo === ip.id).length,
-    allotted: D.allotments.filter(a => a.ipo === ip.id && a.status === 'allotted').length,
+    applied:  D.allotsOfIpo(ip.id).length,
+    allotted: D.allotsOfIpo(ip.id).filter(a => a.status === 'allotted').length,
   }));
   // Default (no active sort): newest-added IPO on top (created_at), falling back
   // to the most relevant date, then name — so the master list leads with new IPOs.
@@ -887,7 +887,7 @@ function AdminPanel() {
         const memberProfit = (D.memberProfits || []).find(mp => mp.id === m.id) || { profit: 0, soloProfit: 0, pans: 0 };
         const panProfitMap = {};
         (D.panProfits || []).forEach(pp => { panProfitMap[pp.id] = pp; });
-        const memberAllots = D.allotments.filter(a => mPanIds.includes(a.pan));
+        const memberAllots = mPanIds.flatMap(id => D.allotsOfPan(id));
         const appliedCount  = memberAllots.length;
         const allottedCount = memberAllots.filter(a => a.status === 'allotted').length;
         const allotRate     = appliedCount > 0 ? Math.round(allottedCount / appliedCount * 100) : 0;
@@ -1248,7 +1248,7 @@ function AdminPanel() {
         const vIsSME    = vIpo?.type === 'SME';
         const vCatLabel = (c) => (vIsSME && c === 'Retail') ? 'Individual' : (c === 'SME' ? 'SME (legacy)' : c);
         const vCats     = ['Retail', 'sHNI', 'bHNI'];
-        const vAllots = D.allotments.filter(a => a.ipo === viewIpoId);
+        const vAllots = D.allotsOfIpo(viewIpoId);
         const countBy = s => vAllots.filter(a => (changes[a.id]?.status ?? a.status) === s).length;
         const allotted = countBy('allotted'), notAllot = countBy('not_allotted'), pending = countBy('pending');
         const hasDirty = vAllots.some(a => changes[a.id]);

@@ -182,7 +182,7 @@ function SettlementLedger({ navigate, id }) {
   const stcgRate     = rates.stcg;
   const brokerageAmt = rates.brok;
   const bonusRate    = rates.bonus;
-  const ipoAllots    = D.allotments.filter(a => a.ipo === selIpo);
+  const ipoAllots    = D.allotsOfIpo(selIpo);
   const CAT_ORDER    = ['SME', 'Retail', 'sHNI', 'bHNI'];
   const categories   = CAT_ORDER.filter(c => ipoAllots.some(a => a.category === c));
   const panToMember  = (panId) => { const p = D.pan(panId); return p ? p.member : null; };
@@ -273,7 +273,7 @@ function SettlementLedger({ navigate, id }) {
   // Cost is attributed proportional to gross gain, so Σ net = 0 (payers exactly
   // fund receivers) — unlike a bare (1 − STCG%) which omits brokerage.
   const computeNetPositionsForIpo = (ipoId) => {
-    const allots     = D.allotments.filter(a => a.ipo === ipoId);
+    const allots     = D.allotsOfIpo(ipoId);
     const settleRows = D.settlements.filter(s => s.ipo === ipoId);
     const cats       = CAT_ORDER.filter(c => allots.some(a => a.category === c));
 
@@ -517,7 +517,7 @@ function SettlementLedger({ navigate, id }) {
     const csv = [header.map(esc).join(','), ...lines].join('\n');
     const a = document.createElement('a');
     a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-    a.download = `settlements-combined-${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `settlements-combined-${window.localDateStr()}.csv`;
     a.click();
   };
 

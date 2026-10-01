@@ -59,7 +59,10 @@ section('remainder distribution (must not regress)');
   }
 }
 
-// ── 1.5  losses are visible per PAN but never distributed as a pay-in ───────
+// ── 1.5  losses are visible per PAN and shared like a profit ────────────────
+// A pooled loss is split evenly across every applicant the same way a profit
+// is (b1340ac "Share pooled losses the same way profits are shared") -- it
+// used to be floored at zero, which made the loss silently vanish.
 section('1.5  loss handling');
 {
   check('rowGain reports a real loss', rowGain('allotted', 90, 100, 50) === -500,
@@ -73,10 +76,20 @@ section('1.5  loss handling');
   const losing = [row(1,'allotted',-5000), row(2,'allotted',-3000)];
   const m = PoolMath.category(losing, 15, 0);
   check('a losing pool reports its true gross', m.gross === -8000, 'gross=' + m.gross);
-  check('a losing pool never distributes a negative amount', m.net === 0, 'net=' + m.net);
+  check('a losing pool distributes its whole loss', m.net === -8000, 'net=' + m.net);
   check('no STCG is charged on a loss', m.stcgAmt === 0, 'stcg=' + m.stcgAmt);
+  check('no bonus is carved out of a loss', m.bonusTotal === 0,
+    'bonus=' + PoolMath.category(losing, 15, 0, 10).bonusTotal);
   const amounts = PoolMath.panAmounts(losing, 15, 0);
-  check('no PAN is asked to pay in', Object.values(amounts).every(v => v >= 0));
+  const vals = Object.values(amounts);
+  check('the loss is split evenly across every PAN', vals.every(v => v === -4000), JSON.stringify(amounts));
+  // Odd loss: per-PAN shares still sum exactly to net and differ by <= 1 rupee.
+  const odd = [row(1,'allotted',-1000), row(2,'not_allotted',0), row(3,'allotted',0)];
+  const om = PoolMath.category(odd, 15, 0);
+  const oa = Object.values(PoolMath.panAmounts(odd, 15, 0));
+  check('an uneven loss still sums exactly to net', oa.reduce((a, b) => a + b, 0) === om.net,
+    'sum=' + oa.reduce((a, b) => a + b, 0) + ' net=' + om.net);
+  check('an uneven loss differs by at most 1 rupee per PAN', Math.max(...oa) - Math.min(...oa) <= 1, JSON.stringify(oa));
 }
 
 // ── STCG still applies normally on a profit ─────────────────────────────────
@@ -216,6 +229,8 @@ section('1.4  brokerage charged once per IPO, not once per category');
     const p = Promise.resolve({ data: tables[name] || [], error: null });
     p.select = () => qb(name); p.order = () => qb(name); p.eq = () => qb(name);
     p.in = () => qb(name); p.limit = () => qb(name);
+    // loadDB pages every table (Supabase caps a response at 1000 rows).
+    p.range = (from, to) => Promise.resolve({ data: (tables[name] || []).slice(from, to + 1), error: null });
     return p;
   };
   win.sb = { from: qb, auth: { getUser: async () => ({ data: { user: null } }) } };
