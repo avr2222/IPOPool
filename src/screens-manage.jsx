@@ -1252,7 +1252,13 @@ function AdminPanel() {
         const countBy = s => vAllots.filter(a => (changes[a.id]?.status ?? a.status) === s).length;
         const allotted = countBy('allotted'), notAllot = countBy('not_allotted'), pending = countBy('pending');
         const hasDirty = vAllots.some(a => changes[a.id]);
-        const closeView = () => { setViewIpoId(null); setChanges({}); setSaved(false); setViewListPrice(''); setPasteOpen(false); setPasteText(''); };
+        const discardView = () => { setViewIpoId(null); setChanges({}); setSaved(false); setViewListPrice(''); setPasteOpen(false); setPasteText(''); };
+        // Typed-in results are only in memory until Save — don't drop them on a stray tap.
+        const closeView = () => hasDirty
+          ? askConfirm('Discard unsaved changes?',
+              `You've changed ${vAllots.filter(a => changes[a.id]).length} row(s) in ${vIpo?.name || 'this IPO'} without saving. Close and lose them?`,
+              discardView, true, 'Discard')
+          : discardView();
         const lp = parseFloat(viewListPrice) || 0;
         const issuePrice = vIpo?.bandHigh || 0;
         const autoGain = (sharesVal) => lp > 0 && issuePrice > 0 ? window.rowGain('allotted', lp, issuePrice, sharesVal) : null;
