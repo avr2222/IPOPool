@@ -14,8 +14,6 @@ function SettingsScreen() {
   const [saved,      setSaved]      = useState(false);
   const [saving,     setSaving]     = useState(false);
   const [saveErr,    setSaveErr]    = useState('');
-  // Extra market holidays for IPO date auto-fill (on top of the built-in NSE list).
-  const [holidays,   setHolidays]   = useState(() => window.poolSettingsRaw?.().market_holidays || '');
 
   // Repairs settlement_pans (migration 011's per-PAN settlement breakdown)
   // for any IPO finalized before that table existed -- those pools have real
@@ -40,7 +38,7 @@ function SettingsScreen() {
   const handleSave = async () => {
     setSaving(true); setSaveErr('');
     try {
-      await D.mutations.saveSettings({ stcg, brokerage, allotBonus: bonusRate, idleRate, marketHolidays: holidays });
+      await D.mutations.saveSettings({ stcg, brokerage, allotBonus: bonusRate, idleRate });
       setSaved(true);
       setTimeout(() => setSaved(false), 2200);
     } catch (e) { setSaveErr(e.message || 'Could not save settings.'); }
@@ -92,28 +90,6 @@ function SettingsScreen() {
             </div>
           ))}
         </div>
-      </Card>
-
-      {/* Market holidays — used to auto-fill IPO dates from the close date */}
-      <Card pad={24}>
-        <SectionTitle title="Market holidays" sub="Skipped when IPO open, allotment and listing dates are filled in from the close date" />
-        {(() => {
-          const builtIn = Object.keys(window.NSE_HOLIDAYS || {}).sort();
-          const years = [...new Set(builtIn.map(d => d.slice(0, 4)))];
-          const bad = (holidays.match(/[^\s,;]+/g) || []).filter(t => !/^\d{4}-\d{2}-\d{2}$/.test(t) || !window.parseLocalDate(t));
-          return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
-              <div style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.5 }}>
-                NSE's {years.join(', ')} holidays are built in ({builtIn.length} weekdays). NSE publishes next year's list every December — add those dates here, one per line or comma-separated, as <span className="num">YYYY-MM-DD</span>. You can add a sudden closure (e.g. an election day) the same way.
-              </div>
-              <textarea value={holidays} onChange={e => setHolidays(e.target.value)} rows={4}
-                placeholder={'2027-01-26\n2027-03-22'}
-                style={{ ...inputStyle, fontSize: 13, fontWeight: 600, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', resize: 'vertical' }} />
-              {bad.length > 0 && <div style={{ fontSize: 12, color: 'var(--warn)', fontWeight: 700 }}>Not a valid date: {bad.slice(0, 4).join(', ')} — use YYYY-MM-DD.</div>}
-              <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>Saved with the button at the bottom of this page.</div>
-            </div>
-          );
-        })()}
       </Card>
 
       {/* Tax & costs */}

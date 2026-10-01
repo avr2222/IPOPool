@@ -61,7 +61,7 @@ const inputSt = {
 
 // ── Confirm dialog (replaces browser confirm()) ───────────────────────────────
 // Entering the close date fills open / allotment / listing from SEBI's T+3
-// timeline (window.ipoTimeline, db.js), skipping weekends and NSE holidays.
+// timeline (window.ipoTimeline, db.js), skipping weekends and fixed-date holidays.
 // The filled dates stay editable for the odd issue that runs longer.
 function withAutoDates(form, closeDate) {
   const t = closeDate && window.ipoTimeline ? window.ipoTimeline(closeDate) : null;
@@ -72,9 +72,8 @@ function AutoDateNote({ closeDate }) {
   const t = closeDate && window.ipoTimeline ? window.ipoTimeline(closeDate) : null;
   return (
     <div style={{ fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.5, marginTop: -4 }}>
-      Enter the close date — open, allotment and listing fill in automatically (T+3, skipping weekends and NSE holidays). You can still change them.
+      Enter the close date — open, allotment and listing fill in automatically (T+3, skipping Saturdays, Sundays and fixed-date holidays like 26 Jan, 15 Aug, 2 Oct). Festival holidays aren't included, so adjust those weeks by hand.
       {t?.closeWarning && <div style={{ color: 'var(--warn)', fontWeight: 700, marginTop: 3 }}>⚠ {t.closeWarning} — check the close date.</div>}
-      {t && !t.holidaysKnown && <div style={{ color: 'var(--warn)', fontWeight: 700, marginTop: 3 }}>⚠ No market holidays are set for {closeDate.slice(0, 4)} yet — add them in Settings so these dates skip holidays.</div>}
     </div>
   );
 }

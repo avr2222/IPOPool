@@ -164,40 +164,24 @@ window.localDateStr = localDateStr;
 
 // ── IPO timeline from the close date (SEBI T+3) ─────────────────────────────
 // Since 1 Dec 2023 every mainboard and SME IPO follows T+3, counted in
-// exchange working days with T = the issue's close date:
+// working days with T = the issue's close date:
 //   open      = T-2  (an issue must stay open at least 3 working days)
 //   allotment = T+1  (basis of allotment finalised)
 //   listing   = T+3
-// Weekends and NSE equity trading holidays are skipped. NSE announces each
-// year's list in December; anything not built in here can be added under
-// Settings → Market holidays (stored in pool_settings.market_holidays).
-var NSE_HOLIDAYS = {
-  // NSE equity segment trading holidays, 2026 (weekday ones only).
-  '2026-01-15': 'Municipal Corporation Election - Maharashtra',
-  '2026-01-26': 'Republic Day',
-  '2026-03-03': 'Holi',
-  '2026-03-26': 'Shri Ram Navami',
-  '2026-03-31': 'Shri Mahavir Jayanti',
-  '2026-04-03': 'Good Friday',
-  '2026-04-14': 'Dr. Baba Saheb Ambedkar Jayanti',
-  '2026-05-01': 'Maharashtra Day',
-  '2026-05-28': 'Bakri Id',
-  '2026-06-26': 'Muharram',
-  '2026-09-14': 'Ganesh Chaturthi',
-  '2026-10-02': 'Mahatma Gandhi Jayanti',
-  '2026-10-20': 'Dussehra',
-  '2026-11-10': 'Diwali Balipratipada',
-  '2026-11-24': 'Prakash Gurpurb Sri Guru Nanak Dev',
-  '2026-12-25': 'Christmas',
+// Working days skip Saturdays, Sundays and the market holidays that fall on
+// the same date every year. Festival holidays that move each year (Holi,
+// Diwali, Dussehra…) aren't known in advance, so the filled dates stay
+// editable for those weeks.
+var FIXED_HOLIDAYS = {            // 'MM-DD' -> name
+  '01-26': 'Republic Day',
+  '04-14': 'Dr. Ambedkar Jayanti',
+  '05-01': 'Maharashtra Day',
+  '08-15': 'Independence Day',
+  '10-02': 'Gandhi Jayanti',
+  '12-25': 'Christmas',
 };
-// Extra holidays an admin typed into Settings: any YYYY-MM-DD in the text.
-function extraHolidays() {
-  var out = {};
-  String(_poolSettings.market_holidays || '').replace(/\d{4}-\d{2}-\d{2}/g, function(d) { out[d] = 'Market holiday'; return d; });
-  return out;
-}
 function marketHolidayName(dateStr) {
-  return NSE_HOLIDAYS[dateStr] || extraHolidays()[dateStr] || null;
+  return FIXED_HOLIDAYS[String(dateStr).slice(5, 10)] || null;
 }
 function isTradingDay(d) {
   var day = d.getDay();
@@ -224,14 +208,11 @@ function ipoTimeline(closeStr) {
     // A close date on a weekend/holiday is almost certainly a typo.
     closeWarning: isTradingDay(close) ? null
       : (marketHolidayName(closeStr) ? closeStr + ' is a market holiday (' + marketHolidayName(closeStr) + ')' : 'That close date is a weekend'),
-    // Built-in list only runs through 2026; flag later dates that may need holidays added.
-    holidaysKnown: Object.keys(NSE_HOLIDAYS).concat(Object.keys(extraHolidays()))
-      .some(function(h) { return h.slice(0, 4) === String(close.getFullYear()); }),
   };
 }
 window.ipoTimeline = ipoTimeline;
 window.addTradingDays = addTradingDays;
-window.NSE_HOLIDAYS = NSE_HOLIDAYS;
+window.FIXED_HOLIDAYS = FIXED_HOLIDAYS;
 
 function deriveIpoStatus(ipo, allots, pools) {
   var hasPool = pools.some(function(p){ return p.ipo === ipo.id; });
@@ -587,7 +568,6 @@ function poolSetting(key) {
   return SETTING_DEFAULTS[key];
 }
 window.poolSetting = poolSetting;
-window.poolSettingsRaw = function() { return _poolSettings; };
 async function loadPoolSettings() {
   // Optional: a database without migration 019 just keeps the local values.
   try {
@@ -1354,7 +1334,6 @@ async function loadDB() {
         });
         var row = { id: 1, updated_at: new Date().toISOString() };
         Object.keys(SETTING_COLUMNS).forEach(function(k) { row[SETTING_COLUMNS[k]] = vals[k]; });
-        if (vals.marketHolidays != null) row.market_holidays = vals.marketHolidays;
         var { data, error } = await window.sb.from('pool_settings').upsert(row, { onConflict: 'id' }).select();
         if (error) {
           if (/pool_settings/.test(error.message || '') && /(does not exist|schema cache|not find)/i.test(error.message || '')) {
