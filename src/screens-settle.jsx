@@ -543,7 +543,13 @@ function SettlementLedger({ navigate, id }) {
             <span style={{ fontSize: 13, fontWeight: 700, color: combineMode ? 'var(--brand)' : 'var(--ink)' }}>Combine pending ({poolsWithPending.length})</span>
           </button>
         )}
-        {visiblePools.map(p => {
+        {D.pools.length > 8 && (
+          <JumpToIpo pools={D.pools} value={combineMode ? '' : selIpo} onChange={ipoId => {
+            if (settledPools.some(p => p.ipo === ipoId)) setShowSettled(true);
+            setCombineMode(false); setSelIpo(ipoId); setRows(D.settlements.filter(s => s.ipo === ipoId)); setTab('All');
+          }} />
+        )}
+        {stripPools(visiblePools, combineMode ? null : selIpo).map(p => {
           const ip = D.ipo(p.ipo);
           const active = !combineMode && p.ipo === selIpo;
           return (

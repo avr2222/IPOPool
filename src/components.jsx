@@ -163,15 +163,64 @@ function Avatar({ name, hue = 200, size = 36, you = false }) {
 }
 
 // ---------- IPO logo tile ----------
+// Most IPOs have no logo/hue stored, which rendered a blank grey tile. Fall
+// back to the company's initials on a colour derived from its name, so rows
+// are easy to tell apart at a glance.
+function ipoInitials(name) {
+  const words = String(name || '').replace(/\(.*?\)/g, ' ').split(/\s+/).filter(w => /^[A-Za-z0-9]/.test(w));
+  if (!words.length) return '?';
+  return (words.length === 1 ? words[0].slice(0, 2) : words[0][0] + words[1][0]).toUpperCase();
+}
+function nameHue(name) {
+  let h = 0;
+  for (const ch of String(name || '')) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+}
 function IpoLogo({ ipo, size = 44 }) {
+  if (!ipo) return null;
+  // 220 is the value every IPO gets when none is chosen (db.js / addIpo), so
+  // it means "unset" here — otherwise every tile came out the same blue.
+  const hue  = ipo.hue != null && ipo.hue !== '' && Number(ipo.hue) !== 220 ? ipo.hue : nameHue(ipo.name);
+  const text = ipo.logo || ipoInitials(ipo.name || ipo.short);
   return (
     <div style={{
       width: size, height: size, borderRadius: 'var(--r-md)', flexShrink: 0,
-      background: `hsl(${ipo.hue} 70% 96%)`, color: `hsl(${ipo.hue} 64% 38%)`,
-      border: `1px solid hsl(${ipo.hue} 50% 88%)`,
+      background: `hsl(${hue} 70% 94%)`, color: `hsl(${hue} 60% 34%)`,
+      border: `1px solid hsl(${hue} 50% 86%)`,
       display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: size * 0.34, letterSpacing: '-.02em',
-    }}>{ipo.logo}</div>
+    }}>{text}</div>
   );
+}
+
+// ---------- Jump-to-IPO picker ----------
+// The Pool / Settlement screens pick an IPO from a sideways-scrolling strip of
+// every pool, which stops working once there are dozens. This drop-down lists
+// all of them (unsettled first) — native <select>, so phones get their own
+// scrollable picker and desktop browsers jump by typing the name.
+function JumpToIpo({ pools, value, onChange }) {
+  const D = window.DB;
+  const open    = pools.filter(p => p.status !== 'Settled');
+  const settled = pools.filter(p => p.status === 'Settled');
+  const label = p => { const ip = D.ipo(p.ipo); return ip ? `${ip.name} · ${ip.type}` : p.ipo; };
+  return (
+    <select value={value || ''} onChange={e => e.target.value && onChange(e.target.value)} aria-label="Jump to IPO"
+      style={{ flexShrink: 0, maxWidth: 260, padding: '8px 10px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-strong)',
+               background: 'var(--surface)', color: 'var(--ink)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+      <option value="" disabled>Jump to IPO…</option>
+      {open.length > 0 && <optgroup label={`In progress (${open.length})`}>{open.map(p => <option key={p.ipo} value={p.ipo}>{label(p)}</option>)}</optgroup>}
+      {settled.length > 0 && <optgroup label={`Settled (${settled.length})`}>{settled.map(p => <option key={p.ipo} value={p.ipo}>{label(p)}</option>)}</optgroup>}
+    </select>
+  );
+}
+// Chips shown in the strip: the first `n`, plus the selected one if it's
+// further down the list (picked from JumpToIpo), so it stays visible.
+function stripPools(pools, selected, n = 8) {
+  const head = pools.slice(0, n);
+  if (selected && !head.some(p => p.ipo === selected)) {
+    const sel = pools.find(p => p.ipo === selected);
+    if (sel) return [sel, ...head.slice(0, n - 1)];
+  }
+  return head;
 }
 
 // ---------- Section header ----------
@@ -277,4 +326,4 @@ function SortTh({ col, sort, onSort, style = {} }) {
   );
 }
 
-Object.assign(window, { Icon, Card, Badge, Button, IconButton, Avatar, IpoLogo, SectionTitle, StatusDot, Segmented, Meter, useSortState, sortRows, SortCaret, SortTh });
+Object.assign(window, { Icon, Card, Badge, Button, IconButton, Avatar, IpoLogo, JumpToIpo, stripPools, SectionTitle, StatusDot, Segmented, Meter, useSortState, sortRows, SortCaret, SortTh });

@@ -170,7 +170,13 @@ function ProfitPooling({ navigate, id }) {
 
       {/* IPO selector pills */}
       <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 2, alignItems: 'center' }}>
-        {visiblePools.map(p => {
+        {listedPools.length > 8 && (
+          <JumpToIpo pools={listedPools} value={sel} onChange={ipoId => {
+            if (settledPools.some(p => p.ipo === ipoId)) setShowSettled(true);
+            setSel(ipoId);
+          }} />
+        )}
+        {stripPools(visiblePools, sel).map(p => {
           const ip = D.ipo(p.ipo);
           const active = p.ipo === sel;
           return (
@@ -224,7 +230,12 @@ function ProfitPooling({ navigate, id }) {
             <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
               {catData.filter(d => d.memberShares[me?.id]).map(d => {
                 const r = d.memberShares[me.id];
-                return `${CAT_META[d.cat]?.label || d.cat}: ${r.pans} PAN${r.pans > 1 ? 's' : ''} × ${f(d.perPan)}`;
+                // The remainder rupees go one each to the first few PANs, so a
+                // share can be ₹1 above pans × perPan — say so rather than
+                // show "1 PAN × ₹217" next to a ₹218 total.
+                const extra = (r.share || 0) - r.pans * d.perPan;
+                return `${CAT_META[d.cat]?.label || d.cat}: ${r.pans} PAN${r.pans > 1 ? 's' : ''} × ${f(d.perPan)}`
+                  + (extra !== 0 ? ` + ${f(extra)} rounding` : '');
               }).join(' · ')}
               {myBonus > 0 && <span style={{ color: 'var(--warn)', fontWeight: 700 }}> · +{f(myBonus)} allotted-PAN bonus</span>}
             </div>
@@ -326,6 +337,11 @@ function ProfitPooling({ navigate, id }) {
                   <div style={{ marginTop: 10, padding: '10px 14px', background: 'var(--brand-tint)', borderRadius: 'var(--r-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                     <div>
                       <div style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 600 }}>Net ÷ {d.total} PANs</div>
+                      {d.remainder > 0 && (
+                        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
+                          {d.remainder} PAN{d.remainder !== 1 ? 's' : ''} get ₹1 extra so every rupee is shared
+                        </div>
+                      )}
                     </div>
                     <div className="num" style={{ fontSize: 22, fontWeight: 800, color: 'var(--brand)' }}>{f(d.perPan)}<span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-3)' }}>/PAN</span></div>
                   </div>

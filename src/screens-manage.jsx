@@ -159,6 +159,11 @@ function AdminPanel() {
   // Pull the latest data from Supabase (members apply via the shared link, so the
   // applied/allotted counts here can go stale). Reloads the whole dataset — there's
   // no per-IPO endpoint — but a per-row spinner shows which row was refreshed.
+  // In-app error notice instead of the browser's alert() box: it stays on
+  // screen above any open dialog until dismissed, and doesn't block the page.
+  const [notice, setNotice] = useState(null);
+  const showError = (msg) => setNotice(msg || 'Something went wrong.');
+
   const refreshData = async (ipoId) => {
     if (refreshing) return;
     setRefreshing(true); setRefreshingId(ipoId || 'all');
@@ -166,7 +171,7 @@ function AdminPanel() {
       await window.loadDB();
       setIpos([...window.DB.ipos]);
       setMembers([...window.DB.members]);
-    } catch (e) { alert(friendlyDbError(e)); }
+    } catch (e) { showError(friendlyDbError(e)); }
     setRefreshing(false); setRefreshingId(null);
   };
   const [addIpoStep, setAddIpoStep] = useState(null); // null | 'details' | 'applicants'
@@ -230,7 +235,7 @@ function AdminPanel() {
   const deleteIpo = (id, name) => askConfirm(
     `Delete "${name}"?`,
     'All applications and allotments for this IPO will also be permanently deleted.',
-    async () => { try { await D.mutations.deleteIpo(id); setIpos([...window.DB.ipos]); } catch(e) { alert(e.message); } }
+    async () => { try { await D.mutations.deleteIpo(id); setIpos([...window.DB.ipos]); } catch(e) { showError(e.message); } }
   );
 
   // Copy the shareable member apply link (#/apply/<ipoId>) to post in the group.
@@ -348,7 +353,7 @@ function AdminPanel() {
       await D.mutations.saveAllotmentChanges(dirty);
       setChanges({});
       setSaved(true); setTimeout(() => setSaved(false), 2500);
-    } catch(e) { alert(e.message); }
+    } catch(e) { showError(e.message); }
     setSaving(false);
   };
 
@@ -438,7 +443,7 @@ function AdminPanel() {
     askConfirm(
       `Remove "${name}"?`,
       `This permanently deletes their ${parts.join(', ')}. Their allotted gains will no longer count toward any pool, so every other member's profit split for those IPOs will be recalculated. This cannot be undone.`,
-      async () => { try { await D.mutations.deleteMember(id); setMembers([...window.DB.members]); } catch(e) { alert(friendlyDbError(e)); } }
+      async () => { try { await D.mutations.deleteMember(id); setMembers([...window.DB.members]); } catch(e) { showError(friendlyDbError(e)); } }
     );
   };
 
@@ -480,18 +485,40 @@ function AdminPanel() {
     setEditPanSaving(false);
   };
 
-  const pendingAllots = D.allotments.filter(a => a.status === 'pending').length;
-
   // Rows carry their applied/allotted counts so those columns are sortable too.
-  const ipoRows = ipos.map(ip => ({
-    ...ip,
-    applied:  D.allotsOfIpo(ip.id).length,
-    allotted: D.allotsOfIpo(ip.id).filter(a => a.status === 'allotted').length,
-  }));
+  const ipoRows = ipos.map(ip => {
+    const rows = D.allotsOfIpo(ip.id);
+    return {
+      ...ip,
+      applied:  rows.length,
+      allotted: rows.filter(a => a.status === 'allotted').length,
+      pending:  rows.filter(a => a.status === 'pending').length,
+    };
+  });
+  // "Awaiting results": applications have closed but some PANs still have no
+  // ✓/✗ — the admin's actual to-do list. Pending rows on an IPO that is still
+  // open for applications aren't actionable yet, so they don't count.
+  const awaitingResults = ip => ip.pending > 0 && ip.status !== 'Open' && ip.status !== 'Upcoming';
+  const awaitingCount   = ipoRows.filter(awaitingResults).length;
+
+  const [ipoQuery,  setIpoQuery]  = useState('');
+  const [ipoFilter, setIpoFilter] = useState('all');
+  const IPO_FILTERS = [['all', 'All'], ['awaiting', 'Awaiting results'], ['open', 'Open / upcoming'], ['listed', 'Listed']];
+  const IPO_FILTER_FN = {
+    all:      () => true,
+    awaiting: awaitingResults,
+    open:     ip => ip.status === 'Open' || ip.status === 'Upcoming',
+    listed:   ip => ip.status === 'Listed',
+  };
+  const ipoFilterCount = key => ipoRows.filter(IPO_FILTER_FN[key]).length;
+  const q = ipoQuery.trim().toLowerCase();
+  const filteredIpoRows = ipoRows.filter(ip => IPO_FILTER_FN[ipoFilter](ip)
+    && (!q || String(ip.name).toLowerCase().includes(q) || String(ip.short || '').toLowerCase().includes(q)));
+  const showAwaiting = () => { setTab('IPO Master'); setIpoFilter('awaiting'); setIpoQuery(''); setIpoPage(0); };
   // Default (no active sort): newest-added IPO on top (created_at), falling back
   // to the most relevant date, then name — so the master list leads with new IPOs.
   const ipoSortKey = ip => ip.createdAt || ip.listDate || ip.allotDate || ip.close || ip.open || '';
-  const recentFirst = [...ipoRows].sort((a, b) => {
+  const recentFirst = [...filteredIpoRows].sort((a, b) => {
     const d = String(ipoSortKey(b)).localeCompare(String(ipoSortKey(a)));
     return d !== 0 ? d : String(a.name).localeCompare(String(b.name));
   });
@@ -504,7 +531,7 @@ function AdminPanel() {
     { key: 'allotted', label: 'Allotted', align: 'right', defDir: 'desc' },
   ];
   const [ipoSort, onIpoSortRaw] = useSortState(null);
-  const sortedIpos = ipoSort.key ? sortRows(ipoRows, ipoSort, ipoCols) : recentFirst;
+  const sortedIpos = ipoSort.key ? sortRows(filteredIpoRows, ipoSort, ipoCols) : recentFirst;
   // The master list keeps growing; show IPO_PAGE rows at a time. Page 1 is the
   // newest IPOs (or the top of the active sort) — re-sorting jumps back to it.
   const IPO_PAGE = 20;
@@ -513,6 +540,31 @@ function AdminPanel() {
   const ipoPages   = Math.max(1, Math.ceil(sortedIpos.length / IPO_PAGE));
   const curIpoPage = Math.min(ipoPage, ipoPages - 1);   // clamp after a delete
   const pagedIpos  = sortedIpos.slice(curIpoPage * IPO_PAGE, (curIpoPage + 1) * IPO_PAGE);
+
+  const IpoSubline = ({ ip }) => (
+    <div style={{ fontSize: 11.5, color: 'var(--ink-3)', display: 'flex', gap: 6, alignItems: 'center', marginTop: 1, flexWrap: 'wrap' }}>
+      {ip.short !== ip.name && <span>{ip.short}</span>}
+      {ip.status && <StatusDot tone={ip.status === 'Listed' ? 'profit' : ip.status === 'Open' ? 'info' : 'neutral'} />}
+      {ip.status && <span>{ip.status}</span>}
+      {awaitingResults(ip) && <span style={{ color: 'var(--warn)', fontWeight: 700, whiteSpace: 'nowrap' }}>· {ip.pending} awaiting result{ip.pending !== 1 ? 's' : ''}</span>}
+    </div>
+  );
+  // Row actions. Delete lives in the Edit dialog (it wiped every application
+  // for the IPO and sat one tap away from Edit), and the per-row refresh is
+  // gone — the Refresh button above reloads every count at once.
+  const IpoActions = ({ ip, wide }) => (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: wide ? 'stretch' : 'flex-end', gap: 6, flexWrap: 'nowrap' }}>
+      <Button variant="soft" size="sm" icon="allot" style={wide ? { flex: 1, justifyContent: 'center' } : undefined}
+        onClick={() => { setViewIpoId(ip.id); setChanges({}); setSaved(false); }}>
+        Allotments
+      </Button>
+      <Button variant="ghost" size="sm" icon={copiedIpo === ip.id ? 'check' : 'external'} onClick={() => copyApplyLink(ip)}
+        style={wide ? { flex: 1, justifyContent: 'center' } : undefined}>
+        {copiedIpo === ip.id ? 'Copied!' : 'Apply link'}
+      </Button>
+      <IconButton name="edit" size={34} tip="Edit or delete IPO" onClick={() => openEditIpo(ip)} />
+    </div>
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -523,9 +575,9 @@ function AdminPanel() {
           ['IPOs tracked',   ipos.length,              'calendar', 'neutral'],
           ['Members',        members.length,            'groups',   'info'],
           ['Total PANs',     D.pans.length,             'pan',      'brand'],
-          ['Pending allots', pendingAllots,             'clock',    pendingAllots > 0 ? 'warn' : 'neutral'],
-        ].map(([l, v, ic, tone]) => (
-          <KPICard key={l} icon={ic} label={l} value={v} tone={tone} />
+          ['Awaiting results', awaitingCount,           'clock',    awaitingCount > 0 ? 'warn' : 'neutral', awaitingCount > 0 ? showAwaiting : undefined],
+        ].map(([l, v, ic, tone, onClick]) => (
+          <KPICard key={l} icon={ic} label={onClick ? l + ' ›' : l} value={v} tone={tone} onClick={onClick} />
         ))}
       </div>
 
@@ -572,61 +624,97 @@ function AdminPanel() {
                 </div>
               );
             })()}
+            {ipos.length > 0 && (
+              // Search + status filters. Applied before paging, so page 1 is
+              // always the top of what you searched for.
+              <div style={{ padding: '10px 18px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input value={ipoQuery} onChange={e => { setIpoQuery(e.target.value); setIpoPage(0); }}
+                  placeholder="Search IPOs…" aria-label="Search IPOs"
+                  style={{ ...inputSt, flex: '1 1 180px', maxWidth: 280, padding: '7px 11px', fontSize: 13 }} />
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {IPO_FILTERS.map(([key, label]) => {
+                    const n = ipoFilterCount(key);
+                    const on = ipoFilter === key;
+                    return (
+                      <button key={key} onClick={() => { setIpoFilter(key); setIpoPage(0); }} style={{
+                        border: '1px solid ' + (on ? 'var(--brand)' : 'var(--border)'), borderRadius: 999,
+                        background: on ? 'var(--brand-tint)' : 'var(--surface)', color: on ? 'var(--brand)' : 'var(--ink-2)',
+                        fontSize: 12, fontWeight: 700, padding: '5px 11px', cursor: 'pointer', whiteSpace: 'nowrap',
+                      }}>{label}{key !== 'all' && <span style={{ opacity: .7, marginLeft: 4 }}>{n}</span>}</button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {ipos.length === 0 ? (
               <div style={{ padding: '32px 18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No IPOs yet. Add one above.</div>
+            ) : sortedIpos.length === 0 ? (
+              <div style={{ padding: '28px 18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+                No IPOs match{ipoQuery ? <> “<strong>{ipoQuery}</strong>”</> : ''}.{' '}
+                <button onClick={() => { setIpoQuery(''); setIpoFilter('all'); }} style={{ border: 'none', background: 'none', color: 'var(--brand)', fontWeight: 700, cursor: 'pointer', padding: 0 }}>Clear filters</button>
+              </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 820 }}>
+              <>
+              {/* Desktop / tablet: sortable table */}
+              <div className="ipo-table-desktop" style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
                   <thead><tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
                     {ipoCols.map(c => <SortTh key={c.key} col={c} sort={ipoSort} onSort={onIpoSort} style={{ padding: '10px 18px' }} />)}
                     <th style={{ padding: '10px 18px' }}></th>
                   </tr></thead>
                   <tbody>
-                    {pagedIpos.map(ip => {
-                      const applied  = ip.applied;
-                      const allotted = ip.allotted;
-                      return (
+                    {pagedIpos.map(ip => (
                       <tr key={ip.id} style={{ borderTop: '1px solid var(--border)' }}>
                         <td style={{ padding: '13px 18px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
                             <IpoLogo ipo={ip} size={34} />
                             <div style={{ minWidth: 0 }}>
                               <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{ip.name}</div>
-                              <div style={{ fontSize: 11.5, color: 'var(--ink-3)', display: 'flex', gap: 6, alignItems: 'center', marginTop: 1 }}>
-                                {ip.short !== ip.name && <span>{ip.short}</span>}
-                                {ip.status && <StatusDot tone={ip.status === 'Listed' ? 'profit' : ip.status === 'Open' ? 'info' : 'neutral'} />}
-                                {ip.status && <span>{ip.status}</span>}
-                              </div>
+                              <IpoSubline ip={ip} />
                             </div>
                           </div>
                         </td>
                         <td style={{ padding: '13px 18px' }}><Badge tone={ip.type === 'SME' ? 'sme' : 'mainboard'}>{ip.type}</Badge></td>
                         <td className="num" style={{ padding: '13px 18px', fontSize: 13 }}>{ip.bandHigh ? '₹' + Number(ip.bandHigh).toLocaleString('en-IN') : '—'}</td>
                         <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontSize: 13 }}>{ip.lotSize || '—'}</td>
-                        <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontSize: 13, color: 'var(--ink-2)' }}>{applied || '—'}</td>
-                        <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: allotted > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{allotted || '—'}</td>
-                        <td style={{ padding: '13px 18px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'nowrap' }}>
-                            <Button variant="soft" size="sm" icon="allot"
-                              onClick={() => { setViewIpoId(ip.id); setChanges({}); setSaved(false); }}>
-                              Allotments
-                            </Button>
-                            <IconButton name="refresh" size={34} tip="Refresh applied / allotted counts"
-                              spin={refreshingId === ip.id} disabled={refreshing}
-                              onClick={() => refreshData(ip.id)} />
-                            <IconButton name={copiedIpo === ip.id ? 'check' : 'external'} size={34}
-                              tip={copiedIpo === ip.id ? 'Link copied!' : 'Copy apply link'}
-                              onClick={() => copyApplyLink(ip)} />
-                            <IconButton name="edit" size={34} tip="Edit IPO" onClick={() => openEditIpo(ip)} />
-                            <IconButton name="trash" size={34} tip="Delete" onClick={() => deleteIpo(ip.id, ip.short)} />
-                          </div>
-                        </td>
+                        <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontSize: 13, color: 'var(--ink-2)' }}>{ip.applied || '—'}</td>
+                        <td className="num" style={{ padding: '13px 18px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: ip.allotted > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{ip.allotted || '—'}</td>
+                        <td style={{ padding: '13px 18px' }}><IpoActions ip={ip} /></td>
                       </tr>
-                      );
-                    })}
+                    ))}
                   </tbody>
                 </table>
               </div>
+
+              {/* Phones: one card per IPO, every number and button visible
+                  without scrolling sideways. */}
+              <div className="ipo-cards-mobile">
+                {pagedIpos.map(ip => (
+                  <div key={ip.id} style={{ padding: '13px 14px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                      <IpoLogo ipo={ip} size={38} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ip.name}</div>
+                        <IpoSubline ip={ip} />
+                      </div>
+                      <Badge tone={ip.type === 'SME' ? 'sme' : 'mainboard'}>{ip.type}</Badge>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, fontSize: 12 }}>
+                      {[['Price', ip.bandHigh ? '₹' + Number(ip.bandHigh).toLocaleString('en-IN') : '—'],
+                        ['Lot', ip.lotSize || '—'],
+                        ['Applied', ip.applied || '—'],
+                        ['Allotted', ip.allotted || '—']].map(([l, v]) => (
+                        <div key={l}>
+                          <div style={{ color: 'var(--ink-3)', fontWeight: 600, fontSize: 11 }}>{l}</div>
+                          <div className="num" style={{ fontWeight: 700, color: l === 'Allotted' && ip.allotted > 0 ? 'var(--profit)' : 'var(--ink)' }}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <IpoActions ip={ip} wide />
+                  </div>
+                ))}
+              </div>
+              </>
             )}
             {ipoPages > 1 && (() => {
               const btn = (label, page, { active = false, disabled = false, key } = {}) => (
@@ -1128,7 +1216,11 @@ function AdminPanel() {
             </Field>
           </div>
           {editIpoErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{editIpoErr}</div>}
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' }}>
+            <button onClick={() => { const ip = D.ipo(editIpoId); setEditIpoId(null); deleteIpo(editIpoId, ip?.short || ip?.name); }}
+              style={{ marginRight: 'auto', border: 'none', background: 'none', color: 'var(--loss)', fontWeight: 700, fontSize: 13, cursor: 'pointer', padding: 0 }}>
+              Delete IPO…
+            </button>
             <Button variant="ghost" onClick={() => setEditIpoId(null)}>Cancel</Button>
             <Button variant="primary" onClick={saveEditIpo} style={{ opacity: editIpoSaving ? .7 : 1, pointerEvents: editIpoSaving ? 'none' : 'auto' }}>
               {editIpoSaving ? 'Saving…' : 'Save changes'}
@@ -1685,6 +1777,17 @@ function AdminPanel() {
 
       {/* ── Confirm dialog ── */}
       <ConfirmDialog dlg={confirmDlg} onClose={() => setConfirmDlg(null)} />
+      {notice && (
+        <div role="alert" style={{ position: 'fixed', left: 16, right: 16, bottom: 'calc(76px + env(safe-area-inset-bottom, 0px))', zIndex: 80, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+          <div style={{ pointerEvents: 'auto', maxWidth: 520, width: '100%', background: 'var(--surface)', border: '1px solid var(--loss)', borderLeft: '4px solid var(--loss)', borderRadius: 'var(--r-md)', boxShadow: 'var(--sh-pop)', padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <div style={{ flex: 1, fontSize: 13.5, color: 'var(--ink)', lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 800, color: 'var(--loss)', marginBottom: 2 }}>Couldn't complete that</div>
+              {notice}
+            </div>
+            <IconButton name="x" size={28} tip="Dismiss" onClick={() => setNotice(null)} />
+          </div>
+        </div>
+      )}
 
     </div>
   );

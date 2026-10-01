@@ -65,6 +65,27 @@ function xirrLabel(rate) {
   return (rounded > 0 ? '+' : '') + rounded + '%';
 }
 
+// Long lists (every IPO, every member, every PAN) made the dashboard ~13 phone
+// screens tall. Show the first `limit` rows plus a toggle; the signed-in
+// user's own row is always kept visible even when it falls past the cut.
+function limitRows(rows, limit, expanded) {
+  if (expanded || rows.length <= limit) return rows;
+  const head = rows.slice(0, limit);
+  const mine = rows.slice(limit).filter(r => r.you);
+  return head.concat(mine);
+}
+function ShowAllToggle({ total, limit, expanded, onToggle, noun }) {
+  if (total <= limit) return null;
+  return (
+    <button onClick={onToggle} style={{
+      width: '100%', border: 'none', borderTop: '1px solid var(--border)', background: 'var(--surface-2)',
+      color: 'var(--brand)', fontWeight: 700, fontSize: 13, padding: '11px 18px', cursor: 'pointer',
+    }}>
+      {expanded ? 'Show fewer' : `Show all ${total} ${noun}`}
+    </button>
+  );
+}
+
 // Sortable "Profit by IPO" table (net profit per IPO + combined total row).
 function ProfitByIpoCard({ D, navigate, f }) {
   const cols = [
@@ -76,7 +97,10 @@ function ProfitByIpoCard({ D, navigate, f }) {
     { key: 'net',      label: 'Net profit', align: 'right', defDir: 'desc' },
   ];
   const [sort, onSort] = useSortState(null);
-  const rows = sortRows(D.profitByIpo || [], sort, cols);
+  const [expanded, setExpanded] = useState(false);
+  const IPO_LIMIT = 8;
+  const allRows = sortRows(D.profitByIpo || [], sort, cols);
+  const rows = limitRows(allRows, IPO_LIMIT, expanded);
   const tot = (D.profitByIpo || []).reduce((s, p) => ({
     gross: s.gross + p.gross, net: s.net + p.net, applied: s.applied + p.applied, allotted: s.allotted + p.allotted,
   }), { gross: 0, net: 0, applied: 0, allotted: 0 });
@@ -111,6 +135,13 @@ function ProfitByIpoCard({ D, navigate, f }) {
                 <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 700, color: p.net > 0 ? 'var(--profit)' : p.net < 0 ? 'var(--loss)' : 'var(--ink-3)' }}>{p.net !== 0 ? f(p.net, { compact: true }) : '—'}</td>
               </tr>
             ))}
+            {allRows.length > IPO_LIMIT && (
+              <tr style={{ borderTop: '1px solid var(--border)' }}>
+                <td colSpan={cols.length} style={{ padding: 0 }}>
+                  <ShowAllToggle total={allRows.length} limit={IPO_LIMIT} expanded={expanded} onToggle={() => setExpanded(e => !e)} noun="IPOs" />
+                </td>
+              </tr>
+            )}
             {rows.length > 0 && (
               <tr style={{ borderTop: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
                 <td style={{ padding: '12px 18px', fontWeight: 800, fontSize: 13.5 }}>All IPOs together</td>
@@ -365,6 +396,9 @@ function Dashboard({ navigate, tweaks }) {
   // (D.memberProfits, computed once in loadDB via PoolMath). Highlights the top
   // earner, then lists everyone with a relative profit bar.
   const memberRanks = (D.memberProfits || []).filter(m => m.profit > 0);
+  const BOARD_LIMIT = 10;
+  const [showAllMembers, setShowAllMembers] = useState(false);
+  const [showAllPans,    setShowAllPans]    = useState(false);
   const topProfit   = memberRanks.length ? memberRanks[0].profit : 0;
 
   const MemberLeaderboard = (
@@ -392,7 +426,7 @@ function Dashboard({ navigate, tweaks }) {
               <XirrTag xirr={memberRanks[0].xirr} />
             </div>
           </div>
-          {memberRanks.map((m, i) => (
+          {limitRows(memberRanks, BOARD_LIMIT, showAllMembers).map((m) => { const i = memberRanks.indexOf(m); return (
             <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--border)', background: m.you ? 'var(--brand-tint)' : 'transparent' }}>
               <span className="num" style={{ width: 18, textAlign: 'right', fontSize: 13, fontWeight: 700, color: 'var(--ink-3)' }}>{i + 1}</span>
               <Avatar name={m.name} hue={m.avatarHue} size={30} you={m.you} />
@@ -409,7 +443,8 @@ function Dashboard({ navigate, tweaks }) {
                 <XirrTag xirr={m.xirr} />
               </div>
             </div>
-          ))}
+          ); })}
+          <ShowAllToggle total={memberRanks.length} limit={BOARD_LIMIT} expanded={showAllMembers} onToggle={() => setShowAllMembers(e => !e)} noun="members" />
         </>
       ) : (
         <div style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No member profits yet.</div>
@@ -448,7 +483,7 @@ function Dashboard({ navigate, tweaks }) {
               <XirrTag xirr={panRanks[0].xirr} />
             </div>
           </div>
-          {panRanks.map((p, i) => (
+          {limitRows(panRanks, BOARD_LIMIT, showAllPans).map((p) => { const i = panRanks.indexOf(p); return (
             <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--border)', background: p.you ? 'var(--brand-tint)' : 'transparent' }}>
               <span className="num" style={{ width: 18, textAlign: 'right', fontSize: 13, fontWeight: 700, color: 'var(--ink-3)' }}>{i + 1}</span>
               <Avatar name={p.holder} hue={p.avatarHue} size={30} you={p.you} />
@@ -466,7 +501,8 @@ function Dashboard({ navigate, tweaks }) {
                 <XirrTag xirr={p.xirr} />
               </div>
             </div>
-          ))}
+          ); })}
+          <ShowAllToggle total={panRanks.length} limit={BOARD_LIMIT} expanded={showAllPans} onToggle={() => setShowAllPans(e => !e)} noun="PANs" />
         </>
       ) : (
         <div style={{ padding: '18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No PAN profits yet.</div>
