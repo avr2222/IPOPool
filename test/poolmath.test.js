@@ -210,19 +210,24 @@ section('1.4  brokerage charged once per IPO, not once per category');
     { id: 'a2', ipo_id: 'i1', pan_id: 'p2', category: 'sHNI',   lots: 14 },
     { id: 'a3', ipo_id: 'i1', pan_id: 'p3', category: 'bHNI',   lots: 68 },
     { id: 'a4', ipo_id: 'i2', pan_id: 'p1', category: 'SME',    lots: 1 },
+    // A post-July-2025 SME IPO: its applications carry Retail, not 'SME'.
+    { id: 'a5', ipo_id: 'i3', pan_id: 'p2', category: 'Retail', lots: 2 },
   ];
+  const seedSmeNew = { id: 'i3', name: 'Vans Electro', short_name: 'Vans', type: 'SME',
+                       status: 'Listed', band_high: 118, lot_size: 1200, lot_value: 141600 };
   const allots = [
     { id: 'al1', application_id: 'a1', status: 'allotted', shares: 30,   gain: 30000, sell_price: 1496, applications: apps[0] },
     { id: 'al2', application_id: 'a2', status: 'allotted', shares: 420,  gain: 50000, sell_price: 1496, applications: apps[1] },
     { id: 'al3', application_id: 'a3', status: 'allotted', shares: 2040, gain: 20000, sell_price: 1496, applications: apps[2] },
     { id: 'al4', application_id: 'a4', status: 'allotted', shares: 1000, gain: 40000, sell_price: 185,  applications: apps[3] },
+    { id: 'al5', application_id: 'a5', status: 'allotted', shares: 2400, gain: 24000, sell_price: 128,  applications: apps[4] },
   ];
   const tables = {
     members: [{ id: 'm1', name: 'A', is_admin: true }],
     pan_accounts: [{ id: 'p1', member_id: 'm1', pan: 'AAAAA1111A', holder: 'A' },
                    { id: 'p2', member_id: 'm1', pan: 'AAAAA2222A', holder: 'B' },
                    { id: 'p3', member_id: 'm1', pan: 'AAAAA3333A', holder: 'C' }],
-    ipos: [seedIpo, seedSme], applications: apps, allotments: allots,
+    ipos: [seedIpo, seedSme, seedSmeNew], applications: apps, allotments: allots,
     profit_pools: [], settlements: [],
   };
   const qb = (name) => {
@@ -310,8 +315,23 @@ section('1.4  brokerage charged once per IPO, not once per category');
       win.catMinLots('sHNI', 50000, true) === Math.max(3, Math.floor(200000/50000)+1),
       'got ' + win.catMinLots('sHNI', 50000, true));
 
-    console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all invariants hold'));
-    process.exit(failures ? 1 : 0);
+    // Reload so the dashboard figures are computed with the rates set above.
+    section('SME vs Mainboard chart');
+    return win.loadDB().then(() => {
+      const whole = win.groupNetProfit(win.DB.allotments);
+      // The SME vs Mainboard chart splits by the IPO's board: an SME IPO whose
+      // applications are Retail/sHNI/bHNI (every SME IPO since Jul 2025) is SME.
+      const byBoard = (t) => win.groupNetProfit(win.DB.allotments.filter(a => win.DB.ipo(a.ipo).type === t));
+      const svm = win.DB.smeVsMain;
+      check('SME vs Mainboard counts a Retail-category SME IPO as SME',
+        svm.sme === byBoard('SME') && svm.mainboard === byBoard('Mainboard'),
+        JSON.stringify(svm) + ' expected sme=' + byBoard('SME') + ' main=' + byBoard('Mainboard'));
+      check('SME vs Mainboard still adds up to the whole book', svm.sme + svm.mainboard === whole,
+        JSON.stringify(svm) + ' whole=' + whole);
+
+      console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all invariants hold'));
+      process.exit(failures ? 1 : 0);
+    });
   });
 }
 

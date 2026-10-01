@@ -703,9 +703,17 @@ function computeCharts() {
     monthlyProfit.push({ m: MONTHS[d.getMonth()], v: byMonth[key] || 0 });
   }
 
-  // SME vs Mainboard — per-category nets grouped by board
-  var smeNet  = groupNetProfit(_allotments.filter(function(a){ return a.category === 'SME'; }));
-  var mainNet = groupNetProfit(_allotments.filter(function(a){ return a.category !== 'SME'; }));
+  // SME vs Mainboard — split by the IPO's board, not the application's
+  // category. Since SEBI's 1 Jul 2025 change SME applications are recorded as
+  // Retail/sHNI/bHNI like Mainboard ones; only legacy rows still say 'SME', so
+  // splitting on category counted every recent SME IPO's profit as Mainboard.
+  // groupNetProfit groups per (IPO, category), so this split never cuts a group.
+  var isSmeAllot = function(a) {
+    var ipo = _ipoById[a.ipo];
+    return ipo ? ipo.type === 'SME' : a.category === 'SME';
+  };
+  var smeNet  = groupNetProfit(_allotments.filter(isSmeAllot));
+  var mainNet = groupNetProfit(_allotments.filter(function(a){ return !isSmeAllot(a); }));
 
   // Allotment history: last 6 IPOs the pool applied to, oldest → newest
   var allotHistory = profitByIpo.slice(0, 6).reverse().map(function(p) {
