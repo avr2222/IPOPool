@@ -59,6 +59,25 @@ section('remainder distribution (must not regress)');
   }
 }
 
+// ── IPO dates from the close date (SEBI T+3, NSE holidays) ──────────────────
+section('IPO timeline from close date');
+{
+  const t = (c) => win.ipoTimeline(c);
+  const a = t('2026-10-01');   // Thu; Fri 2 Oct is Gandhi Jayanti
+  check('close Thu 1 Oct 2026 -> open Tue 29 Sep', a.open === '2026-09-29', JSON.stringify(a));
+  check('allotment skips Gandhi Jayanti + weekend -> Mon 5 Oct', a.allot === '2026-10-05', JSON.stringify(a));
+  check('listing is T+3 -> Wed 7 Oct', a.list === '2026-10-07', JSON.stringify(a));
+  const b = t('2026-08-13');   // Thu; Sat 15 Aug Independence Day is a weekend anyway
+  check('weekend-only gap -> allot Fri 14 Aug, list Tue 18 Aug', b.allot === '2026-08-14' && b.list === '2026-08-18', JSON.stringify(b));
+  const c = t('2027-01-27');   // Wed; Tue 26 Jan 2027 Republic Day inside the window
+  check('fixed-date holiday any year: open skips 26 Jan 2027 -> Fri 22 Jan', c.open === '2027-01-22', JSON.stringify(c));
+  const d = t('2026-10-16');   // moving festival (Dussehra) is NOT skipped
+  check('moving festivals are not assumed', d.list === '2026-10-21', JSON.stringify(d));
+  check('a holiday close date is flagged', !!t('2026-10-02').closeWarning);
+  check('a normal close date is not flagged', t('2026-10-01').closeWarning === null);
+  check('a bad date gives no timeline', t('not-a-date') === null && t('') === null);
+}
+
 // ── 1.5  losses are visible per PAN and shared like a profit ────────────────
 // A pooled loss is split evenly across every applicant the same way a profit
 // is (b1340ac "Share pooled losses the same way profits are shared") -- it

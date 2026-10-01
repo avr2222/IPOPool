@@ -162,6 +162,58 @@ function localDateStr(d) {
 }
 window.localDateStr = localDateStr;
 
+// ── IPO timeline from the close date (SEBI T+3) ─────────────────────────────
+// Since 1 Dec 2023 every mainboard and SME IPO follows T+3, counted in
+// working days with T = the issue's close date:
+//   open      = T-2  (an issue must stay open at least 3 working days)
+//   allotment = T+1  (basis of allotment finalised)
+//   listing   = T+3
+// Working days skip Saturdays, Sundays and the market holidays that fall on
+// the same date every year. Festival holidays that move each year (Holi,
+// Diwali, Dussehra…) aren't known in advance, so the filled dates stay
+// editable for those weeks.
+var FIXED_HOLIDAYS = {            // 'MM-DD' -> name
+  '01-26': 'Republic Day',
+  '04-14': 'Dr. Ambedkar Jayanti',
+  '05-01': 'Maharashtra Day',
+  '08-15': 'Independence Day',
+  '10-02': 'Gandhi Jayanti',
+  '12-25': 'Christmas',
+};
+function marketHolidayName(dateStr) {
+  return FIXED_HOLIDAYS[String(dateStr).slice(5, 10)] || null;
+}
+function isTradingDay(d) {
+  var day = d.getDay();
+  return day !== 0 && day !== 6 && !marketHolidayName(localDateStr(d));
+}
+// Move n working days from dateStr (negative n goes back). Returns YYYY-MM-DD.
+function addTradingDays(dateStr, n) {
+  var d = parseLocalDate(dateStr);
+  if (!d) return null;
+  var step = n < 0 ? -1 : 1, left = Math.abs(n);
+  while (left > 0) {
+    d.setDate(d.getDate() + step);
+    if (isTradingDay(d)) left--;
+  }
+  return localDateStr(d);
+}
+function ipoTimeline(closeStr) {
+  var close = parseLocalDate(closeStr);
+  if (!close) return null;
+  return {
+    open:  addTradingDays(closeStr, -2),
+    allot: addTradingDays(closeStr, 1),
+    list:  addTradingDays(closeStr, 3),
+    // A close date on a weekend/holiday is almost certainly a typo.
+    closeWarning: isTradingDay(close) ? null
+      : (marketHolidayName(closeStr) ? closeStr + ' is a market holiday (' + marketHolidayName(closeStr) + ')' : 'That close date is a weekend'),
+  };
+}
+window.ipoTimeline = ipoTimeline;
+window.addTradingDays = addTradingDays;
+window.FIXED_HOLIDAYS = FIXED_HOLIDAYS;
+
 function deriveIpoStatus(ipo, allots, pools) {
   var hasPool = pools.some(function(p){ return p.ipo === ipo.id; });
   var marked  = allots.some(function(a){ return a.ipo === ipo.id && (a.status === 'allotted' || a.status === 'not_allotted'); });

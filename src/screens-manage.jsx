@@ -60,6 +60,24 @@ const inputSt = {
 };
 
 // ── Confirm dialog (replaces browser confirm()) ───────────────────────────────
+// Entering the close date fills open / allotment / listing from SEBI's T+3
+// timeline (window.ipoTimeline, db.js), skipping weekends and fixed-date holidays.
+// The filled dates stay editable for the odd issue that runs longer.
+function withAutoDates(form, closeDate) {
+  const t = closeDate && window.ipoTimeline ? window.ipoTimeline(closeDate) : null;
+  if (!t) return { ...form, closeDate };
+  return { ...form, closeDate, openDate: t.open, allotDate: t.allot, listDate: t.list };
+}
+function AutoDateNote({ closeDate }) {
+  const t = closeDate && window.ipoTimeline ? window.ipoTimeline(closeDate) : null;
+  return (
+    <div style={{ fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.5, marginTop: -4 }}>
+      Enter the close date — open, allotment and listing fill in automatically (T+3, skipping Saturdays, Sundays and fixed-date holidays like 26 Jan, 15 Aug, 2 Oct). Festival holidays aren't included, so adjust those weeks by hand.
+      {t?.closeWarning && <div style={{ color: 'var(--warn)', fontWeight: 700, marginTop: 3 }}>⚠ {t.closeWarning} — check the close date.</div>}
+    </div>
+  );
+}
+
 function ConfirmDialog({ dlg, onClose }) {
   if (!dlg) return null;
   const btnSt = dlg.danger
@@ -864,7 +882,7 @@ function AdminPanel() {
               <input style={inputSt} type="date" value={ipoForm.openDate} onChange={e => setIpoForm(p => ({ ...p, openDate: e.target.value }))} />
             </Field>
             <Field label="Close date">
-              <input style={inputSt} type="date" value={ipoForm.closeDate} onChange={e => setIpoForm(p => ({ ...p, closeDate: e.target.value }))} />
+              <input style={inputSt} type="date" value={ipoForm.closeDate} onChange={e => setIpoForm(p => withAutoDates(p, e.target.value))} />
             </Field>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -875,6 +893,7 @@ function AdminPanel() {
               <input style={inputSt} type="date" value={ipoForm.listDate} onChange={e => setIpoForm(p => ({ ...p, listDate: e.target.value }))} />
             </Field>
           </div>
+          <AutoDateNote closeDate={ipoForm.closeDate} />
           {ipoErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{ipoErr}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <Button variant="ghost" onClick={closeAddIpo}>Cancel</Button>
@@ -1204,7 +1223,7 @@ function AdminPanel() {
               <input style={inputSt} type="date" value={editIpoForm.openDate} onChange={e => setEditIpoForm(p => ({ ...p, openDate: e.target.value }))} />
             </Field>
             <Field label="Close date">
-              <input style={inputSt} type="date" value={editIpoForm.closeDate} onChange={e => setEditIpoForm(p => ({ ...p, closeDate: e.target.value }))} />
+              <input style={inputSt} type="date" value={editIpoForm.closeDate} onChange={e => setEditIpoForm(p => withAutoDates(p, e.target.value))} />
             </Field>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -1215,6 +1234,7 @@ function AdminPanel() {
               <input style={inputSt} type="date" value={editIpoForm.listDate} onChange={e => setEditIpoForm(p => ({ ...p, listDate: e.target.value }))} />
             </Field>
           </div>
+          <AutoDateNote closeDate={editIpoForm.closeDate} />
           {editIpoErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{editIpoErr}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' }}>
             <button onClick={() => { const ip = D.ipo(editIpoId); setEditIpoId(null); deleteIpo(editIpoId, ip?.short || ip?.name); }}
