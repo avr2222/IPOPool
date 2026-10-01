@@ -34,6 +34,25 @@ var _pools       = [];
 var _settlements = [];
 var _currentUid  = null;
 
+// Lookup indexes over the cache above. Screens and the profit math used to
+// find an IPO / PAN / an IPO's applications by scanning the whole array —
+// for every row — which grows as IPOs x applications and was already doing
+// ~60k comparisons per refresh at 63 IPOs / 1000 applications. Rebuilt by
+// rebuildIndexes() whenever one of the arrays changes.
+var _ipoById = {}, _panById = {}, _allotsByIpo = {}, _allotsByPan = {};
+function rebuildIndexes() {
+  _ipoById = {}; _ipos.forEach(function(i){ _ipoById[i.id] = i; });
+  _panById = {}; _pans.forEach(function(p){ _panById[p.id] = p; });
+  _allotsByIpo = {}; _allotsByPan = {};
+  _allotments.forEach(function(a) {
+    (_allotsByIpo[a.ipo] = _allotsByIpo[a.ipo] || []).push(a);
+    (_allotsByPan[a.pan] = _allotsByPan[a.pan] || []).push(a);
+  });
+}
+// Copies, so a caller that sorts its result can't reorder the index.
+function allotsOfIpo(id) { return (_allotsByIpo[id] || []).slice(); }
+function allotsOfPan(id) { return (_allotsByPan[id] || []).slice(); }
+
 // ── Row transformers ─────────────────────────────────────────────────────────
 
 function txMembers(rows) {
@@ -121,14 +140,35 @@ function sortIposByRecency(ipos) {
 // never maintained, so we compute the real phase from actual activity first
 // (allotment results marked or a profit pool exists ⇒ it has listed), then fall
 // back to the calendar dates, and only to the stored value when nothing is known.
+// IPO dates are stored as plain 'YYYY-MM-DD'. `new Date('2026-10-01')` reads
+// that as midnight UTC — 05:30 in India — so comparing it with a local
+// midnight put every date-based status a day behind (an IPO showed "Upcoming"
+// on its opening day and "Closed" on listing day). Date-only strings are read
+// as local midnight instead; anything with a time keeps its own meaning.
+function parseLocalDate(s) {
+  if (!s) return null;
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s));
+  var d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+window.parseLocalDate = parseLocalDate;
+
+// Today's date as 'YYYY-MM-DD' in the device's own time zone.
+// toISOString() is UTC, which in India is still "yesterday" until 05:30.
+function localDateStr(d) {
+  d = d || new Date();
+  var mm = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
+  return d.getFullYear() + '-' + mm + '-' + dd;
+}
+window.localDateStr = localDateStr;
+
 function deriveIpoStatus(ipo, allots, pools) {
   var hasPool = pools.some(function(p){ return p.ipo === ipo.id; });
   var marked  = allots.some(function(a){ return a.ipo === ipo.id && (a.status === 'allotted' || a.status === 'not_allotted'); });
   if (hasPool || marked) return 'Listed';
 
-  var toDate = function(s){ if (!s) return null; var d = new Date(s); return isNaN(d.getTime()) ? null : d; };
   var today = new Date(); today.setHours(0, 0, 0, 0);
-  var open = toDate(ipo.open), close = toDate(ipo.close), list = toDate(ipo.listDate);
+  var open = parseLocalDate(ipo.open), close = parseLocalDate(ipo.close), list = parseLocalDate(ipo.listDate);
 
   if (list  && today >= list)  return 'Listed';
   if (close && today >  close)  return 'Closed';   // applications closed, awaiting listing
@@ -141,7 +181,7 @@ function txAllotments(rows) {
   // rows joined: allotments.*, applications!inner(ipo_id, pan_id, category)
   return rows.map(function(r) {
     var ipoId = r.applications.ipo_id;
-    var ipo   = _ipos.find(function(i){ return i.id === ipoId; });
+    var ipo   = _ipoById[ipoId];
     return {
       id:        r.id,
       appId:     r.application_id,
@@ -206,8 +246,8 @@ function txSettlements(rows) {
 //     keep producing profit and was distributed to every member.
 //  2. The result is NOT clamped at zero. A listing below the issue price is a
 //     real loss and has to be visible; flooring it here would report a genuine
-//     loss as "no profit". The floor belongs on the pool's distributable net
-//     (PoolMath.category), not on the truth of what a PAN actually made.
+//     loss as "no profit". PoolMath.category then shares a pooled loss evenly
+//     across applicants exactly as it shares a profit.
 function rowGain(status, sellPrice, issuePrice, shares) {
   if (status !== 'allotted') return 0;
   var sp = parseFloat(sellPrice)  || 0;
@@ -521,11 +561,11 @@ function ratesForCategory(ipoId, category) {
 // predate migration 011, or a finalize that ran before panRows existed) can
 // never compute this differently.
 function buildFinalizePayload(ipoId) {
-  var ipoAllots  = _allotments.filter(function(a){ return a.ipo === ipoId; });
+  var ipoAllots  = allotsOfIpo(ipoId);
   var CAT_ORDER  = ['SME', 'Retail', 'sHNI', 'bHNI'];
   var categories = CAT_ORDER.filter(function(c){ return ipoAllots.some(function(a){ return a.category === c; }); });
   var panToMember = function(panId) {
-    var p = _pans.find(function(x){ return x.id === panId; });
+    var p = _panById[panId];
     return p ? p.member : null;
   };
   var r0 = ratesForIpo(ipoId);
@@ -630,7 +670,7 @@ function computeCharts() {
   // screen and the settlement ledger exactly.
   var profitByIpo = _ipos
     .map(function(i) {
-      var apps     = _allotments.filter(function(a){ return a.ipo === i.id; });
+      var apps     = allotsOfIpo(i.id);
       var allotted = apps.filter(function(a){ return a.status === 'allotted'; });
       var gross    = allotted.reduce(function(s,a){ return s + a.gain; }, 0);
       return {
@@ -653,7 +693,7 @@ function computeCharts() {
     byMonth[String(p.month).slice(0, 7)] = (byMonth[String(p.month).slice(0, 7)] || 0) + p.net;
   });
   var keys = Object.keys(byMonth).sort();
-  var anchor = keys.length ? keys[keys.length - 1] : (new Date()).toISOString().slice(0, 7);
+  var anchor = keys.length ? keys[keys.length - 1] : localDateStr().slice(0, 7);
   var anchorYear  = parseInt(anchor.slice(0, 4), 10);
   var anchorMonth = parseInt(anchor.slice(5, 7), 10) - 1;   // 0-based
   var monthlyProfit = [];
@@ -663,9 +703,17 @@ function computeCharts() {
     monthlyProfit.push({ m: MONTHS[d.getMonth()], v: byMonth[key] || 0 });
   }
 
-  // SME vs Mainboard — per-category nets grouped by board
-  var smeNet  = groupNetProfit(_allotments.filter(function(a){ return a.category === 'SME'; }));
-  var mainNet = groupNetProfit(_allotments.filter(function(a){ return a.category !== 'SME'; }));
+  // SME vs Mainboard — split by the IPO's board, not the application's
+  // category. Since SEBI's 1 Jul 2025 change SME applications are recorded as
+  // Retail/sHNI/bHNI like Mainboard ones; only legacy rows still say 'SME', so
+  // splitting on category counted every recent SME IPO's profit as Mainboard.
+  // groupNetProfit groups per (IPO, category), so this split never cuts a group.
+  var isSmeAllot = function(a) {
+    var ipo = _ipoById[a.ipo];
+    return ipo ? ipo.type === 'SME' : a.category === 'SME';
+  };
+  var smeNet  = groupNetProfit(_allotments.filter(isSmeAllot));
+  var mainNet = groupNetProfit(_allotments.filter(function(a){ return !isSmeAllot(a); }));
 
   // Allotment history: last 6 IPOs the pool applied to, oldest → newest
   var allotHistory = profitByIpo.slice(0, 6).reverse().map(function(p) {
@@ -720,7 +768,7 @@ function computeCategoryStats() {
 // of only ever the pooled number.
 function computeMemberProfits() {
   var panToMember = function(panId) {
-    var p = _pans.find(function(x){ return x.id === panId; });
+    var p = _panById[panId];
     return p ? p.member : null;
   };
 
@@ -731,7 +779,7 @@ function computeMemberProfits() {
   };
 
   _ipos.forEach(function(ipo) {
-    var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
+    var ipoAllots = allotsOfIpo(ipo.id);
     if (!ipoAllots.length) return;
 
     // Every member with at least one PAN in this IPO counts it once toward
@@ -781,7 +829,7 @@ function computeMemberProfits() {
 function computePanProfits() {
   var totals = {};   // panId -> { profit, solo, apps }
   _ipos.forEach(function(ipo) {
-    var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
+    var ipoAllots = allotsOfIpo(ipo.id);
     if (!ipoAllots.length) return;
 
     var cats = {};
@@ -921,7 +969,7 @@ function buildXirrLegs() {
   var idleRate = parseFloat(localStorage.getItem('idleRate') || '2.5');
 
   var panToMember = function(panId) {
-    var p = _pans.find(function(x){ return x.id === panId; });
+    var p = _panById[panId];
     return p ? p.member : null;
   };
 
@@ -929,8 +977,8 @@ function buildXirrLegs() {
   var contribByPan = {};   // panId -> [{ avail, amount, memberId }] (positive, not-yet-recognized)
 
   _allotments.forEach(function(a) {
-    var ipo = _ipos.find(function(i){ return i.id === a.ipo; });
-    var pan = _pans.find(function(p){ return p.id === a.pan; });
+    var ipo = _ipoById[a.ipo];
+    var pan = _panById[a.pan];
     if (!ipo || !pan || !ipo.lotValue) return;
     var outDate = toDateOrNull(ipo.close) || toDateOrNull(ipo.open);
     if (!outDate) return;
@@ -943,7 +991,7 @@ function buildXirrLegs() {
   });
 
   _ipos.forEach(function(ipo) {
-    var ipoAllots = _allotments.filter(function(a){ return a.ipo === ipo.id; });
+    var ipoAllots = allotsOfIpo(ipo.id);
     if (!ipoAllots.length) return;
     var pool = _pools.find(function(p){ return p.ipo === ipo.id; });
 
@@ -1030,7 +1078,7 @@ function computeXirrData() {
 // the UI reads DB.pools. The raw _pools array is kept for internal rate lookups.
 function activePools() {
   return _pools.filter(function(p) {
-    return _allotments.some(function(a){ return a.ipo === p.ipo && a.status === 'allotted'; });
+    return (_allotsByIpo[p.ipo] || []).some(function(a){ return a.status === 'allotted'; });
   });
 }
 
@@ -1085,15 +1133,19 @@ async function loadDB() {
   _members     = txMembers    (membersRes.data  || []);
   _pans        = txPans       (pansRes.data     || []);
   _ipos        = sortIposByRecency(txIpos(iposRes.data || []));
+  _allotments  = [];
+  rebuildIndexes();                                  // txAllotments looks IPOs up
   _allotments  = txAllotments (allotRes.data    || []);
+  rebuildIndexes();
   _pools       = txPools      (poolsRes.data    || []);
   _settlements = txSettlements(settleRes.data   || []);
 
   // The stored ipos.status is never advanced past its 'Upcoming' default, so
   // derive a live status from the IPO's dates and real activity instead.
   _ipos = _ipos.map(function(ipo) {
-    return Object.assign({}, ipo, { status: deriveIpoStatus(ipo, _allotments, _pools) });
+    return Object.assign({}, ipo, { status: deriveIpoStatus(ipo, allotsOfIpo(ipo.id), _pools) });
   });
+  rebuildIndexes();                                  // _ipos objects were replaced
 
   var charts = computeCharts();
   var xirrData = computeXirrData();
@@ -1125,9 +1177,11 @@ async function loadDB() {
     panProfits:   panProfits,
 
     me:     _members.find(function(m){ return m.you; }) || null,
-    ipo:    function(id){ return _ipos.find(function(i){ return i.id === id; }); },
+    ipo:    function(id){ return _ipoById[id]; },
     member: function(id){ return _members.find(function(m){ return m.id === id; }); },
-    pan:    function(id){ return _pans.find(function(p){ return p.id === id; }); },
+    pan:    function(id){ return _panById[id]; },
+    allotsOfIpo: allotsOfIpo,
+    allotsOfPan: allotsOfPan,
 
     // ── Mutations ──────────────────────────────────────────────────────────────
     mutations: {
@@ -1179,7 +1233,7 @@ async function loadDB() {
         }).select().single();
         if (error) throw error;
         _pans.push(txPans([data])[0]);
-        window.DB.pans = _pans;
+        window.DB.pans = _pans; rebuildIndexes();
         return txPans([data])[0];
       },
 
@@ -1188,7 +1242,7 @@ async function loadDB() {
         if (error) throw error;
         if (!data || data.length === 0) throw new Error('Delete failed — no rows removed (check admin permissions).');
         _pans = _pans.filter(function(p){ return p.id !== id; });
-        window.DB.pans = _pans;
+        window.DB.pans = _pans; rebuildIndexes();
       },
 
       async updatePan(id, fields) {
@@ -1198,7 +1252,7 @@ async function loadDB() {
         if (error) throw error;
         var idx = _pans.findIndex(function(p){ return p.id === id; });
         if (idx !== -1) _pans[idx] = Object.assign({}, _pans[idx], txPans([data])[0]);
-        window.DB.pans = _pans;
+        window.DB.pans = _pans; rebuildIndexes();
       },
 
       // ─── IPOs ────────────────────────────────────────────────────────────────
@@ -1262,7 +1316,7 @@ async function loadDB() {
         if (error) throw error;
         var t = txIpos([data])[0];
         _ipos = _ipos.map(function(i){ return i.id === id ? t : i; });
-        window.DB.ipos = _ipos;
+        window.DB.ipos = _ipos; rebuildIndexes();
         return t;
       },
 
@@ -1271,7 +1325,7 @@ async function loadDB() {
         if (error) throw error;
         if (!data || data.length === 0) throw new Error('Delete failed — no rows removed (check admin permissions).');
         _ipos = _ipos.filter(function(i){ return i.id !== id; });
-        window.DB.ipos = _ipos;
+        window.DB.ipos = _ipos; rebuildIndexes();
       },
 
       // ─── Allotments ──────────────────────────────────────────────────────────
@@ -1331,6 +1385,19 @@ async function loadDB() {
       // Save changed statuses for an IPO's allotments
       // changes: [{ id: allotmentId, status, shares, gain }]
       async saveAllotmentChanges(changes) {
+        // One transaction on the server (migration 018): every row saves or
+        // none does, so a dropped connection can't leave an IPO half-saved.
+        var rpcRows = changes.map(function(c) {
+          return { id: c.id, app_id: c.appId, category: c.category, status: c.status,
+                   shares: c.shares || 0, gain: c.gain || 0,
+                   sell_price: c.sellPrice != null ? c.sellPrice : null };
+        });
+        var rpc = await window.sb.rpc('save_allotment_changes', { p_rows: rpcRows });
+        if (!rpc.error) { await loadDB(); return; }
+        // Database not migrated yet -> fall back to the old row-by-row save.
+        // Any other error is real and must surface.
+        var missing = rpc.error.code === 'PGRST202' || /could not find the function/i.test(rpc.error.message || '');
+        if (!missing) throw rpc.error;
         for (var i = 0; i < changes.length; i++) {
           var c = changes[i];
           // Category lives on the application, not the allotment — update it there
@@ -1540,7 +1607,7 @@ async function loadDB() {
       },
 
       async markSettlementPaid(settlementId) {
-        var today = new Date().toISOString().slice(0, 10);
+        var today = localDateStr();
         var { data, error } = await window.sb.from('settlements')
           .update({ status: 'Paid', paid_date: today })
           .eq('id', settlementId).select();

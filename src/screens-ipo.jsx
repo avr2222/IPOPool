@@ -17,7 +17,7 @@ function IpoDetails({ id, navigate }) {
   const D = window.DB;
   const ipo = D.ipo(id);
   const f = (n, o) => D.fmtINR(n, o);
-  const allotsBase = D.allotments.filter(a => a.ipo === id);
+  const allotsBase = D.allotsOfIpo(id);
   const applicantCols = [
     { key: 'holder',   label: 'PAN holder',   align: 'left',  get: a => { const p = D.pans.find(x => x.id === a.pan); return p ? p.holder : ''; } },
     { key: 'category', label: 'Category',     align: 'left',  get: a => a.category || '' },

@@ -96,7 +96,7 @@ function ProfitPooling({ navigate, id }) {
 
   const ipo        = D.ipo(sel);
   const pool       = D.pools.find(p => p.ipo === sel);
-  const ipoAllots  = D.allotments.filter(a => a.ipo === sel);
+  const ipoAllots  = D.allotsOfIpo(sel);
   const me         = D.members.find(m => m.you);
 
   // Once a pool is finalized it carries the rates used at that time, so the

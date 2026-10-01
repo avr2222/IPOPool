@@ -59,7 +59,10 @@ section('remainder distribution (must not regress)');
   }
 }
 
-// ── 1.5  losses are visible per PAN but never distributed as a pay-in ───────
+// ── 1.5  losses are visible per PAN and shared like a profit ────────────────
+// A pooled loss is split evenly across every applicant the same way a profit
+// is (b1340ac "Share pooled losses the same way profits are shared") -- it
+// used to be floored at zero, which made the loss silently vanish.
 section('1.5  loss handling');
 {
   check('rowGain reports a real loss', rowGain('allotted', 90, 100, 50) === -500,
@@ -73,10 +76,20 @@ section('1.5  loss handling');
   const losing = [row(1,'allotted',-5000), row(2,'allotted',-3000)];
   const m = PoolMath.category(losing, 15, 0);
   check('a losing pool reports its true gross', m.gross === -8000, 'gross=' + m.gross);
-  check('a losing pool never distributes a negative amount', m.net === 0, 'net=' + m.net);
+  check('a losing pool distributes its whole loss', m.net === -8000, 'net=' + m.net);
   check('no STCG is charged on a loss', m.stcgAmt === 0, 'stcg=' + m.stcgAmt);
+  check('no bonus is carved out of a loss', m.bonusTotal === 0,
+    'bonus=' + PoolMath.category(losing, 15, 0, 10).bonusTotal);
   const amounts = PoolMath.panAmounts(losing, 15, 0);
-  check('no PAN is asked to pay in', Object.values(amounts).every(v => v >= 0));
+  const vals = Object.values(amounts);
+  check('the loss is split evenly across every PAN', vals.every(v => v === -4000), JSON.stringify(amounts));
+  // Odd loss: per-PAN shares still sum exactly to net and differ by <= 1 rupee.
+  const odd = [row(1,'allotted',-1000), row(2,'not_allotted',0), row(3,'allotted',0)];
+  const om = PoolMath.category(odd, 15, 0);
+  const oa = Object.values(PoolMath.panAmounts(odd, 15, 0));
+  check('an uneven loss still sums exactly to net', oa.reduce((a, b) => a + b, 0) === om.net,
+    'sum=' + oa.reduce((a, b) => a + b, 0) + ' net=' + om.net);
+  check('an uneven loss differs by at most 1 rupee per PAN', Math.max(...oa) - Math.min(...oa) <= 1, JSON.stringify(oa));
 }
 
 // ── STCG still applies normally on a profit ─────────────────────────────────
@@ -197,25 +210,32 @@ section('1.4  brokerage charged once per IPO, not once per category');
     { id: 'a2', ipo_id: 'i1', pan_id: 'p2', category: 'sHNI',   lots: 14 },
     { id: 'a3', ipo_id: 'i1', pan_id: 'p3', category: 'bHNI',   lots: 68 },
     { id: 'a4', ipo_id: 'i2', pan_id: 'p1', category: 'SME',    lots: 1 },
+    // A post-July-2025 SME IPO: its applications carry Retail, not 'SME'.
+    { id: 'a5', ipo_id: 'i3', pan_id: 'p2', category: 'Retail', lots: 2 },
   ];
+  const seedSmeNew = { id: 'i3', name: 'Vans Electro', short_name: 'Vans', type: 'SME',
+                       status: 'Listed', band_high: 118, lot_size: 1200, lot_value: 141600 };
   const allots = [
     { id: 'al1', application_id: 'a1', status: 'allotted', shares: 30,   gain: 30000, sell_price: 1496, applications: apps[0] },
     { id: 'al2', application_id: 'a2', status: 'allotted', shares: 420,  gain: 50000, sell_price: 1496, applications: apps[1] },
     { id: 'al3', application_id: 'a3', status: 'allotted', shares: 2040, gain: 20000, sell_price: 1496, applications: apps[2] },
     { id: 'al4', application_id: 'a4', status: 'allotted', shares: 1000, gain: 40000, sell_price: 185,  applications: apps[3] },
+    { id: 'al5', application_id: 'a5', status: 'allotted', shares: 2400, gain: 24000, sell_price: 128,  applications: apps[4] },
   ];
   const tables = {
     members: [{ id: 'm1', name: 'A', is_admin: true }],
     pan_accounts: [{ id: 'p1', member_id: 'm1', pan: 'AAAAA1111A', holder: 'A' },
                    { id: 'p2', member_id: 'm1', pan: 'AAAAA2222A', holder: 'B' },
                    { id: 'p3', member_id: 'm1', pan: 'AAAAA3333A', holder: 'C' }],
-    ipos: [seedIpo, seedSme], applications: apps, allotments: allots,
+    ipos: [seedIpo, seedSme, seedSmeNew], applications: apps, allotments: allots,
     profit_pools: [], settlements: [],
   };
   const qb = (name) => {
     const p = Promise.resolve({ data: tables[name] || [], error: null });
     p.select = () => qb(name); p.order = () => qb(name); p.eq = () => qb(name);
     p.in = () => qb(name); p.limit = () => qb(name);
+    // loadDB pages every table (Supabase caps a response at 1000 rows).
+    p.range = (from, to) => Promise.resolve({ data: (tables[name] || []).slice(from, to + 1), error: null });
     return p;
   };
   win.sb = { from: qb, auth: { getUser: async () => ({ data: { user: null } }) } };
@@ -295,8 +315,23 @@ section('1.4  brokerage charged once per IPO, not once per category');
       win.catMinLots('sHNI', 50000, true) === Math.max(3, Math.floor(200000/50000)+1),
       'got ' + win.catMinLots('sHNI', 50000, true));
 
-    console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all invariants hold'));
-    process.exit(failures ? 1 : 0);
+    // Reload so the dashboard figures are computed with the rates set above.
+    section('SME vs Mainboard chart');
+    return win.loadDB().then(() => {
+      const whole = win.groupNetProfit(win.DB.allotments);
+      // The SME vs Mainboard chart splits by the IPO's board: an SME IPO whose
+      // applications are Retail/sHNI/bHNI (every SME IPO since Jul 2025) is SME.
+      const byBoard = (t) => win.groupNetProfit(win.DB.allotments.filter(a => win.DB.ipo(a.ipo).type === t));
+      const svm = win.DB.smeVsMain;
+      check('SME vs Mainboard counts a Retail-category SME IPO as SME',
+        svm.sme === byBoard('SME') && svm.mainboard === byBoard('Mainboard'),
+        JSON.stringify(svm) + ' expected sme=' + byBoard('SME') + ' main=' + byBoard('Mainboard'));
+      check('SME vs Mainboard still adds up to the whole book', svm.sme + svm.mainboard === whole,
+        JSON.stringify(svm) + ' whole=' + whole);
+
+      console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all invariants hold'));
+      process.exit(failures ? 1 : 0);
+    });
   });
 }
 
