@@ -1,6 +1,7 @@
 -- 019 — Keep the pool's tax & cost settings in the database.
 --
--- STCG %, brokerage, the allotted-PAN bonus % and the idle-capital rate used
+-- STCG %, brokerage, the allotted-PAN bonus %, the idle-capital rate (and
+-- any extra market holidays for IPO date auto-fill) used
 -- to live in each browser's localStorage, so two admin devices could price
 -- the same un-finalized IPO differently. One shared row now holds them;
 -- finalizing a pool still snapshots the rates onto profit_pools as before.
@@ -15,8 +16,12 @@ CREATE TABLE IF NOT EXISTS pool_settings (
   brokerage   numeric,
   bonus_rate  numeric,
   idle_rate   numeric,
+  -- Extra exchange holidays (any YYYY-MM-DD in the text) on top of the list
+  -- built into the app, used to auto-fill IPO open/allotment/listing dates.
+  market_holidays text,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE pool_settings ADD COLUMN IF NOT EXISTS market_holidays text;
 INSERT INTO pool_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
 ALTER TABLE pool_settings ENABLE ROW LEVEL SECURITY;

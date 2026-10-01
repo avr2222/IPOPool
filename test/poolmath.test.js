@@ -59,6 +59,23 @@ section('remainder distribution (must not regress)');
   }
 }
 
+// ── IPO dates from the close date (SEBI T+3, NSE holidays) ──────────────────
+section('IPO timeline from close date');
+{
+  const t = (c) => win.ipoTimeline(c);
+  const a = t('2026-10-01');   // Thu; Fri 2 Oct is Gandhi Jayanti
+  check('close Thu 1 Oct 2026 -> open Tue 29 Sep', a.open === '2026-09-29', JSON.stringify(a));
+  check('allotment skips Gandhi Jayanti + weekend -> Mon 5 Oct', a.allot === '2026-10-05', JSON.stringify(a));
+  check('listing is T+3 -> Wed 7 Oct', a.list === '2026-10-07', JSON.stringify(a));
+  const b = t('2026-10-16');   // Dussehra Tue 20 Oct
+  check('listing skips Dussehra -> Thu 22 Oct', b.allot === '2026-10-19' && b.list === '2026-10-22', JSON.stringify(b));
+  const c = t('2026-03-04');   // Holi Tue 3 Mar sits inside the issue window
+  check('open skips Holi -> Fri 27 Feb (T-1 = Mon 2 Mar)', c.open === '2026-02-27', JSON.stringify(c));
+  check('a holiday close date is flagged', !!t('2026-10-02').closeWarning);
+  check('a normal close date is not flagged', t('2026-10-01').closeWarning === null);
+  check('a bad date gives no timeline', t('not-a-date') === null && t('') === null);
+}
+
 // ── 1.5  losses are visible per PAN and shared like a profit ────────────────
 // A pooled loss is split evenly across every applicant the same way a profit
 // is (b1340ac "Share pooled losses the same way profits are shared") -- it
