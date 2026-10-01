@@ -503,8 +503,16 @@ function AdminPanel() {
     { key: 'applied',  label: 'Applied',  align: 'right', defDir: 'desc' },
     { key: 'allotted', label: 'Allotted', align: 'right', defDir: 'desc' },
   ];
-  const [ipoSort, onIpoSort] = useSortState(null);
+  const [ipoSort, onIpoSortRaw] = useSortState(null);
   const sortedIpos = ipoSort.key ? sortRows(ipoRows, ipoSort, ipoCols) : recentFirst;
+  // The master list keeps growing; show IPO_PAGE rows at a time. Page 1 is the
+  // newest IPOs (or the top of the active sort) — re-sorting jumps back to it.
+  const IPO_PAGE = 20;
+  const [ipoPage, setIpoPage] = useState(0);
+  const onIpoSort = (...args) => { setIpoPage(0); onIpoSortRaw(...args); };
+  const ipoPages   = Math.max(1, Math.ceil(sortedIpos.length / IPO_PAGE));
+  const curIpoPage = Math.min(ipoPage, ipoPages - 1);   // clamp after a delete
+  const pagedIpos  = sortedIpos.slice(curIpoPage * IPO_PAGE, (curIpoPage + 1) * IPO_PAGE);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -574,7 +582,7 @@ function AdminPanel() {
                     <th style={{ padding: '10px 18px' }}></th>
                   </tr></thead>
                   <tbody>
-                    {sortedIpos.map(ip => {
+                    {pagedIpos.map(ip => {
                       const applied  = ip.applied;
                       const allotted = ip.allotted;
                       return (
@@ -620,6 +628,38 @@ function AdminPanel() {
                 </table>
               </div>
             )}
+            {ipoPages > 1 && (() => {
+              const btn = (label, page, { active = false, disabled = false, key } = {}) => (
+                <button key={key ?? label} disabled={disabled} onClick={() => setIpoPage(page)} style={{
+                  minWidth: 32, height: 30, padding: '0 9px', borderRadius: 'var(--r-sm)', fontSize: 12.5, fontWeight: 700,
+                  border: '1px solid ' + (active ? 'var(--brand)' : 'var(--border)'),
+                  background: active ? 'var(--brand-tint)' : 'var(--surface)',
+                  color: active ? 'var(--brand)' : disabled ? 'var(--ink-4, var(--ink-3))' : 'var(--ink-2)',
+                  opacity: disabled ? .5 : 1, cursor: disabled ? 'default' : 'pointer',
+                }}>{label}</button>
+              );
+              // First, last and the pages around the current one; gaps become "…".
+              const nums = [];
+              for (let i = 0; i < ipoPages; i++) {
+                if (i === 0 || i === ipoPages - 1 || Math.abs(i - curIpoPage) <= 1) nums.push(i);
+                else if (nums[nums.length - 1] !== '…') nums.push('…');
+              }
+              const from = curIpoPage * IPO_PAGE + 1, to = Math.min(sortedIpos.length, (curIpoPage + 1) * IPO_PAGE);
+              return (
+                <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
+                    Showing <strong style={{ color: 'var(--ink-2)' }}>{from}–{to}</strong> of {sortedIpos.length}
+                  </div>
+                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                    {btn('‹ Prev', curIpoPage - 1, { disabled: curIpoPage === 0 })}
+                    {nums.map((n, i) => n === '…'
+                      ? <span key={'gap' + i} style={{ alignSelf: 'center', color: 'var(--ink-3)', fontSize: 12.5, padding: '0 2px' }}>…</span>
+                      : btn(String(n + 1), n, { active: n === curIpoPage }))}
+                    {btn('Next ›', curIpoPage + 1, { disabled: curIpoPage === ipoPages - 1 })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -1231,10 +1271,16 @@ function AdminPanel() {
         };
         const updateShares = (a, val) => {
           const sh  = parseInt(val) || 0;
-          const st  = changes[a.id]?.status ?? a.status;
-          const rsp = parseFloat(changes[a.id]?.sellPrice) || lp; // row sell price or global
+          const cur = changes[a.id]?.status ?? a.status;
+          // Typing a share count is the admin saying "this PAN got these" —
+          // leaving the row pending made Save quietly drop the shares (only
+          // allotted rows keep any), so the entry never showed up afterwards.
+          const st  = sh > 0 ? 'allotted' : cur;
+          const curSp = changes[a.id]?.sellPrice ?? (a.sellPrice != null ? String(a.sellPrice) : '');
+          const rsp = parseFloat(curSp) || lp; // row sell price or global
           const g   = st === 'allotted' ? window.rowGain(st, rsp, issuePrice, sh) : 0;
-          setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), shares: val, gain: g } }));
+          setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), status: st, shares: val, gain: g,
+            ...(st === 'allotted' && !parseFloat(curSp) && lp > 0 ? { sellPrice: String(lp) } : {}) } }));
         };
         const markAllotted = () => setChanges(prev => {
           const n = { ...prev };
@@ -1308,7 +1354,7 @@ function AdminPanel() {
                         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
                           {cats.map(c => (
                             <span key={c} style={{ fontSize: 10.5, fontWeight: 700, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 999, padding: '2px 9px', color: 'var(--ink-2)' }}>
-                              {c} · {byCat[c]}
+                              {vCatLabel(c)} · {byCat[c]}
                             </span>
                           ))}
                         </div>
@@ -1455,12 +1501,15 @@ function AdminPanel() {
                               </div>
                             </td>
                             <td style={{ padding: '10px 8px', textAlign: 'right' }}>
-                              <input type="number" min="0" value={shares}
+                              {/* Until a row is allotted it has no shares of its own; show the
+                                  applied quantity as the hint instead of a bare "0". */}
+                              <input type="number" min="0" value={status !== 'allotted' && !(parseInt(shares) > 0) ? '' : shares}
                                 onChange={e => updateShares(a, e.target.value)}
+                                placeholder={vIpo?.lotSize ? String((a.lots || 1) * vIpo.lotSize) : '0'}
                                 style={{ ...inputSt, width: 74, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
-                              {a.lots > 1 && (
+                              {a.lots >= 1 && (
                                 <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
-                                  applied {a.lots} lots{vIpo?.lotSize ? ` · ${(a.lots * vIpo.lotSize).toLocaleString('en-IN')} sh` : ''}
+                                  applied {a.lots} lot{a.lots !== 1 ? 's' : ''}{vIpo?.lotSize ? ` · ${(a.lots * vIpo.lotSize).toLocaleString('en-IN')} sh` : ''}
                                 </div>
                               )}
                             </td>

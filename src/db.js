@@ -1036,6 +1036,25 @@ function activePools() {
 
 // ── Main loader ───────────────────────────────────────────────────────────────
 
+// Supabase (PostgREST) caps every response at its max-rows setting — 1000 by
+// default — and truncates silently, no error. A single select of a table that
+// has grown past that returns an arbitrary subset, which is how an IPO's
+// applicants list ended up showing only some of the PANs that applied. Page
+// through with .range() until a short page comes back. `build` must return a
+// fresh query each call (a builder cannot be re-awaited) with a stable,
+// unique ordering so pages neither overlap nor skip rows.
+var PAGE_SIZE = 1000;
+async function fetchAll(build) {
+  var all = [];
+  for (var from = 0; ; from += PAGE_SIZE) {
+    var res = await build().range(from, from + PAGE_SIZE - 1);
+    if (res.error) return res;
+    var rows = res.data || [];
+    all = all.concat(rows);
+    if (rows.length < PAGE_SIZE) return { data: all, error: null };
+  }
+}
+
 async function loadDB() {
   var sb = window.sb;
 
@@ -1045,12 +1064,12 @@ async function loadDB() {
 
   // Fetch all tables in parallel
   var [membersRes, pansRes, iposRes, allotRes, poolsRes, settleRes] = await Promise.all([
-    sb.from('members').select('*').order('name'),
-    sb.from('pan_accounts').select('*').order('holder_name'),
-    sb.from('ipos').select('*').order('open_date', { ascending: false }),
-    sb.from('allotments').select('*, applications!inner(ipo_id, pan_id, category, lots)'),
-    sb.from('profit_pools').select('*'),
-    sb.from('settlements').select('*, profit_pools!inner(ipo_id)').order('created_at', { ascending: false }),
+    fetchAll(function(){ return sb.from('members').select('*').order('name').order('id'); }),
+    fetchAll(function(){ return sb.from('pan_accounts').select('*').order('holder_name').order('id'); }),
+    fetchAll(function(){ return sb.from('ipos').select('*').order('open_date', { ascending: false }).order('id'); }),
+    fetchAll(function(){ return sb.from('allotments').select('*, applications!inner(ipo_id, pan_id, category, lots)').order('id'); }),
+    fetchAll(function(){ return sb.from('profit_pools').select('*').order('id'); }),
+    fetchAll(function(){ return sb.from('settlements').select('*, profit_pools!inner(ipo_id)').order('created_at', { ascending: false }).order('id'); }),
   ]);
 
   // If ANY table failed, abort rather than render a confident but partial
