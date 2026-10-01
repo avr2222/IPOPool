@@ -1231,10 +1231,16 @@ function AdminPanel() {
         };
         const updateShares = (a, val) => {
           const sh  = parseInt(val) || 0;
-          const st  = changes[a.id]?.status ?? a.status;
-          const rsp = parseFloat(changes[a.id]?.sellPrice) || lp; // row sell price or global
+          const cur = changes[a.id]?.status ?? a.status;
+          // Typing a share count is the admin saying "this PAN got these" —
+          // leaving the row pending made Save quietly drop the shares (only
+          // allotted rows keep any), so the entry never showed up afterwards.
+          const st  = sh > 0 ? 'allotted' : cur;
+          const curSp = changes[a.id]?.sellPrice ?? (a.sellPrice != null ? String(a.sellPrice) : '');
+          const rsp = parseFloat(curSp) || lp; // row sell price or global
           const g   = st === 'allotted' ? window.rowGain(st, rsp, issuePrice, sh) : 0;
-          setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), shares: val, gain: g } }));
+          setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), status: st, shares: val, gain: g,
+            ...(st === 'allotted' && !parseFloat(curSp) && lp > 0 ? { sellPrice: String(lp) } : {}) } }));
         };
         const markAllotted = () => setChanges(prev => {
           const n = { ...prev };
@@ -1308,7 +1314,7 @@ function AdminPanel() {
                         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
                           {cats.map(c => (
                             <span key={c} style={{ fontSize: 10.5, fontWeight: 700, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 999, padding: '2px 9px', color: 'var(--ink-2)' }}>
-                              {c} · {byCat[c]}
+                              {vCatLabel(c)} · {byCat[c]}
                             </span>
                           ))}
                         </div>
@@ -1455,12 +1461,15 @@ function AdminPanel() {
                               </div>
                             </td>
                             <td style={{ padding: '10px 8px', textAlign: 'right' }}>
-                              <input type="number" min="0" value={shares}
+                              {/* Until a row is allotted it has no shares of its own; show the
+                                  applied quantity as the hint instead of a bare "0". */}
+                              <input type="number" min="0" value={status !== 'allotted' && !(parseInt(shares) > 0) ? '' : shares}
                                 onChange={e => updateShares(a, e.target.value)}
+                                placeholder={vIpo?.lotSize ? String((a.lots || 1) * vIpo.lotSize) : '0'}
                                 style={{ ...inputSt, width: 74, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
-                              {a.lots > 1 && (
+                              {a.lots >= 1 && (
                                 <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
-                                  applied {a.lots} lots{vIpo?.lotSize ? ` · ${(a.lots * vIpo.lotSize).toLocaleString('en-IN')} sh` : ''}
+                                  applied {a.lots} lot{a.lots !== 1 ? 's' : ''}{vIpo?.lotSize ? ` · ${(a.lots * vIpo.lotSize).toLocaleString('en-IN')} sh` : ''}
                                 </div>
                               )}
                             </td>
