@@ -48,20 +48,30 @@ function UpiPay({ receiver, amount, payer, note }) {
 // net-position breakdown. Shared by the single-IPO view and the combined-
 // across-pools view below, driven by whichever transferPlan/netPositions the
 // caller passes in, so the two presentations can never drift apart.
-function TransferPlanCard({ D, f, transferPlan, netPositions, title, subtitle, naiveCount, footnote }) {
+function TransferPlanCard({ D, f, transferPlan, netPositions, title, subtitle, naiveCount, footnote, estimate }) {
   if (!transferPlan.length) return null;
   return (
     <Card pad={0}>
       <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
         <div>
-          <div style={{ fontSize: 14.5, fontWeight: 800 }}>{title}</div>
+          <div style={{ fontSize: 14.5, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {title}
+            {estimate && <Badge tone="warn">Estimate · not finalized</Badge>}
+          </div>
           <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
             {subtitle} · {transferPlan.length} transfer{transferPlan.length !== 1 ? 's' : ''} needed
           </div>
+          {estimate && (
+            <div style={{ fontSize: 12, color: 'var(--warn)', fontWeight: 600, marginTop: 4 }}>
+              Worked out from the current allotments and settings. Amounts can still change — finalize payouts before anyone transfers money.
+            </div>
+          )}
         </div>
-        <div style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600 }}>
-          (without pooling this would be {naiveCount} transfers)
-        </div>
+        {naiveCount > 0 && (
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600 }}>
+            (without pooling this would be {naiveCount} transfers)
+          </div>
+        )}
       </div>
       <div style={{ padding: '8px 18px 18px' }}>
         {transferPlan.map((t, i) => {
@@ -533,7 +543,13 @@ function SettlementLedger({ navigate, id }) {
             <span style={{ fontSize: 13, fontWeight: 700, color: combineMode ? 'var(--brand)' : 'var(--ink)' }}>Combine pending ({poolsWithPending.length})</span>
           </button>
         )}
-        {visiblePools.map(p => {
+        {D.pools.length > 8 && (
+          <JumpToIpo pools={D.pools} value={combineMode ? '' : selIpo} onChange={ipoId => {
+            if (settledPools.some(p => p.ipo === ipoId)) setShowSettled(true);
+            setCombineMode(false); setSelIpo(ipoId); setRows(D.settlements.filter(s => s.ipo === ipoId)); setTab('All');
+          }} />
+        )}
+        {stripPools(visiblePools, combineMode ? null : selIpo).map(p => {
           const ip = D.ipo(p.ipo);
           const active = !combineMode && p.ipo === selIpo;
           return (
@@ -732,8 +748,9 @@ function SettlementLedger({ navigate, id }) {
         </div>
       )}
 
-      {/* KPI cards */}
-      <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14 }}>
+      {/* KPI cards — only once payouts exist; before that they'd read ₹0 / 0
+          while the estimated transfer plan below shows real amounts. */}
+      {rows.length > 0 && <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14 }}>
         <Card pad={18}>
           {(() => {
             const totalAmount = rows.reduce((s, r) => s + r.amount, 0);
@@ -763,7 +780,7 @@ function SettlementLedger({ navigate, id }) {
           <div className="num" style={{ fontSize: 28, fontWeight: 800, margin: '8px 0 2px' }}>{f(paidPayout)}</div>
           <Meter value={settledCount} max={rows.length} color="var(--brand)" style={{ marginTop: 8 }} />
         </Card>
-      </div>
+      </div>}
 
       {/* Empty state — no settlements generated yet */}
       {rows.length === 0 && (
@@ -898,7 +915,9 @@ function SettlementLedger({ navigate, id }) {
 
       {/* ── Minimal Transfer Plan ── */}
       <TransferPlanCard D={D} f={f} transferPlan={transferPlan} netPositions={netPositions}
-        title="Minimal transfer plan" subtitle="Fewest transfers to settle all balances"
+        title={rows.length === 0 ? 'Estimated transfer plan' : 'Minimal transfer plan'}
+        subtitle="Fewest transfers to settle all balances"
+        estimate={rows.length === 0}
         naiveCount={rows.filter(r => r.amount !== 0).length}
         footnote={`Net = allotted gain − ${stcgRate}% STCG − charges − pool share. Positive = owes others; negative = owed by others.`} />
       </>

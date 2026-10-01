@@ -491,10 +491,37 @@ window.PoolMath = PoolMath;
 function ratesForIpo(ipoId) {
   var pool = _pools.find(function(p){ return p.ipo === ipoId; });
   return {
-    stcg:  pool && pool.stcgRate  != null ? pool.stcgRate  : parseFloat(localStorage.getItem('stcg')       || '15'),
-    brok:  pool && pool.brokerage != null ? pool.brokerage : parseFloat(localStorage.getItem('brokerage')  || '0'),
-    bonus: pool && pool.bonusRate != null ? pool.bonusRate : parseFloat(localStorage.getItem('allotBonus') || '0'),
+    stcg:  pool && pool.stcgRate  != null ? pool.stcgRate  : poolSetting('stcg'),
+    brok:  pool && pool.brokerage != null ? pool.brokerage : poolSetting('brokerage'),
+    bonus: pool && pool.bonusRate != null ? pool.bonusRate : poolSetting('allotBonus'),
   };
+}
+
+// Pool-wide settings (migration 019's pool_settings row). They used to live
+// only in each browser's localStorage, so two admin devices could show
+// different profit for the same un-finalized IPO. Resolution order: the
+// shared database value, then this device's old local value (so nothing
+// shifts before an admin first saves Settings), then the default.
+// STCG defaults to 20%: Budget 2024 raised it from 15% for listed equity
+// sold on or after 23 Jul 2024.
+var SETTING_DEFAULTS = { stcg: 20, brokerage: 0, allotBonus: 0, idleRate: 2.5 };
+var SETTING_COLUMNS  = { stcg: 'stcg_rate', brokerage: 'brokerage', allotBonus: 'bonus_rate', idleRate: 'idle_rate' };
+var _poolSettings = {};   // column -> value, from pool_settings
+function poolSetting(key) {
+  var v = _poolSettings[SETTING_COLUMNS[key]];
+  if (v != null && !isNaN(parseFloat(v))) return parseFloat(v);
+  var local = null;
+  try { local = localStorage.getItem(key); } catch (e) {}
+  if (local != null && local !== '' && !isNaN(parseFloat(local))) return parseFloat(local);
+  return SETTING_DEFAULTS[key];
+}
+window.poolSetting = poolSetting;
+async function loadPoolSettings() {
+  // Optional: a database without migration 019 just keeps the local values.
+  try {
+    var res = await window.sb.from('pool_settings').select('*').eq('id', 1);
+    _poolSettings = (!res.error && res.data && res.data[0]) ? res.data[0] : {};
+  } catch (e) { _poolSettings = {}; }
 }
 
 // Brokerage is ONE flat charge per IPO — Settings calls it "flat amount
@@ -966,7 +993,7 @@ window.xirr = xirr;
 // deferral entirely, not just apply a 1.0 growth factor.
 function buildXirrLegs() {
   var today = new Date(); today.setHours(0, 0, 0, 0);
-  var idleRate = parseFloat(localStorage.getItem('idleRate') || '2.5');
+  var idleRate = poolSetting('idleRate');
 
   var panToMember = function(panId) {
     var p = _panById[panId];
@@ -1108,6 +1135,7 @@ async function loadDB() {
 
   // Resolve current user
   var userRes = await sb.auth.getUser();
+  await loadPoolSettings();
   _currentUid = userRes.data.user ? userRes.data.user.id : null;
 
   // Fetch all tables in parallel
@@ -1243,6 +1271,26 @@ async function loadDB() {
         if (!data || data.length === 0) throw new Error('Delete failed — no rows removed (check admin permissions).');
         _pans = _pans.filter(function(p){ return p.id !== id; });
         window.DB.pans = _pans; rebuildIndexes();
+      },
+
+      // ─── Pool settings (migration 019) ───────────────────────────────────
+      // vals: { stcg, brokerage, allotBonus, idleRate }. Kept in localStorage
+      // too, so a database without 019 still behaves as it always did.
+      async saveSettings(vals) {
+        Object.keys(SETTING_COLUMNS).forEach(function(k) {
+          try { localStorage.setItem(k, String(vals[k])); } catch (e) {}
+        });
+        var row = { id: 1, updated_at: new Date().toISOString() };
+        Object.keys(SETTING_COLUMNS).forEach(function(k) { row[SETTING_COLUMNS[k]] = vals[k]; });
+        var { data, error } = await window.sb.from('pool_settings').upsert(row, { onConflict: 'id' }).select();
+        if (error) {
+          if (/pool_settings/.test(error.message || '') && /(does not exist|schema cache|not find)/i.test(error.message || '')) {
+            throw new Error('Saved on this device only. Run migration 019_pool_settings.sql in Supabase to share settings across devices.');
+          }
+          throw error;
+        }
+        if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
+        await loadDB();
       },
 
       async updatePan(id, fields) {
@@ -1792,7 +1840,8 @@ window.MemberAPI = {
     return res.data;   // { ok:true, count:N }
   },
   summary: async function (loginPan) {
-    var idleRate = parseFloat(localStorage.getItem('idleRate') || '2.5');
+    await loadPoolSettings();   // anon can read pool_settings (019)
+    var idleRate = poolSetting('idleRate');
     var res = await window.sb.rpc('member_summary', { p_login_pan: loginPan, p_idle_rate: idleRate });
     if (res.error) throw res.error;
     return res.data;   // { name, total_profit, total_bonus, paid_profit, pending_profit, ipos_applied, pans_applied, allotments, rank, total_members, ipos:[...], pans:[...]|null (head only) }

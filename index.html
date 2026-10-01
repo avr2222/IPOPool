@@ -42,6 +42,15 @@
     /* ── Tables: always horizontally scrollable ─────────── */
     .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+    /* Admin IPO list: table on wide screens, cards on phones */
+    .ipo-cards-mobile { display: none; }
+    @media (max-width: 900px) {
+      .ipo-table-desktop { display: none; }
+      .ipo-cards-mobile  { display: block; }
+    }
+    .force-mobile .ipo-table-desktop { display: none; }
+    .force-mobile .ipo-cards-mobile  { display: block; }
+
     /* ── Tablet (901–1200px) ────────────────────────────── */
     @media (max-width: 1200px) and (min-width: 901px) {
       .kpi-grid           { grid-template-columns: repeat(3, 1fr) !important; }

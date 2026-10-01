@@ -6,11 +6,14 @@ function SettingsScreen() {
   const D = window.DB;
   const me = D.members.find(m => m.you);
 
-  const [stcg,       setStcg]       = useState(() => parseFloat(localStorage.getItem('stcg')       || '15'));
-  const [brokerage,  setBrokerage]  = useState(() => parseFloat(localStorage.getItem('brokerage')   || '0'));
-  const [bonusRate,  setBonusRate]  = useState(() => parseFloat(localStorage.getItem('allotBonus')  || '0'));
-  const [idleRate,   setIdleRate]   = useState(() => parseFloat(localStorage.getItem('idleRate')    || '2.5'));
+  // Shared across every device via the pool_settings row (see poolSetting).
+  const [stcg,       setStcg]       = useState(() => window.poolSetting('stcg'));
+  const [brokerage,  setBrokerage]  = useState(() => window.poolSetting('brokerage'));
+  const [bonusRate,  setBonusRate]  = useState(() => window.poolSetting('allotBonus'));
+  const [idleRate,   setIdleRate]   = useState(() => window.poolSetting('idleRate'));
   const [saved,      setSaved]      = useState(false);
+  const [saving,     setSaving]     = useState(false);
+  const [saveErr,    setSaveErr]    = useState('');
 
   // Repairs settlement_pans (migration 011's per-PAN settlement breakdown)
   // for any IPO finalized before that table existed -- those pools have real
@@ -32,13 +35,14 @@ function SettingsScreen() {
     setBackfilling(false);
   };
 
-  const handleSave = () => {
-    localStorage.setItem('stcg',       String(stcg));
-    localStorage.setItem('brokerage',  String(brokerage));
-    localStorage.setItem('allotBonus', String(bonusRate));
-    localStorage.setItem('idleRate',   String(idleRate));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2200);
+  const handleSave = async () => {
+    setSaving(true); setSaveErr('');
+    try {
+      await D.mutations.saveSettings({ stcg, brokerage, allotBonus: bonusRate, idleRate });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2200);
+    } catch (e) { setSaveErr(e.message || 'Could not save settings.'); }
+    setSaving(false);
   };
 
   // Live preview of how settings affect a sample profit
@@ -107,7 +111,7 @@ function SettingsScreen() {
               <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--ink-2)' }}>%</span>
               {stcg === 0 && (
                 <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--warn)', background: 'var(--warn-soft)', borderRadius: 'var(--r-sm)', padding: '3px 9px' }}>
-                  Profit shows pre-tax — default is 15%
+                  Profit shows pre-tax — default is 20%
                 </span>
               )}
             </div>
@@ -216,13 +220,14 @@ function SettingsScreen() {
       </Card>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <Button variant="primary" icon={saved ? 'check' : undefined} onClick={handleSave} style={{ minWidth: 140 }}>
-          {saved ? 'Saved!' : 'Save settings'}
+        <Button variant="primary" icon={saved ? 'check' : undefined} onClick={handleSave} disabled={saving} style={{ minWidth: 140 }}>
+          {saving ? 'Saving…' : saved ? 'Saved!' : 'Save settings'}
         </Button>
-        <button onClick={() => { setStcg(15); setBrokerage(0); setBonusRate(0); setIdleRate(2.5); }} style={{ background: 'none', border: 'none', color: 'var(--ink-3)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
-          Reset to defaults (15% STCG, ₹0 brokerage, 0% bonus, 2.5% idle rate)
+        <button onClick={() => { setStcg(20); setBrokerage(0); setBonusRate(0); setIdleRate(2.5); }} style={{ background: 'none', border: 'none', color: 'var(--ink-3)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+          Reset to defaults (20% STCG, ₹0 brokerage, 0% bonus, 2.5% idle rate)
         </button>
-        {saved && <span style={{ fontSize: 13, color: 'var(--profit)', fontWeight: 600 }}>Settings applied to all profit and XIRR calculations.</span>}
+        {saved && <span style={{ fontSize: 13, color: 'var(--profit)', fontWeight: 600 }}>Saved for every device. Finalized IPOs keep the rates they were finalized with.</span>}
+        {saveErr && <span style={{ fontSize: 13, color: 'var(--warn)', fontWeight: 600 }}>{saveErr}</span>}
       </div>
 
     </div>

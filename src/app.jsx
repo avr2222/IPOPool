@@ -124,8 +124,9 @@ function Topbar({ route, navigate, dark, setDark }) {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         {window.DB?.kpis?.profit > 0 && (
-          <div className="topbar-profit" style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'var(--profit-soft)', borderRadius: 'var(--r-md)', padding: '7px 12px' }}>
+          <div className="topbar-profit" title="Net profit across every IPO, after tax and charges" style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'var(--profit-soft)', borderRadius: 'var(--r-md)', padding: '7px 12px' }}>
             <Icon name="trend" size={15} color="var(--profit)" />
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--profit)', opacity: .8 }}>Total profit</span>
             <span className="num" style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--profit)' }}>+{window.DB.fmtINR(window.DB.kpis.profit, { compact: true })}</span>
           </div>
         )}
@@ -140,6 +141,7 @@ function BottomNav({ route, navigate }) {
     ['dashboard', 'Home',    'dashboard'],
     ['pooling',   'Pool',    'pool'],
     ['settlement','Settle',  'ledger'],
+    ['pan',       'PANs',    'pan'],
     ['admin',     'Admin',   'admin'],
     ['settings',  'Settings','settings'],
   ];
