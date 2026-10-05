@@ -78,6 +78,23 @@ section('IPO timeline from close date');
   check('a bad date gives no timeline', t('not-a-date') === null && t('') === null);
 }
 
+// ── Lots pre-filled per category ────────────────────────────────────────────
+section('default lots per category');
+{
+  const sme  = { type: 'SME', lotSize: 1600, bandHigh: 85 };         // 1 lot = ₹1,36,000
+  const main = { type: 'Mainboard', lotSize: 111, bandHigh: 134 };   // 1 lot = ₹14,874
+  check('SME Individual defaults to 2 lots', win.defaultLotsFor('Retail', sme) === 2);
+  check('SME sHNI defaults to 3 lots', win.defaultLotsFor('sHNI', sme) === 3);
+  check('SME bHNI defaults to the ₹10L floor (8 lots)', win.defaultLotsFor('bHNI', sme) === 8, 'got ' + win.defaultLotsFor('bHNI', sme));
+  check('Mainboard Retail defaults to 1 lot', win.defaultLotsFor('Retail', main) === 1);
+  check('Mainboard sHNI defaults to the ₹2L floor (14 lots)', win.defaultLotsFor('sHNI', main) === 14, 'got ' + win.defaultLotsFor('sHNI', main));
+  check('SME Individual with 1 lot is flagged', !!win.lotsWarning('Retail', 1, sme));
+  check('SME Individual with 2 lots is fine', win.lotsWarning('Retail', 2, sme) === null);
+  check('sHNI below its minimum is flagged', !!win.lotsWarning('sHNI', 2, sme));
+  check('Mainboard Retail over ₹2L is flagged', !!win.lotsWarning('Retail', 14, main));
+  check('Mainboard Retail at 13 lots is fine', win.lotsWarning('Retail', 13, main) === null);
+}
+
 // ── 1.5  losses are visible per PAN and shared like a profit ────────────────
 // A pooled loss is split evenly across every applicant the same way a profit
 // is (b1340ac "Share pooled losses the same way profits are shared") -- it

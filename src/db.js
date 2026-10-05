@@ -1380,7 +1380,7 @@ async function loadDB() {
         var transformed = txIpos([data])[0];
         _ipos.unshift(transformed);
         sortIposByRecency(_ipos);   // a backdated open/list date shouldn't jump the queue
-        window.DB.ipos = _ipos;
+        window.DB.ipos = _ipos; rebuildIndexes();
         return transformed;
       },
 
@@ -1485,6 +1485,18 @@ async function loadDB() {
       // Save changed statuses for an IPO's allotments
       // changes: [{ id: allotmentId, status, shares, gain }]
       async saveAllotmentChanges(changes) {
+        // Lots applied lives on the application row. Written first, directly
+        // (admin RLS), so it saves whichever version of the 018 function the
+        // database has.
+        for (var li = 0; li < changes.length; li++) {
+          var lc = changes[li];
+          if (lc.lots == null || !lc.appId) continue;
+          var prevL = _allotments.find(function(x){ return x.id === lc.id; });
+          if (prevL && prevL.lots === lc.lots) continue;
+          var lotRes = await window.sb.from('applications').update({ lots: lc.lots }).eq('id', lc.appId).select();
+          if (lotRes.error) throw lotRes.error;
+          if (!lotRes.data || lotRes.data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
+        }
         // One transaction on the server (migration 018): every row saves or
         // none does, so a dropped connection can't leave an IPO half-saved.
         var rpcRows = changes.map(function(c) {
@@ -1865,6 +1877,34 @@ function buildApplyMessage(ip) {
   }
   return lines.join('\n');
 }
+
+// Lots to pre-fill when the admin records an application in a category:
+// SME Individual is the fixed 2 lots; every other bucket starts at its minimum.
+function defaultLotsFor(cat, ipo) {
+  if (!ipo) return 1;
+  var isSME = ipo.type === 'SME';
+  if (isSME && cat === 'Retail') return SME_INDIVIDUAL_MAX_LOTS;
+  var lotValue = Number(ipo.lotValue) || (Number(ipo.lotSize) || 0) * (Number(ipo.bandHigh) || 0);
+  return catMinLots(cat, lotValue, isSME);
+}
+// Soft check shown next to a lots box — the admin can still save, since a
+// registrar may report something unusual, but a typo shouldn't pass silently.
+function lotsWarning(cat, lots, ipo) {
+  lots = parseInt(lots, 10) || 0;
+  if (!ipo || lots <= 0) return null;
+  var isSME = ipo.type === 'SME';
+  var lotValue = Number(ipo.lotValue) || (Number(ipo.lotSize) || 0) * (Number(ipo.bandHigh) || 0);
+  if (isSME && cat === 'Retail' && lots !== SME_INDIVIDUAL_MAX_LOTS) return 'SME Individual is ' + SME_INDIVIDUAL_MAX_LOTS + ' lots';
+  if (!isSME && cat === 'Retail' && lotValue && lots * lotValue > APPLY_CAT_FLOOR.sHNI) return 'Over ₹2L — that is sHNI';
+  if (cat === 'sHNI' || cat === 'bHNI') {
+    var min = catMinLots(cat, lotValue, isSME);
+    if (lots < min) return cat + ' needs ' + min + '+ lots';
+    if (cat === 'sHNI' && lotValue && lots * lotValue > APPLY_CAT_FLOOR.bHNI) return 'Over ₹10L — that is bHNI';
+  }
+  return null;
+}
+window.defaultLotsFor = defaultLotsFor;
+window.lotsWarning    = lotsWarning;
 
 window.catMinLots            = catMinLots;
 window.SME_INDIVIDUAL_MAX_LOTS = SME_INDIVIDUAL_MAX_LOTS;
