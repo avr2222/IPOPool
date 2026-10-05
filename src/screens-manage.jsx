@@ -78,6 +78,28 @@ function AutoDateNote({ closeDate }) {
   );
 }
 
+// Lots box used wherever the admin records an application. Pre-filled from
+// defaultLotsFor (SME Individual = 2, sHNI/bHNI = their minimum) and warns —
+// without blocking — when the number doesn't fit the category.
+function LotsInput({ value, onChange, cat, ipo, disabled, compact }) {
+  const warn = !disabled && window.lotsWarning ? window.lotsWarning(cat, value, ipo) : null;
+  const lotSize = Number(ipo?.lotSize) || 0;
+  const n = parseInt(value, 10) || 0;
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: compact ? 'flex-end' : 'flex-start', gap: 2 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <input type="number" min="1" value={value} disabled={disabled} aria-label="Lots applied"
+          onChange={e => onChange(e.target.value)}
+          style={{ width: 52, padding: '5px 6px', fontSize: 12.5, fontWeight: 700, textAlign: 'right', border: '1px solid ' + (warn ? 'var(--warn)' : 'var(--border)'),
+                   borderRadius: 'var(--r-sm)', background: 'var(--bg)', color: 'var(--ink)', opacity: disabled ? .35 : 1 }} />
+        <span style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, opacity: disabled ? .35 : 1 }}>lot{n === 1 ? '' : 's'}</span>
+      </div>
+      {!disabled && lotSize > 0 && n > 0 && <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>{(n * lotSize).toLocaleString('en-IN')} sh</span>}
+      {warn && <span style={{ fontSize: 10.5, color: 'var(--warn)', fontWeight: 700, whiteSpace: 'nowrap' }}>{warn}</span>}
+    </div>
+  );
+}
+
 function ConfirmDialog({ dlg, onClose }) {
   if (!dlg) return null;
   const btnSt = dlg.danger
@@ -225,7 +247,8 @@ function AdminPanel() {
       // Retail/sHNI/bHNI category set since SEBI's 1 Jul 2025 rule, 'SME' is not
       // a selectable category value (see cats below).
       const defaults = {};
-      window.DB.pans.forEach(p => { defaults[p.id] = { selected: false, category: 'Retail' }; });
+      const lots0 = window.defaultLotsFor('Retail', saved);
+      window.DB.pans.forEach(p => { defaults[p.id] = { selected: false, category: 'Retail', lots: lots0 }; });
       setApplicantSel(defaults);
       setAddIpoStep('applicants');
     } catch(e) { setIpoErr(e.message); }
@@ -235,7 +258,7 @@ function AdminPanel() {
   const saveApplications = async () => {
     const rows = Object.entries(applicantSel)
       .filter(([, v]) => v.selected)
-      .map(([panId, v]) => ({ panId, category: v.category }));
+      .map(([panId, v]) => ({ panId, category: v.category, lots: Math.max(1, parseInt(v.lots, 10) || 1) }));
     if (rows.length === 0) { closeAddIpo(); return; }
     setAppSaving(true); setAppErr('');
     try {
@@ -246,7 +269,9 @@ function AdminPanel() {
   };
 
   const togglePan  = (panId) => setApplicantSel(prev => ({ ...prev, [panId]: { ...prev[panId], selected: !prev[panId]?.selected } }));
-  const setCat     = (panId, cat) => setApplicantSel(prev => ({ ...prev, [panId]: { ...prev[panId], category: cat } }));
+  // Changing the category re-fills lots with that category's default.
+  const setCat     = (panId, cat) => setApplicantSel(prev => ({ ...prev, [panId]: { ...prev[panId], category: cat, lots: window.defaultLotsFor(cat, D.ipo(newIpoId)) } }));
+  const setLots    = (panId, lots) => setApplicantSel(prev => ({ ...prev, [panId]: { ...prev[panId], lots } }));
   const selectAll  = () => setApplicantSel(prev => { const n = {...prev}; Object.keys(n).forEach(id => { n[id] = {...n[id], selected: true}; }); return n; });
   const deselectAll = () => setApplicantSel(prev => { const n = {...prev}; Object.keys(n).forEach(id => { n[id] = {...n[id], selected: false}; }); return n; });
 
@@ -304,8 +329,9 @@ function AdminPanel() {
     // Retail/sHNI/bHNI category set since SEBI's 1 Jul 2025 rule, 'SME' is not
     // a selectable category value (see cats in the modal below).
     const defaults = {};
+    const lots0 = window.defaultLotsFor('Retail', D.ipo(ipoId));
     D.pans.filter(p => !alreadyApplied.has(p.id)).forEach(p => {
-      defaults[p.id] = { selected: false, category: 'Retail' };
+      defaults[p.id] = { selected: false, category: 'Retail', lots: lots0 };
     });
     setAddAppSel(defaults);
     setAddAppIpoId(ipoId);
@@ -315,7 +341,7 @@ function AdminPanel() {
   const saveAddApplicants = async () => {
     const rows = Object.entries(addAppSel)
       .filter(([, v]) => v.selected)
-      .map(([panId, v]) => ({ panId, category: v.category }));
+      .map(([panId, v]) => ({ panId, category: v.category, lots: Math.max(1, parseInt(v.lots, 10) || 1) }));
     if (rows.length === 0) { setAddAppIpoId(null); return; }
     setAddAppSaving(true); setAddAppErr('');
     try {
@@ -360,6 +386,7 @@ function AdminPanel() {
           return {
             id:        a.id,
             appId:     a.appId,
+            lots:      Math.max(1, parseInt(c.lots ?? a.lots, 10) || 1),
             category:  c.category ?? a.category,
             status:    status,
             shares:    sh,
@@ -369,7 +396,7 @@ function AdminPanel() {
         })
         .filter((r, i) => {
           const a = viewRows[i];
-          return r.category !== a.category || r.status !== a.status || r.shares !== a.shares || r.gain !== a.gain || r.sellPrice !== a.sellPrice;
+          return r.lots !== (a.lots || 1) || r.category !== a.category || r.status !== a.status || r.shares !== a.shares || r.gain !== a.gain || r.sellPrice !== a.sellPrice;
         });
       if (dirty.length === 0) { setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000); return; }
       await D.mutations.saveAllotmentChanges(dirty);
@@ -572,8 +599,7 @@ function AdminPanel() {
     </div>
   );
   // Row actions. Delete lives in the Edit dialog (it wiped every application
-  // for the IPO and sat one tap away from Edit), and the per-row refresh is
-  // gone — the Refresh button above reloads every count at once.
+  // for the IPO and sat one tap away from Edit).
   const IpoActions = ({ ip, wide }) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: wide ? 'stretch' : 'flex-end', gap: 6, flexWrap: 'nowrap' }}>
       <Button variant="soft" size="sm" icon="allot" style={wide ? { flex: 1, justifyContent: 'center' } : undefined}
@@ -584,6 +610,9 @@ function AdminPanel() {
         style={wide ? { flex: 1, justifyContent: 'center' } : undefined}>
         {copiedIpo === ip.id ? 'Copied!' : 'Apply link'}
       </Button>
+      <IconButton name="refresh" size={34} tip="Refresh applied / allotted counts"
+        spin={refreshingId === ip.id} disabled={refreshing}
+        onClick={() => refreshData(ip.id)} />
       <IconButton name="edit" size={34} tip="Edit or delete IPO" onClick={() => openEditIpo(ip)} />
     </div>
   );
@@ -957,14 +986,14 @@ function AdminPanel() {
                     </div>
                     <Avatar name={p.holder} hue={p.mem?.avatarHue || 200} size={34} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 700 }}>{p.holder}</div>
-                      <div style={{ fontSize: 11.5, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.holder}</div>
+                      <div className="num" style={{ fontSize: 11.5, color: 'var(--ink-3)', letterSpacing: '.04em', fontWeight: 700 }}>{p.pan}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
                         {p.mem && <span>{p.mem.name}</span>}
                         {p.mem?.you && <span style={{ color: 'var(--brand)', fontWeight: 700 }}>· You</span>}
                         <Badge tone={{ Self: 'brand', Spouse: 'info', Friend: 'neutral' }[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
                       </div>
                     </div>
-                    <span className="num" style={{ fontSize: 12.5, color: 'var(--ink-3)', letterSpacing: '.05em', fontWeight: 700 }}>{p.pan}</span>
                     <select
                       style={{ ...inputSt, width: 96, padding: '5px 7px', fontSize: 12.5, opacity: sel.selected ? 1 : .35 }}
                       value={sel.category} disabled={!sel.selected}
@@ -972,6 +1001,7 @@ function AdminPanel() {
                       onChange={e => { e.stopPropagation(); setCat(p.id, e.target.value); }}>
                       {cats.map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
                     </select>
+                    <LotsInput value={sel.lots ?? 1} onChange={v => setLots(p.id, v)} cat={sel.category} ipo={D.ipo(newIpoId)} disabled={!sel.selected} compact />
                   </div>
                 );
               })}
@@ -1407,7 +1437,7 @@ function AdminPanel() {
         const markStatus = (a, val) => {
           if (val === 'allotted') {
             const cur = parseInt(changes[a.id]?.shares ?? a.shares) || 0;
-            const sh  = cur > 0 ? cur : ((vIpo?.lotSize || 0) * (a.lots || 1));
+            const sh  = cur > 0 ? cur : ((vIpo?.lotSize || 0) * (parseInt(changes[a.id]?.lots ?? a.lots, 10) || 1));
             const g   = autoGain(sh);
             setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), status: val, shares: sh, ...(g !== null ? { gain: g } : {}) } }));
           } else {
@@ -1434,7 +1464,7 @@ function AdminPanel() {
           const n = { ...prev };
           vAllots.forEach(a => {
             const cur = parseInt(n[a.id]?.shares ?? a.shares) || 0;
-            const sh  = cur > 0 ? cur : ((vIpo?.lotSize || 0) * (a.lots || 1));
+            const sh  = cur > 0 ? cur : ((vIpo?.lotSize || 0) * (parseInt(n[a.id]?.lots ?? a.lots, 10) || 1));
             const g   = autoGain(sh);
             n[a.id]   = { ...(n[a.id] || {}), status: 'allotted', shares: sh,
               ...(lp > 0 ? { sellPrice: String(lp) } : {}),
@@ -1684,13 +1714,14 @@ function AdminPanel() {
                                   applied quantity as the hint instead of a bare "0". */}
                               <input type="number" min="0" value={status !== 'allotted' && !(parseInt(shares) > 0) ? '' : shares}
                                 onChange={e => updateShares(a, e.target.value)}
-                                placeholder={vIpo?.lotSize ? String((a.lots || 1) * vIpo.lotSize) : '0'}
+                                placeholder={vIpo?.lotSize ? String((parseInt(changes[a.id]?.lots ?? a.lots, 10) || 1) * vIpo.lotSize) : '0'}
                                 style={{ ...inputSt, width: 74, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
-                              {a.lots >= 1 && (
-                                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
-                                  applied {a.lots} lot{a.lots !== 1 ? 's' : ''}{vIpo?.lotSize ? ` · ${(a.lots * vIpo.lotSize).toLocaleString('en-IN')} sh` : ''}
-                                </div>
-                              )}
+                              {/* Lots applied — editable (stored on the application). */}
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', gap: 4, marginTop: 4 }}>
+                                <span style={{ fontSize: 10.5, color: 'var(--ink-3)', marginTop: 6 }}>applied</span>
+                                <LotsInput value={changes[a.id]?.lots ?? a.lots ?? 1} cat={category} ipo={vIpo} compact
+                                  onChange={v => setChange(a.id, 'lots', v)} />
+                              </div>
                             </td>
                             <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                               {status === 'allotted' ? (
@@ -1817,15 +1848,14 @@ function AdminPanel() {
 
                         {/* Name + sub */}
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13.5, fontWeight: 700 }}>{p.holder}</div>
-                          <div style={{ fontSize: 11.5, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <div style={{ fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.holder}</div>
+                          <div className="num" style={{ fontSize: 11.5, color: 'var(--ink-3)', letterSpacing: '.04em', fontWeight: 700 }}>{p.pan}</div>
+                          <div style={{ fontSize: 11.5, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
                             {p.mem && <span>{p.mem.name}</span>}
                             <Badge tone={{ Self: 'brand', Spouse: 'info', Friend: 'neutral' }[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
                           </div>
                         </div>
 
-                        {/* PAN number */}
-                        <span className="num" style={{ fontSize: 12.5, color: 'var(--ink-3)', letterSpacing: '.05em', fontWeight: 700 }}>{p.pan}</span>
 
                         {/* Category — stop click propagation so dropdown doesn't toggle row */}
                         <select
@@ -1833,9 +1863,11 @@ function AdminPanel() {
                           value={sel.category}
                           disabled={!sel.selected}
                           onClick={e => e.stopPropagation()}
-                          onChange={e => { e.stopPropagation(); setAddAppSel(prev => ({ ...prev, [p.id]: { ...prev[p.id], category: e.target.value } })); }}>
+                          onChange={e => { e.stopPropagation(); const cat = e.target.value; setAddAppSel(prev => ({ ...prev, [p.id]: { ...prev[p.id], category: cat, lots: window.defaultLotsFor(cat, D.ipo(addAppIpoId)) } })); }}>
                           {cats.map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
                         </select>
+                        <LotsInput value={sel.lots ?? 1} onChange={v => setAddAppSel(prev => ({ ...prev, [p.id]: { ...prev[p.id], lots: v } }))}
+                          cat={sel.category} ipo={D.ipo(addAppIpoId)} disabled={!sel.selected} compact />
                       </div>
                     );
                   })}
