@@ -52,6 +52,17 @@ function Legend({ items }) {
   );
 }
 
+// One stat cell in the personalised "You" band.
+function YouStat({ label, value, sub, color }) {
+  return (
+    <div style={{ textAlign: 'right', minWidth: 84 }}>
+      <div style={{ fontSize: 10.5, color: 'var(--ink-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
+      <div className="num" style={{ fontSize: 20, fontWeight: 800, color: color || 'var(--ink)', whiteSpace: 'nowrap' }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: 'var(--ink-3)', whiteSpace: 'nowrap', marginTop: 1 }}>{sub}</div>}
+    </div>
+  );
+}
+
 // Category → badge tone + bar colour, shared by the category card.
 const CAT_TONE = { Retail: 'info', sHNI: 'brand', bHNI: 'warn', SME: 'sme' };
 const CAT_COLOR = { Retail: 'var(--info)', sHNI: 'var(--brand)', bHNI: 'var(--warn)', SME: 'var(--sme)' };
@@ -96,7 +107,7 @@ function ProfitByIpoCard({ D, navigate, f }) {
     { key: 'gross',    label: 'Gross gain', align: 'right', defDir: 'desc' },
     { key: 'net',      label: 'Net profit', align: 'right', defDir: 'desc' },
   ];
-  const [sort, onSort] = useSortState(null);
+  const [sort, onSort] = useSortState('net', 'desc');
   const [expanded, setExpanded] = useState(false);
   const IPO_LIMIT = 8;
   const allRows = sortRows(D.profitByIpo || [], sort, cols);
@@ -109,7 +120,7 @@ function ProfitByIpoCard({ D, navigate, f }) {
     <Card pad={0}>
       <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontSize: 14.5, fontWeight: 800 }}>Profit by IPO</div>
-        <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 2 }}>Net profit per IPO and combined total · tap a heading to sort</div>
+        <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 2 }}>Net profit per IPO · Applied &amp; Allotted count PAN applications · tap a heading to sort</div>
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
@@ -258,16 +269,46 @@ function Dashboard({ navigate, tweaks }) {
 
   const kpiCards = [
     { icon: 'calendar', label: 'IPOs Applied',        value: D.kpis.applied,                                tone: 'neutral', nav: 'admin' },
-    { icon: 'check',    label: 'Total Allotments',    value: D.kpis.allotments,                             tone: 'neutral', nav: 'admin' },
-    { icon: 'spark',    label: 'Allotment Rate',      value: D.kpis.allotRate + '%',                        tone: 'neutral', nav: 'admin' },
+    { icon: 'check',    label: 'IPOs Allotted',       value: D.kpis.allotments,                             tone: 'neutral', nav: 'admin' },
+    { icon: 'spark',    label: 'IPO Hit Rate',        value: D.kpis.allotRate + '%',                        tone: 'neutral', nav: 'admin' },
     { icon: 'wallet',   label: 'Total Investment',    value: f(D.kpis.invested, { compact: true }),         tone: 'neutral', nav: 'pooling', delta: { tone: 'neutral', label: 'this season' } },
     { icon: 'trend',    label: 'Total Profit',        value: f(D.kpis.profit,   { compact: true }),         tone: D.kpis.profit >= 0 ? 'profit' : 'loss',  nav: 'pooling',
       delta: D.kpis.roi > 0 ? { tone: 'profit', label: '+' + D.kpis.roi + '% ROI' }
            : D.kpis.roi < 0 ? { tone: 'loss', label: D.kpis.roi + '% ROI' } : undefined },
+    { icon: 'rupee',    label: 'Tax Set Aside',       value: f(D.kpis.taxSetAside, { compact: true }),      tone: 'warn',    nav: 'settings',
+      delta: D.kpis.grossProfit > 0 ? { tone: 'neutral', label: Math.round(D.kpis.taxSetAside / D.kpis.grossProfit * 100) + '% of gross' } : undefined },
     { icon: 'spark',    label: 'Portfolio XIRR',      value: xirrLabel(D.kpis.xirr),                        tone: D.kpis.xirr == null ? 'neutral' : D.kpis.xirr >= 0 ? 'profit' : 'loss', nav: 'pooling' },
     { icon: 'ledger',   label: 'Pending Settlements', value: D.kpis.pending,                                tone: 'warn',    nav: 'settlement',
       delta: D.kpis.pendingAmount > 0 ? { tone: 'warn', label: f(D.kpis.pendingAmount, { compact: true }) } : undefined },
   ];
+
+  // Personalised band: the signed-in member's own standing, pulled from the
+  // same PoolMath-derived memberProfits the leaderboard uses. Hidden for an
+  // admin who isn't themselves a pool member.
+  const me = (D.memberProfits || []).find(m => m.you);
+  const myRank = (D.memberProfits || []).findIndex(m => m.you) + 1;
+  const myPending = me
+    ? (D.settlements || []).filter(s => s.member === me.id && s.status === 'Pending').reduce((s, r) => s + (r.amount || 0), 0)
+    : 0;
+  const YouBand = me ? (
+    <Card pad={0} hover onClick={() => navigate('pooling')} style={{ cursor: 'pointer', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '15px 20px', background: 'var(--brand-tint)', border: '1px solid var(--brand)', borderRadius: 'var(--r-lg)', flexWrap: 'wrap' }}>
+        <Avatar name={me.name} hue={me.avatarHue} size={46} you />
+        <div style={{ flex: 1, minWidth: 150 }}>
+          <div style={{ fontSize: 12.5, color: 'var(--ink-2)', fontWeight: 600 }}>Your pooled position</div>
+          <div style={{ fontSize: 16, fontWeight: 800, marginTop: 2 }}>{me.name}<span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span></div>
+          <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>{me.iposApplied} IPO{me.iposApplied === 1 ? '' : 's'} · {me.pans} PAN{me.pans === 1 ? '' : 's'} applied</div>
+        </div>
+        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', rowGap: 10 }}>
+          <YouStat label="Net profit" value={f(me.profit, { compact: true })} color={me.profit >= 0 ? 'var(--profit)' : 'var(--loss)'}
+            sub={me.xirr != null ? xirrLabel(me.xirr) + ' XIRR' : null} />
+          <YouStat label="Your rank" value={myRank > 0 ? '#' + myRank : '—'} sub={'of ' + (D.memberProfits || []).length + ' members'} />
+          <YouStat label="Your pending" value={f(myPending, { compact: true })} color={myPending > 0 ? 'var(--warn)' : 'var(--ink-3)'}
+            sub={myPending > 0 ? 'awaiting transfer' : 'all settled'} />
+        </div>
+      </div>
+    </Card>
+  ) : null;
 
   const ProfitTrend = (
     <ChartCard title="Monthly profit trend" sub="Pooled net profit · last 6 months"
@@ -540,6 +581,9 @@ function Dashboard({ navigate, tweaks }) {
           {kpiCards.map((k, i) => <KPICard key={i} {...k} onClick={k.nav ? () => navigate(k.nav) : undefined} />)}
         </div>
       )}
+
+      {/* Your personal standing */}
+      {YouBand}
 
       {/* Charts */}
       {layout === 'compact' ? (

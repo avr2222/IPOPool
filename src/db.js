@@ -714,6 +714,11 @@ window.brokerageByCategory = brokerageByCategory;
 function computeKpis() {
   var allotted  = _allotments.filter(function(a){ return a.status === 'allotted'; });
   var totalNet   = groupNetProfit(_allotments);
+  var grossProfit = allotted.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
+  // What the group must keep aside rather than distribute: STCG + brokerage
+  // (plus any category whose charges wiped out its gain). It's exactly the gap
+  // between gross gains and the distributable net.
+  var taxSetAside = Math.max(0, grossProfit - totalNet);
   // Invested = capital actually deployed. Only allotted applications tie up money;
   // non-allotted ASBA applications are refunded, so they don't count. Uses the
   // row's own invest (shares x cut-off price) rather than a flat lot value, so
@@ -734,6 +739,8 @@ function computeKpis() {
                      : 0,
     invested:      invested,
     profit:        totalNet,
+    grossProfit:   grossProfit,
+    taxSetAside:   taxSetAside,
     roi:           invested > 0 ? +((totalNet / invested) * 100).toFixed(1) : 0,
     pending:       pendingSettlements.length,
     pendingAmount: pendingSettlements.reduce(function(s, p){ return s + (p.amount || 0); }, 0),
