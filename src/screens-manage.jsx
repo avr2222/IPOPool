@@ -31,12 +31,12 @@ function friendlyDbError(e) {
 function Modal({ title, onClose, children }) {
   return (
     <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 65, display: 'grid', placeItems: 'center', padding: 16 }}>
-      <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 460, boxShadow: 'var(--sh-pop)', overflow: 'hidden', animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px', borderBottom: '1px solid var(--border)' }}>
+      <div className="modal-card" style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', width: '100%', maxWidth: 460, maxHeight: 'calc(100dvh - 32px)', display: 'flex', flexDirection: 'column', boxShadow: 'var(--sh-pop)', overflow: 'hidden', animation: 'popIn .22s cubic-bezier(.2,.7,.3,1)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 800 }}>{title}</div>
           <IconButton name="x" size={32} onClick={onClose} />
         </div>
-        <div style={{ padding: '20px 22px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ padding: '20px 22px 24px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', minHeight: 0 }}>
           {children}
         </div>
       </div>
@@ -1821,7 +1821,7 @@ function AdminPanel() {
                 </div>
 
                 {/* Flat, fully-clickable PAN list */}
-                <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', overflow: 'hidden', maxHeight: 380, overflowY: 'auto' }}>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', overflow: 'hidden', maxHeight: 'min(380px, 45dvh)', overflowY: 'auto' }}>
                   {flatPans.map((p, i) => {
                     const sel = addAppSel[p.id] || { selected: false, category: cats[0] };
                     return (
