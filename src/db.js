@@ -946,7 +946,43 @@ function computePanProfits() {
   }).sort(function(a, b){ return b.profit - a.profit; });
 }
 
-// ── XIRR (annualised, money-weighted return) ──────────────────────────────────
+// Per-IPO earnings for one member: how each IPO the member took part in
+// contributed to their net, using the same category PoolMath the pool and
+// settlement screens use (so it reconciles exactly). Newest first.
+function memberIpoEarnings(memberId) {
+  var myPanIds = _pans.filter(function(p){ return p.member === memberId; }).map(function(p){ return p.id; });
+  if (!myPanIds.length) return [];
+  var out = [];
+  _ipos.forEach(function(ipo) {
+    var ipoAllots = allotsOfIpo(ipo.id);
+    if (!ipoAllots.length) return;
+    var mine = ipoAllots.filter(function(a){ return myPanIds.indexOf(a.pan) >= 0; });
+    if (!mine.length) return;
+
+    var allottedMine = mine.filter(function(a){ return a.status === 'allotted'; });
+    var gross = allottedMine.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
+
+    var cats = {};
+    ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
+    var net = 0;
+    Object.keys(cats).forEach(function(cat) {
+      var r = ratesForCategory(ipo.id, cat);
+      var amounts = PoolMath.panAmounts(cats[cat], r.stcg, r.brok, r.bonus);
+      var bonuses = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
+      cats[cat].forEach(function(a) {
+        if (myPanIds.indexOf(a.pan) >= 0) net += (amounts[a.id] || 0) + (bonuses[a.id] || 0);
+      });
+    });
+
+    out.push({
+      ipo: ipo.id, short: ipo.short, name: ipo.name, type: ipo.type, status: ipo.status,
+      applied: mine.length, allotted: allottedMine.length,
+      gross: gross, net: Math.round(net),
+      month: ipo.listDate || ipo.allotDate || ipo.close || ipo.open || null,
+    });
+  });
+  return out.sort(function(a, b){ return String(b.month || '').localeCompare(String(a.month || '')); });
+}
 // The same blocked capital gets reused across many IPOs -- applied, released a
 // few days later, applied again -- so a flat profit figure (or even the ROI%
 // above) hides how efficiently that capital was recycled. XIRR is the standard
@@ -1269,6 +1305,7 @@ async function loadDB() {
     pan:    function(id){ return _panById[id]; },
     allotsOfIpo: allotsOfIpo,
     allotsOfPan: allotsOfPan,
+    memberIpoEarnings: memberIpoEarnings,
 
     // ── Mutations ──────────────────────────────────────────────────────────────
     mutations: {

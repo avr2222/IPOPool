@@ -126,60 +126,268 @@ function ConfirmDialog({ dlg, onClose }) {
 }
 
 // ── PAN Management (view own PANs) ────────────────────────────────────────────
+// Annualised return, formatted like the dashboard's.
+function fmtXirrPct(rate) {
+  if (rate == null || !isFinite(rate)) return '—';
+  const pct = rate * 100;
+  const r = Math.abs(pct) >= 1000 ? Math.round(pct) : +pct.toFixed(1);
+  return (r > 0 ? '+' : '') + r + '%';
+}
+
+// One stat cell in the personal portfolio hero.
+function PortfolioStat({ label, value, color, sub }) {
+  return (
+    <div style={{ minWidth: 92 }}>
+      <div style={{ fontSize: 10.5, color: 'var(--ink-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
+      <div className="num" style={{ fontSize: 20, fontWeight: 800, color: color || 'var(--ink)', whiteSpace: 'nowrap', marginTop: 2 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: 'var(--ink-3)', whiteSpace: 'nowrap', marginTop: 1 }}>{sub}</div>}
+    </div>
+  );
+}
+
+// "▲ ₹X vs solo" / "▼ ₹X vs solo" — how much pooling changed the outcome.
+function VsSolo({ delta, f }) {
+  if (delta == null || delta === 0) return null;
+  const up = delta > 0;
+  return (
+    <span style={{ fontSize: 11, fontWeight: 700, color: up ? 'var(--profit)' : 'var(--loss)', whiteSpace: 'nowrap' }}>
+      {up ? '▲' : '▼'} {f(Math.abs(delta), { compact: true })} vs solo
+    </span>
+  );
+}
+
 function PanManagement() {
   const D    = window.DB;
+  const f    = (n, o) => D.fmtINR(n, o);
   const me   = D.members.find(m => m.you);
-  const pans = D.pans.filter(p => p.member === me?.id);
+
+  if (!me) return (
+    <Card pad={32} style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+      <div style={{ width: 48, height: 48, borderRadius: 14, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', color: 'var(--ink-3)' }}>
+        <Icon name="pan" size={24} />
+      </div>
+      <div style={{ fontSize: 15, fontWeight: 800 }}>No personal portfolio</div>
+      <div style={{ fontSize: 13, color: 'var(--ink-3)', maxWidth: 340, lineHeight: 1.6 }}>
+        You're signed in without a linked member profile, so there are no PANs or earnings to show here.
+      </div>
+    </Card>
+  );
+
+  const pans = D.pans.filter(p => p.member === me.id);
+
+  // Personal rollups (reuse the already-computed PoolMath profiles)
+  const myProfile = (D.memberProfits || []).find(m => m.you)
+    || { profit: 0, soloProfit: null, xirr: null, iposApplied: 0 };
+  const myRank       = (D.memberProfits || []).findIndex(m => m.you) + 1;
+  const totalMembers = (D.memberProfits || []).length;
+  const panProfitById = {}; (D.panProfits || []).forEach(p => { panProfitById[p.id] = p; });
+  const soloDelta = myProfile.soloProfit != null ? Math.round(myProfile.profit - myProfile.soloProfit) : null;
+
+  // My settlements (payouts)
+  const mySettles      = (D.settlements || []).filter(s => s.member === me.id);
+  const pendingSettles = mySettles.filter(s => s.status === 'Pending');
+  const paidSettles    = mySettles.filter(s => s.status === 'Paid');
+  const pendingAmt     = pendingSettles.reduce((s, r) => s + (r.amount || 0), 0);
+  const paidAmt        = paidSettles.reduce((s, r) => s + (r.amount || 0), 0);
+
+  // Per-IPO earnings (accurate net share via shared PoolMath)
+  const earnings      = D.memberIpoEarnings(me.id);
+  const totalApplied  = earnings.reduce((s, e) => s + e.applied, 0);
+  const totalAllotted = earnings.reduce((s, e) => s + e.allotted, 0);
+  const totalGross    = earnings.reduce((s, e) => s + e.gross, 0);
+  const hitRate       = totalApplied > 0 ? Math.round(totalAllotted / totalApplied * 100) : 0;
+
+  const relColors = { Self: 'brand', Spouse: 'info', Father: 'mainboard', Mother: 'sme', Son: 'profit', Daughter: 'profit', Brother: 'warn', Sister: 'warn', Friend: 'neutral' };
+
+  const exportStatement = () => {
+    const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+    const header = ['IPO', 'Board', 'Applied', 'Allotted', 'Gross gain', 'Your net share'];
+    const lines = earnings.map(e => [e.name, e.type, e.applied, e.allotted, e.gross, e.net].map(esc).join(','));
+    const totalRow = ['TOTAL', '', totalApplied, totalAllotted, totalGross, myProfile.profit].map(esc).join(',');
+    const csv = [header.map(esc).join(','), ...lines, totalRow].join('\n');
+    const a = document.createElement('a');
+    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = `my-ipo-statement-${(me.name || 'member').replace(/\s+/g, '-')}.csv`;
+    a.click();
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <Card pad={18} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <Avatar name={me?.name || 'You'} hue={me?.avatarHue || 152} size={44} you />
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 800 }}>{me?.name}</div>
-          <div style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>{me?.email} · {pans.length} PAN{pans.length !== 1 ? 's' : ''}</div>
+
+      {/* ── 1. Personal portfolio hero ── */}
+      <Card pad={0} style={{ overflow: 'hidden', borderColor: 'var(--brand)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 20px', background: 'var(--brand-tint)', flexWrap: 'wrap' }}>
+          <Avatar name={me.name || 'You'} hue={me.avatarHue || 152} size={48} you />
+          <div style={{ flex: 1, minWidth: 150 }}>
+            <div style={{ fontSize: 16, fontWeight: 800 }}>{me.name}</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{me.email || '—'} · {pans.length} PAN{pans.length !== 1 ? 's' : ''}</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 26, flexWrap: 'wrap', rowGap: 14, padding: '16px 20px' }}>
+          <PortfolioStat label="Net profit" value={f(myProfile.profit, { compact: true })} color={myProfile.profit >= 0 ? 'var(--profit)' : 'var(--loss)'}
+            sub={soloDelta ? (soloDelta > 0 ? '+' : '−') + f(Math.abs(soloDelta), { compact: true }) + ' vs solo' : null} />
+          <PortfolioStat label="Your rank" value={myRank > 0 ? '#' + myRank : '—'} sub={'of ' + totalMembers + ' members'} />
+          <PortfolioStat label="Pending" value={f(pendingAmt, { compact: true })} color={pendingAmt > 0 ? 'var(--warn)' : 'var(--ink-3)'}
+            sub={pendingAmt > 0 ? 'to receive' : 'all settled'} />
+          <PortfolioStat label="XIRR" value={fmtXirrPct(myProfile.xirr)} color={myProfile.xirr == null ? 'var(--ink-3)' : myProfile.xirr >= 0 ? 'var(--profit)' : 'var(--loss)'} sub="annualised" />
+          <PortfolioStat label="Applications" value={totalApplied} sub={myProfile.iposApplied + ' IPO' + (myProfile.iposApplied === 1 ? '' : 's')} />
+          <PortfolioStat label="Hit rate" value={hitRate + '%'} sub={totalAllotted + ' allotted'} />
         </div>
       </Card>
 
-      <div className="pan-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px,1fr))', gap: 14 }}>
-        {pans.map((p, i) => {
-          const apps = D.allotsOfPan(p.id).length;
-          const relColors = { Self: 'brand', Spouse: 'info', Father: 'mainboard', Mother: 'sme', Son: 'profit', Daughter: 'profit', Brother: 'warn', Sister: 'warn', Friend: 'neutral' };
-          return (
-            <Card key={p.id} pad={0} style={{ overflow: 'hidden' }}>
-              <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                    <Avatar name={p.holder} hue={(me.avatarHue + i * 40) % 360} size={40} />
+      {/* ── 2. PAN cards with per-PAN earnings ── */}
+      <div>
+        <SectionTitle title="My PANs" sub={`${pans.length} account${pans.length !== 1 ? 's' : ''} · profit shown is this PAN's share across all IPOs`} />
+        <div className="pan-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px,1fr))', gap: 14, marginTop: 12 }}>
+          {pans.map((p, i) => {
+            const pp       = panProfitById[p.id] || { profit: 0, soloProfit: null, apps: 0 };
+            const allots   = D.allotsOfPan(p.id);
+            const applied  = allots.length;
+            const allotted = allots.filter(a => a.status === 'allotted').length;
+            const pDelta   = pp.soloProfit != null ? Math.round(pp.profit - pp.soloProfit) : null;
+            return (
+              <Card key={p.id} pad={0} style={{ overflow: 'hidden' }}>
+                <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      <Avatar name={p.holder} hue={(me.avatarHue + i * 40) % 360} size={40} />
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 700 }}>{p.holder}</div>
+                        <Badge tone={relColors[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
+                      </div>
+                    </div>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: p.status === 'Active' ? 'var(--profit)' : 'var(--warn)' }}>
+                      <StatusDot tone={p.status === 'Active' ? 'profit' : 'warn'} /> {p.status}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 'var(--r-sm)' }}>
                     <div>
-                      <div style={{ fontSize: 14, fontWeight: 700 }}>{p.holder}</div>
-                      <Badge tone={relColors[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
+                      <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>PAN NUMBER</div>
+                      <div className="num" style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: '.04em', marginTop: 2 }}>{p.pan}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>BANK</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>{p.linkedBank || '—'}</div>
                     </div>
                   </div>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: p.status === 'Active' ? 'var(--profit)' : 'var(--warn)' }}>
-                    <StatusDot tone={p.status === 'Active' ? 'profit' : 'warn'} /> {p.status}
-                  </span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 'var(--r-sm)' }}>
-                  <div>
-                    <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>PAN NUMBER</div>
-                    <div className="num" style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: '.04em', marginTop: 2 }}>{p.pan}</div>
+                {/* Earnings footer */}
+                <div style={{ borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 16px', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>
+                      {allotted}/{applied} allotted · {applied} application{applied !== 1 ? 's' : ''}
+                    </span>
+                    <VsSolo delta={pDelta} f={f} />
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600 }}>BANK</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>{p.linkedBank || '—'}</div>
+                  <div className="num" style={{ fontSize: 16, fontWeight: 800, color: pp.profit > 0 ? 'var(--profit)' : 'var(--ink-3)', whiteSpace: 'nowrap' }}>
+                    {pp.profit > 0 ? f(pp.profit, { compact: true }) : '—'}
                   </div>
                 </div>
-              </div>
-              <div style={{ borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px' }}>
-                <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 600 }}>
-                  <strong className="num" style={{ color: 'var(--ink)' }}>{apps}</strong> applications
-                </span>
-              </div>
+              </Card>
+            );
+          })}
+          {pans.length === 0 && (
+            <Card pad={24} style={{ textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+              No PANs linked to your profile yet. Ask your pool admin to add one.
             </Card>
-          );
-        })}
+          )}
+        </div>
       </div>
+
+      {/* ── 3. My payouts ── */}
+      {mySettles.length > 0 && (
+        <Card pad={0}>
+          <div style={{ padding: '16px 18px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 14.5, fontWeight: 800 }}>My payouts</div>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 2 }}>Your settlement share per IPO</div>
+            </div>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em' }}>To receive</div>
+                <div className="num" style={{ fontSize: 17, fontWeight: 800, color: pendingAmt > 0 ? 'var(--warn)' : 'var(--ink-3)' }}>{f(pendingAmt, { compact: true })}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em' }}>Received</div>
+                <div className="num" style={{ fontSize: 17, fontWeight: 800, color: 'var(--profit)' }}>{f(paidAmt, { compact: true })}</div>
+              </div>
+            </div>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 460 }}>
+              <thead>
+                <tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                  {['IPO', 'Category', 'Amount', 'Status', 'Date'].map((h, i) => (
+                    <th key={h} style={{ textAlign: i >= 2 ? 'right' : 'left', fontWeight: 700, padding: '10px 18px' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {mySettles.map(s => {
+                  const ip = D.ipo(s.ipo);
+                  return (
+                    <tr key={s.id} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: '11px 18px', fontWeight: 700, fontSize: 13.5 }}>{ip?.short || '—'}</td>
+                      <td style={{ padding: '11px 18px' }}><Badge tone="neutral">{s.category}</Badge></td>
+                      <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{f(s.amount)}</td>
+                      <td style={{ padding: '11px 18px', textAlign: 'right' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 700, color: s.status === 'Paid' ? 'var(--profit)' : 'var(--warn)' }}>
+                          <StatusDot tone={s.status === 'Paid' ? 'profit' : 'warn'} /> {s.status === 'Paid' ? 'Received' : 'Pending'}
+                        </span>
+                      </td>
+                      <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-3)', fontSize: 13 }}>{s.date || '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* ── 4. My IPO earnings + statement export ── */}
+      {earnings.length > 0 && (
+        <Card pad={0}>
+          <div style={{ padding: '16px 18px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 14.5, fontWeight: 800 }}>My IPO earnings</div>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 2 }}>Your net share per IPO · across all your PANs</div>
+            </div>
+            <Button variant="ghost" size="sm" icon="download" onClick={exportStatement}>Download statement</Button>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 540 }}>
+              <thead>
+                <tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                  {[['IPO', 'left'], ['Board', 'left'], ['Applied', 'right'], ['Allotted', 'right'], ['Gross', 'right'], ['Your net', 'right']].map(([h, al]) => (
+                    <th key={h} style={{ textAlign: al, fontWeight: 700, padding: '10px 18px' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {earnings.map(e => (
+                  <tr key={e.ipo} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '11px 18px', fontWeight: 700, fontSize: 13.5 }}>{e.short}</td>
+                    <td style={{ padding: '11px 18px' }}><Badge tone={e.type === 'SME' ? 'sme' : 'mainboard'}>{e.type}</Badge></td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.applied}</td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.allotted}</td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.gross > 0 ? f(e.gross, { compact: true }) : '—'}</td>
+                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800, color: e.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{e.net > 0 ? f(e.net, { compact: true }) : '—'}</td>
+                  </tr>
+                ))}
+                <tr style={{ borderTop: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
+                  <td style={{ padding: '11px 18px', fontWeight: 800 }}>Total</td>
+                  <td />
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{totalApplied}</td>
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{totalAllotted}</td>
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800 }}>{totalGross > 0 ? f(totalGross, { compact: true }) : '—'}</td>
+                  <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800, color: 'var(--profit)' }}>{f(myProfile.profit, { compact: true })}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
