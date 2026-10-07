@@ -204,10 +204,11 @@
         max-width: 100% !important;
         border-radius: 22px 22px 0 0 !important;
         max-height: 92dvh !important;
-        overflow-y: auto !important;
+        overflow: hidden !important;
         animation: slideUp .28s cubic-bezier(.2,.7,.3,1) !important;
-        padding-bottom: env(safe-area-inset-bottom, 0px);
       }
+      /* Body is the single scroll region; keep the footer clear of the home bar */
+      .modal-card > div:last-child { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important; }
     }
 
     /* ── More drawer (mobile) ───────────────────────────── */
