@@ -301,7 +301,7 @@ function ProfitPooling({ navigate, id }) {
         <div style={{ display: 'flex', gap: 10, padding: '11px 16px', background: 'var(--info-soft)', borderRadius: 'var(--r-md)', border: '1px solid var(--info)', alignItems: 'flex-start' }}>
           <Icon name="pool" size={16} color="var(--info)" />
           <div style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>
-            <strong>SME lot-based pooling.</strong> Retail profit is shared per head and bHNI profit by lots applied, across the opted-in pool. PANs opted out (set on the PAN) take only the equal share of their own category. sHNI stays a separate equal pool.
+            <strong>SME lot-based pooling.</strong> Each category's profit is shared across the opted-in pool by lots, capped at that category's lot level: Retail is per head, sHNI caps everyone at the sHNI level (so sHNI and bHNI tie), and bHNI uses full lots applied. PANs opted out (set on the PAN) take only the equal share of their own category.
           </div>
         </div>
       )}
@@ -379,10 +379,10 @@ function ProfitPooling({ navigate, id }) {
                       <>
                         <div>
                           <div style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 600 }}>
-                            Split {d.cat === 'bHNI' ? 'by lots applied' : d.cat === 'sHNI' ? 'equal per PAN' : 'per head (equal)'}
+                            Split {d.cat === 'bHNI' ? 'by lots applied' : d.cat === 'sHNI' ? 'by lots, capped at sHNI level' : 'per head (equal)'}
                           </div>
                           <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
-                            {d.cat === 'sHNI' ? 'sHNI is a separate equal pool' : 'shared across the opted-in pool'}
+                            shared across the opted-in pool
                           </div>
                         </div>
                         <div className="num" style={{ fontSize: 20, fontWeight: 800, color: 'var(--brand)' }}>{f(d.net)}</div>
@@ -452,7 +452,7 @@ function ProfitPooling({ navigate, id }) {
             <div style={{ fontSize: 14, fontWeight: 800 }}>{totalNet >= 0 ? 'Ready to distribute' : 'Ready to settle (loss)'}</div>
             <div style={{ fontSize: 12.5, color: 'var(--ink-2)', marginTop: 3 }}>
               {isSME
-                ? catData.filter(d => d.net !== 0).map(d => `${d.cat}: ${f(d.net)} ${d.cat === 'bHNI' ? 'by lots' : d.cat === 'sHNI' ? 'equal' : 'per head'}`).join(' · ')
+                ? catData.filter(d => d.net !== 0).map(d => `${d.cat}: ${f(d.net)} ${d.cat === 'bHNI' ? 'by lots' : d.cat === 'sHNI' ? 'capped lots' : 'per head'}`).join(' · ')
                 : catData.filter(d => d.net !== 0).map(d => `${d.cat}: ${f(d.perPan)}/PAN × ${d.total} applicants`).join(' · ')}
             </div>
             {finalErr && <div style={{ fontSize: 12.5, color: 'var(--loss)', marginTop: 4, fontWeight: 600 }}>{finalErr}</div>}

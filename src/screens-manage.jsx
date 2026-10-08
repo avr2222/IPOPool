@@ -47,6 +47,26 @@ function LotSplitToggle({ value, onChange }) {
   );
 }
 
+// ── SME per-IPO lot caps (admin) ──────────────────────────────────────────────
+function SmeLotCaps({ retail, shni, onRetail, onShni }) {
+  return (
+    <div style={{ padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 'var(--r-md)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 700 }}>SME split lot levels</div>
+      <div style={{ fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.5, marginTop: -4 }}>
+        Lots each category's applicants commit. Retail profit splits per head, sHNI caps bHNI down to the sHNI level, bHNI is never capped. Leave blank to auto-detect from applications.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label="Retail lots">
+          <input style={inputSt} type="number" min="1" value={retail} onChange={e => onRetail(e.target.value)} placeholder="auto" />
+        </Field>
+        <Field label="sHNI lots">
+          <input style={inputSt} type="number" min="1" value={shni} onChange={e => onShni(e.target.value)} placeholder="auto" />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
 // ── Shared modal wrapper ──────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (
@@ -447,9 +467,9 @@ function AdminPanel() {
   };
   const [addIpoStep, setAddIpoStep] = useState(null); // null | 'details' | 'applicants'
   const [newIpoId,  setNewIpoId]  = useState(null);
-  const [ipoForm, setIpoForm]   = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
+  const [ipoForm, setIpoForm]   = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', retailLots: '', shniLots: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
   const [editIpoId,   setEditIpoId]   = useState(null);
-  const [editIpoForm, setEditIpoForm] = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
+  const [editIpoForm, setEditIpoForm] = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', retailLots: '', shniLots: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
   const [editIpoSaving, setEditIpoSaving] = useState(false);
   const [editIpoErr,    setEditIpoErr]    = useState('');
   const [copiedIpo,     setCopiedIpo]     = useState(null);
@@ -463,14 +483,14 @@ function AdminPanel() {
 
   const closeAddIpo = () => {
     setAddIpoStep(null); setNewIpoId(null); setApplicantSel({}); setIpoErr(''); setAppErr('');
-    setIpoForm({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
+    setIpoForm({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', retailLots: '', shniLots: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
   };
 
   const saveIpo = async () => {
     if (!ipoForm.name || !ipoForm.type) { setIpoErr('Name and type are required.'); return; }
     setIpoSaving(true); setIpoErr('');
     try {
-      const saved = await D.mutations.addIpo({ name: ipoForm.name, shortName: ipoForm.shortName, type: ipoForm.type, bandHigh: parseFloat(ipoForm.price)||null, lotSize: parseInt(ipoForm.lotSize)||null, openDate: ipoForm.openDate || null, closeDate: ipoForm.closeDate || null, allotDate: ipoForm.allotDate || null, listDate: ipoForm.listDate || null });
+      const saved = await D.mutations.addIpo({ name: ipoForm.name, shortName: ipoForm.shortName, type: ipoForm.type, bandHigh: parseFloat(ipoForm.price)||null, lotSize: parseInt(ipoForm.lotSize)||null, retailLots: parseInt(ipoForm.retailLots)||null, shniLots: parseInt(ipoForm.shniLots)||null, openDate: ipoForm.openDate || null, closeDate: ipoForm.closeDate || null, allotDate: ipoForm.allotDate || null, listDate: ipoForm.listDate || null });
       setIpos([...window.DB.ipos]);
       setNewIpoId(saved.id);
       // Pre-populate applicant selections — all unchecked, default category by board type
@@ -526,6 +546,7 @@ function AdminPanel() {
   const openEditIpo = (ip) => {
     setEditIpoId(ip.id);
     setEditIpoForm({ name: ip.name, shortName: ip.short || '', type: ip.type, price: ip.bandHigh || '', lotSize: ip.lotSize || '',
+      retailLots: ip.retailLots || '', shniLots: ip.shniLots || '',
       openDate:  (ip.open      || '').slice(0, 10),
       closeDate: (ip.close     || '').slice(0, 10),
       allotDate: (ip.allotDate || '').slice(0, 10),
@@ -543,6 +564,8 @@ function AdminPanel() {
         type: editIpoForm.type,
         bandHigh: parseFloat(editIpoForm.price) || null,
         lotSize: parseInt(editIpoForm.lotSize) || null,
+        retailLots: parseInt(editIpoForm.retailLots) || null,
+        shniLots: parseInt(editIpoForm.shniLots) || null,
         openDate: editIpoForm.openDate,
         closeDate: editIpoForm.closeDate,
         allotDate: editIpoForm.allotDate,
@@ -1142,6 +1165,10 @@ function AdminPanel() {
               <input style={inputSt} type="number" value={ipoForm.lotSize} onChange={e => setIpoForm(p => ({ ...p, lotSize: e.target.value }))} placeholder="15" />
             </Field>
           </div>
+          {ipoForm.type === 'SME' && (
+            <SmeLotCaps retail={ipoForm.retailLots} shni={ipoForm.shniLots}
+              onRetail={v => setIpoForm(p => ({ ...p, retailLots: v }))} onShni={v => setIpoForm(p => ({ ...p, shniLots: v }))} />
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Open date">
               <input style={inputSt} type="date" value={ipoForm.openDate} onChange={e => setIpoForm(p => ({ ...p, openDate: e.target.value }))} />
@@ -1484,6 +1511,10 @@ function AdminPanel() {
               <input style={inputSt} type="number" value={editIpoForm.lotSize} onChange={e => setEditIpoForm(p => ({ ...p, lotSize: e.target.value }))} placeholder="15" />
             </Field>
           </div>
+          {editIpoForm.type === 'SME' && (
+            <SmeLotCaps retail={editIpoForm.retailLots} shni={editIpoForm.shniLots}
+              onRetail={v => setEditIpoForm(p => ({ ...p, retailLots: v }))} onShni={v => setEditIpoForm(p => ({ ...p, shniLots: v }))} />
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Open date">
               <input style={inputSt} type="date" value={editIpoForm.openDate} onChange={e => setEditIpoForm(p => ({ ...p, openDate: e.target.value }))} />

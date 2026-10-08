@@ -118,6 +118,10 @@ function txIpos(rows) {
       sub:       r.subscription,
       hue:       r.hue        || 220,
       logo:      r.logo       || '',
+      // SME split lot caps (migration 021); null when unset → derived from
+      // applicants. Columns may be absent before 021.
+      retailLots: r.retail_lots != null ? parseInt(r.retail_lots, 10) : null,
+      shniLots:   r.shni_lots   != null ? parseInt(r.shni_lots, 10)   : null,
       createdAt: r.created_at || null,
     };
   });
@@ -542,21 +546,23 @@ var PoolMath = {
     return out;
   },
 
-  // ── SME combined lot/head split ───────────────────────────────────────────
+  // ── SME lot-cap split ──────────────────────────────────────────────────────
   // SME IPOs pool differently from Mainboard. Each PAN is opted-IN (default) or
-  // opted-OUT of lot-based pooling. The split basis depends on the category the
-  // profit came FROM:
-  //   • Retail (Individual) profit → split PER HEAD (equal) among opted-in PANs
-  //   • bHNI profit               → split PER LOT (lots applied) among opted-in
-  //   • opted-OUT PANs take only the equal share of THEIR OWN category (so ₹0
-  //     if their category was not allotted), carved out first.
-  //   • sHNI stays its own equal-per-PAN pool (unchanged; opt-out ignored) until
-  //     its rule is decided.
+  // opted-OUT of lot-based pooling. ONE rule covers every category: profit from
+  // an allotment in category C is split across the opted-in pool by
+  //   weight = min(PAN's lots applied, C's lot cap)
+  // where the cap reflects how much that category's applicants committed:
+  //   • Retail (Individual): cap = Retail lots  → everyone caps to it → PER HEAD
+  //   • sHNI:                cap = sHNI lots     → Retail < sHNI = bHNI
+  //   • bHNI:                cap = ∞ (uncapped)  → PER LOT (full lots applied)
+  // Opted-OUT PANs take only the equal share of THEIR OWN category (₹0 if that
+  // category was not allotted), carved out first. sHNI now shares the same
+  // combined opted-in pool as Retail/bHNI.
   // Returns { [allotmentId]: poolShare } summing to the SME IPO's total net.
-  // (The allotted-PAN bonus is unchanged and added on top via panBonuses, as on
-  // Mainboard.) `ratesFor(category)` -> {stcg, brok, bonus}; `optOut(panId)` ->
-  // bool; each allotment row carries `.lots` applied.
-  smeShares: function(ipoAllots, ratesFor, optOut) {
+  // (The allotted-PAN bonus is unchanged and added on top via panBonuses.)
+  // `ratesFor(cat)` -> {stcg,brok,bonus}; `optOut(panId)` -> bool; `capFor(cat)`
+  // -> the lot cap for that category (Infinity = uncapped); each row has `.lots`.
+  smeShares: function(ipoAllots, ratesFor, optOut, capFor) {
     var out = {};
     ipoAllots.forEach(function(a){ out[a.id] = 0; });
 
@@ -575,21 +581,18 @@ var PoolMath = {
     var byCat = {};
     ipoAllots.forEach(function(a){ (byCat[a.category] = byCat[a.category] || []).push(a); });
 
-    // Categories that share one combined opted-in pool, and how each is split.
-    var COMBINED = { Retail: 'head', SME: 'head', bHNI: 'lot' };
+    // All SME categories share one combined opted-in pool.
+    var CATS = ['Retail', 'SME', 'sHNI', 'bHNI'];
+    var optedIn = ipoAllots.filter(function(a){ return CATS.indexOf(a.category) >= 0 && !optOut(a.pan); });
 
-    var optedIn = ipoAllots.filter(function(a){ return COMBINED[a.category] && !optOut(a.pan); });
-    var inCount = optedIn.length;
-    var inLots  = optedIn.reduce(function(s, a){ return s + (a.lots || 1); }, 0);
-
-    Object.keys(COMBINED).forEach(function(cat) {
+    CATS.forEach(function(cat) {
       var rows = byCat[cat];
       if (!rows || !rows.length) return;
       var r = ratesFor(cat);
       var P = PoolMath.category(rows, r.stcg, r.brok, r.bonus).net;
 
       // A loss (or break-even) is split equally among this category's own
-      // applicants, exactly as today — never pooled by lots across categories.
+      // applicants, never pooled by lots across categories.
       if (P <= 0) { equalOwn(rows, P); return; }
       var N = rows.length;
 
@@ -598,20 +601,15 @@ var PoolMath = {
       var per = Math.floor(P / N);
       rows.forEach(function(a){ if (optOut(a.pan)) { out[a.id] += per; carved += per; } });
 
-      // 2) The remainder goes to the combined opted-in pool, by this
-      //    category's basis (head for Retail/SME, lot for bHNI).
+      // 2) The remainder goes to the combined opted-in pool, weighted by
+      //    min(lots, cap) for THIS category.
       var remaining = P - carved;
-      if (inCount === 0) equalOwn(rows, remaining);                                  // everyone opted out
-      else if (COMBINED[cat] === 'lot') distribute(optedIn, remaining, function(a){ return (a.lots || 1); }, inLots);
-      else distribute(optedIn, remaining, function(){ return 1; }, inCount);
+      if (!optedIn.length) { equalOwn(rows, remaining); return; }   // everyone opted out
+      var cap = capFor ? capFor(cat) : Infinity;
+      var w = function(a) { var l = a.lots || 1; return (cap === Infinity) ? l : Math.min(l, cap); };
+      var tw = optedIn.reduce(function(s, a){ return s + w(a); }, 0);
+      distribute(optedIn, remaining, w, tw);
     });
-
-    // sHNI: its own equal-per-PAN pool, unchanged (opt-out does not apply).
-    var sh = byCat.sHNI;
-    if (sh && sh.length) {
-      var rs = ratesFor('sHNI');
-      equalOwn(sh, PoolMath.category(sh, rs.stcg, rs.brok, rs.bonus).net);
-    }
 
     return out;
   },
@@ -924,6 +922,23 @@ function computeCategoryStats() {
   }).filter(function(c){ return c.applied > 0; });
 }
 
+// The per-category lot cap for an SME IPO's split (see PoolMath.smeShares).
+// Retail/sHNI caps come from what the admin set on the IPO; when unset they are
+// derived from what that category's (uniform) applicants actually applied — the
+// smallest, so an over-applied outlier can't inflate it. bHNI is never capped.
+function smeCapFor(ipo, ipoAllots) {
+  function derive(cat) {
+    var ls = ipoAllots.filter(function(a){ return a.category === cat; }).map(function(a){ return a.lots || 1; });
+    return ls.length ? Math.min.apply(null, ls) : 1;
+  }
+  return function(cat) {
+    if (cat === 'bHNI') return Infinity;
+    if (cat === 'Retail') return (ipo && ipo.retailLots > 0) ? ipo.retailLots : derive('Retail');
+    if (cat === 'sHNI')   return (ipo && ipo.shniLots   > 0) ? ipo.shniLots   : derive('sHNI');
+    return 1;   // legacy single-'SME' category → per head
+  };
+}
+
 // Per-allotment POOL share for a whole IPO (the equal/lot split, EXCLUDING the
 // allotted-PAN bonus, which panBonuses adds on top). SME IPOs use the combined
 // lot/head split honouring each PAN's opt-out; Mainboard uses the per-category
@@ -934,7 +949,8 @@ function ipoPoolAmounts(ipo, ipoAllots) {
     return PoolMath.smeShares(
       ipoAllots,
       function(cat){ return ratesForCategory(ipo.id, cat); },
-      function(panId){ var p = _panById[panId]; return !!(p && p.lotOptOut); }
+      function(panId){ var p = _panById[panId]; return !!(p && p.lotOptOut); },
+      smeCapFor(ipo, ipoAllots)
     );
   }
   var out = {};
@@ -1534,7 +1550,7 @@ async function loadDB() {
 
       // ─── IPOs ────────────────────────────────────────────────────────────────
       async addIpo(fields) {
-        var { data, error } = await window.sb.from('ipos').insert({
+        var base = {
           name:          fields.name,
           short_name:    fields.shortName || fields.name.split(' ')[0],
           type:          fields.type,
@@ -1552,9 +1568,14 @@ async function loadDB() {
           list_gain_pct: fields.listGain  || null,
           subscription:  fields.sub       || null,
           hue:           fields.hue       || 220,
-        }).select().single();
-        if (error) throw error;
-        var transformed = txIpos([data])[0];
+        };
+        var withCaps = Object.assign({ retail_lots: fields.retailLots || null, shni_lots: fields.shniLots || null }, base);
+        var res = await window.sb.from('ipos').insert(withCaps).select().single();
+        if (res.error && (isMissingColumn(res.error, 'retail_lots') || isMissingColumn(res.error, 'shni_lots'))) {
+          res = await window.sb.from('ipos').insert(base).select().single();   // pre-migration-021
+        }
+        if (res.error) throw res.error;
+        var transformed = txIpos([res.data])[0];
         _ipos.unshift(transformed);
         sortIposByRecency(_ipos);   // a backdated open/list date shouldn't jump the queue
         window.DB.ipos = _ipos; rebuildIndexes();
@@ -1589,9 +1610,16 @@ async function loadDB() {
         if ('closeDate' in fields) updates.close_date = fields.closeDate || null;
         if ('allotDate' in fields) updates.allot_date = fields.allotDate || null;
         if ('listDate'  in fields) updates.list_date  = fields.listDate  || null;
-        var { data, error } = await window.sb.from('ipos').update(updates).eq('id', id).select().single();
-        if (error) throw error;
-        var t = txIpos([data])[0];
+        // SME lot caps (migration 021): empty → null (derive from applicants).
+        var capUpdates = {};
+        if ('retailLots' in fields) capUpdates.retail_lots = fields.retailLots || null;
+        if ('shniLots'   in fields) capUpdates.shni_lots   = fields.shniLots   || null;
+        var res = await window.sb.from('ipos').update(Object.assign({}, updates, capUpdates)).eq('id', id).select().single();
+        if (res.error && (isMissingColumn(res.error, 'retail_lots') || isMissingColumn(res.error, 'shni_lots'))) {
+          res = await window.sb.from('ipos').update(updates).eq('id', id).select().single();   // pre-migration-021
+        }
+        if (res.error) throw res.error;
+        var t = txIpos([res.data])[0];
         _ipos = _ipos.map(function(i){ return i.id === id ? t : i; });
         window.DB.ipos = _ipos; rebuildIndexes();
         return t;
