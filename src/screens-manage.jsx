@@ -1725,6 +1725,12 @@ function AdminPanel() {
           setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), status: st, shares: val, gain: g,
             ...(st === 'allotted' && !parseFloat(curSp) && lp > 0 ? { sellPrice: String(lp) } : {}) } }));
         };
+        // Enter the allotment in LOTS instead of shares — converts via the IPO's
+        // lot size (partial allotments: applied 9 lots, got 3 → type 3 here).
+        const updateAllotLots = (a, val) => {
+          const ls = Math.max(0, parseInt(val) || 0);
+          updateShares(a, String(ls * (vIpo?.lotSize || 0)));
+        };
         const markAllotted = () => setChanges(prev => {
           const n = { ...prev };
           vAllots.forEach(a => {
@@ -1916,7 +1922,10 @@ function AdminPanel() {
                         <th style={{ fontWeight: 700, padding: '9px 8px 9px 16px', textAlign: 'left' }}>Applicant</th>
                         <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'left', width: 96 }}>Cat</th>
                         <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'center' }}>Status</th>
-                        <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'right' }}>Shares</th>
+                        <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'right' }}>
+                          <div>Allotted</div>
+                          <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--ink-3)', marginTop: 1 }}>lots or shares</div>
+                        </th>
                         <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'right' }}>
                           <div>Sell Price ₹/share</div>
                           <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--ink-3)', marginTop: 1 }}>per allottee</div>
@@ -1975,17 +1984,36 @@ function AdminPanel() {
                               </div>
                             </td>
                             <td style={{ padding: '10px 8px', textAlign: 'right' }}>
-                              {/* Until a row is allotted it has no shares of its own; show the
-                                  applied quantity as the hint instead of a bare "0". */}
-                              <input type="number" min="0" value={status !== 'allotted' && !(parseInt(shares) > 0) ? '' : shares}
-                                onChange={e => updateShares(a, e.target.value)}
-                                placeholder={vIpo?.lotSize ? String((parseInt(changes[a.id]?.lots ?? a.lots, 10) || 1) * vIpo.lotSize) : '0'}
-                                style={{ ...inputSt, width: 74, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
-                              {/* Lots applied — editable (stored on the application). */}
-                              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', gap: 4, marginTop: 4 }}>
-                                <span style={{ fontSize: 10.5, color: 'var(--ink-3)', marginTop: 6 }}>applied</span>
-                                <LotsInput value={changes[a.id]?.lots ?? a.lots ?? 1} cat={category} ipo={vIpo} compact
-                                  onChange={v => setChange(a.id, 'lots', v)} />
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                                {/* Enter the allotment in LOTS (auto-converts to shares via lot size).
+                                    Handy for partial allotments — applied 9 lots, got 3 → type 3. */}
+                                {vIpo?.lotSize > 0 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <span style={{ fontSize: 10.5, color: 'var(--ink-3)', fontWeight: 700 }}>got</span>
+                                    <input type="number" min="0" aria-label="Lots allotted"
+                                      title="Lots allotted — converts to shares"
+                                      value={(parseInt(shares) > 0 && parseInt(shares) % vIpo.lotSize === 0) ? (parseInt(shares) / vIpo.lotSize) : ''}
+                                      onChange={e => updateAllotLots(a, e.target.value)}
+                                      placeholder="lots"
+                                      style={{ ...inputSt, width: 54, padding: '6px 6px', fontSize: 13, textAlign: 'right' }} />
+                                    <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>lots</span>
+                                  </div>
+                                )}
+                                {/* Until a row is allotted it has no shares of its own; show the
+                                    applied quantity as the hint instead of a bare "0". */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <input type="number" min="0" aria-label="Shares allotted" value={status !== 'allotted' && !(parseInt(shares) > 0) ? '' : shares}
+                                    onChange={e => updateShares(a, e.target.value)}
+                                    placeholder={vIpo?.lotSize ? String((parseInt(changes[a.id]?.lots ?? a.lots, 10) || 1) * vIpo.lotSize) : '0'}
+                                    style={{ ...inputSt, width: 74, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
+                                  <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>sh</span>
+                                </div>
+                                {/* Lots applied — editable (stored on the application). */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>applied</span>
+                                  <LotsInput value={changes[a.id]?.lots ?? a.lots ?? 1} cat={category} ipo={vIpo} compact
+                                    onChange={v => setChange(a.id, 'lots', v)} />
+                                </div>
                               </div>
                             </td>
                             <td style={{ padding: '6px 8px', textAlign: 'right' }}>
