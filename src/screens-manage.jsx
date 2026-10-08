@@ -27,6 +27,26 @@ function friendlyDbError(e) {
   return m;
 }
 
+// ── SME lot-split opt-in toggle (admin, per PAN) ──────────────────────────────
+function LotSplitToggle({ value, onChange }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 'var(--r-md)', border: '1px solid var(--border)' }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>SME lot-based pooling</div>
+        <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2, lineHeight: 1.5 }}>
+          {value
+            ? 'Participating — shares SME profit by lots applied with the pool.'
+            : 'Opted out — always takes the plain equal share of its own category.'}
+        </div>
+      </div>
+      <button type="button" role="switch" aria-checked={value} onClick={() => onChange(!value)}
+        style={{ flexShrink: 0, width: 44, height: 26, borderRadius: 999, border: 'none', cursor: 'pointer', position: 'relative', background: value ? 'var(--brand)' : 'var(--border-strong)', transition: 'background .15s', marginTop: 2 }}>
+        <span style={{ position: 'absolute', top: 3, left: value ? 21 : 3, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left .15s', boxShadow: '0 1px 3px rgba(0,0,0,.25)' }} />
+      </button>
+    </div>
+  );
+}
+
 // ── Shared modal wrapper ──────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (
@@ -253,7 +273,10 @@ function PanManagement() {
                       <Avatar name={p.holder} hue={(me.avatarHue + i * 40) % 360} size={40} />
                       <div>
                         <div style={{ fontSize: 14, fontWeight: 700 }}>{p.holder}</div>
-                        <Badge tone={relColors[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
+                        <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <Badge tone={relColors[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
+                          {p.lotOptOut && <Badge tone="warn">Equal split (SME)</Badge>}
+                        </div>
                       </div>
                     </div>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: p.status === 'Active' ? 'var(--profit)' : 'var(--warn)' }}>
@@ -729,7 +752,7 @@ function AdminPanel() {
   const [editPanSaving, setEditPanSaving] = useState(false);
   const [editPanErr, setEditPanErr]   = useState('');
 
-  const openEditPan = (p) => { setEditPan(p); setEditPanForm({ holderName: p.holder, relation: p.relation || 'Self', bank: p.linkedBank || '', status: p.status || 'Active' }); setEditPanErr(''); };
+  const openEditPan = (p) => { setEditPan(p); setEditPanForm({ holderName: p.holder, relation: p.relation || 'Self', bank: p.linkedBank || '', status: p.status || 'Active', lotOptOut: !!p.lotOptOut }); setEditPanErr(''); };
 
   const saveEditPan = async () => {
     if (!editPanForm.holderName) { setEditPanErr('Holder name is required.'); return; }
@@ -1065,6 +1088,7 @@ function AdminPanel() {
                               <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }} onClick={() => setProfileMember(m.id)} title="View profile">
                                 <span style={{ fontSize: 13, fontWeight: 700, color: p.status === 'Inactive' ? 'var(--ink-3)' : 'var(--ink)' }}>{p.holder}</span>
                                 <Badge tone={{ Self: 'brand', Spouse: 'info', Friend: 'neutral' }[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
+                                {p.lotOptOut && <Badge tone="warn">Equal (SME)</Badge>}
                                 {p.bank && <span style={{ fontSize: 11.5, color: 'var(--ink-3)', background: 'var(--surface-2)', padding: '1px 7px', borderRadius: 6 }}>{p.bank}</span>}
                               </div>
                               {/* PAN number */}
@@ -1515,6 +1539,7 @@ function AdminPanel() {
               <input style={inputSt} value={panForm.bank} onChange={e => setPanForm(p => ({ ...p, bank: e.target.value }))} placeholder="HDFC, Zerodha…" />
             </Field>
           </div>
+          <LotSplitToggle value={!panForm.lotOptOut} onChange={v => setPanForm(p => ({ ...p, lotOptOut: !v }))} />
           {panErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{panErr}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <Button variant="ghost" onClick={() => { setShowAddPan(null); setPanErr(''); }}>Cancel</Button>
@@ -1581,6 +1606,7 @@ function AdminPanel() {
               <option value="Inactive">Inactive</option>
             </select>
           </Field>
+          <LotSplitToggle value={!editPanForm.lotOptOut} onChange={v => setEditPanForm(p => ({ ...p, lotOptOut: !v }))} />
           {editPanErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{editPanErr}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <Button variant="ghost" onClick={() => { setEditPan(null); setEditPanErr(''); }}>Cancel</Button>

@@ -71,6 +71,13 @@ function txMembers(rows) {
   });
 }
 
+// True when a Supabase error is "this column isn't in the schema yet" — used to
+// retry a write without a column that a not-yet-applied migration would add.
+function isMissingColumn(err, col) {
+  var m = (err && err.message) || '';
+  return new RegExp(col, 'i').test(m) && /(does not exist|schema cache|could not find|not find|column)/i.test(m);
+}
+
 function txPans(rows) {
   return rows.map(function(r) {
     return {
@@ -82,6 +89,9 @@ function txPans(rows) {
       linkedBank: r.bank       || '',
       bank:       r.bank       || '',
       status:     r.status,
+      // SME lot-based pooling: false (default) = opted in. Column may be absent
+      // before migration 020, so treat undefined as opted in.
+      lotOptOut:  r.lot_split_opt_out === true,
     };
   });
 }
@@ -531,6 +541,80 @@ var PoolMath = {
     });
     return out;
   },
+
+  // ── SME combined lot/head split ───────────────────────────────────────────
+  // SME IPOs pool differently from Mainboard. Each PAN is opted-IN (default) or
+  // opted-OUT of lot-based pooling. The split basis depends on the category the
+  // profit came FROM:
+  //   • Retail (Individual) profit → split PER HEAD (equal) among opted-in PANs
+  //   • bHNI profit               → split PER LOT (lots applied) among opted-in
+  //   • opted-OUT PANs take only the equal share of THEIR OWN category (so ₹0
+  //     if their category was not allotted), carved out first.
+  //   • sHNI stays its own equal-per-PAN pool (unchanged; opt-out ignored) until
+  //     its rule is decided.
+  // Returns { [allotmentId]: poolShare } summing to the SME IPO's total net.
+  // (The allotted-PAN bonus is unchanged and added on top via panBonuses, as on
+  // Mainboard.) `ratesFor(category)` -> {stcg, brok, bonus}; `optOut(panId)` ->
+  // bool; each allotment row carries `.lots` applied.
+  smeShares: function(ipoAllots, ratesFor, optOut) {
+    var out = {};
+    ipoAllots.forEach(function(a){ out[a.id] = 0; });
+
+    // Integer-exact distribution of `total` (any sign) across `rows` by
+    // weightFn; the first rows (by id) absorb the rounding remainder.
+    function distribute(rows, total, weightFn, totalWeight) {
+      if (totalWeight <= 0 || !rows.length) return;
+      var sorted = rows.slice().sort(function(x, y){ return String(x.id).localeCompare(String(y.id)); });
+      var assigned = 0, parts = [];
+      sorted.forEach(function(a){ var s = Math.floor(total * weightFn(a) / totalWeight); parts.push(s); assigned += s; });
+      var rem = total - assigned;   // 0 .. rows-1 for any sign of total
+      for (var i = 0; i < sorted.length; i++) out[sorted[i].id] += parts[i] + (i < rem ? 1 : 0);
+    }
+    function equalOwn(rows, total) { distribute(rows, total, function(){ return 1; }, rows.length); }
+
+    var byCat = {};
+    ipoAllots.forEach(function(a){ (byCat[a.category] = byCat[a.category] || []).push(a); });
+
+    // Categories that share one combined opted-in pool, and how each is split.
+    var COMBINED = { Retail: 'head', SME: 'head', bHNI: 'lot' };
+
+    var optedIn = ipoAllots.filter(function(a){ return COMBINED[a.category] && !optOut(a.pan); });
+    var inCount = optedIn.length;
+    var inLots  = optedIn.reduce(function(s, a){ return s + (a.lots || 1); }, 0);
+
+    Object.keys(COMBINED).forEach(function(cat) {
+      var rows = byCat[cat];
+      if (!rows || !rows.length) return;
+      var r = ratesFor(cat);
+      var P = PoolMath.category(rows, r.stcg, r.brok, r.bonus).net;
+
+      // A loss (or break-even) is split equally among this category's own
+      // applicants, exactly as today — never pooled by lots across categories.
+      if (P <= 0) { equalOwn(rows, P); return; }
+      var N = rows.length;
+
+      // 1) Opted-out PANs take the plain equal share of their OWN category.
+      var carved = 0;
+      var per = Math.floor(P / N);
+      rows.forEach(function(a){ if (optOut(a.pan)) { out[a.id] += per; carved += per; } });
+
+      // 2) The remainder goes to the combined opted-in pool, by this
+      //    category's basis (head for Retail/SME, lot for bHNI).
+      var remaining = P - carved;
+      if (inCount === 0) equalOwn(rows, remaining);                                  // everyone opted out
+      else if (COMBINED[cat] === 'lot') distribute(optedIn, remaining, function(a){ return (a.lots || 1); }, inLots);
+      else distribute(optedIn, remaining, function(){ return 1; }, inCount);
+    });
+
+    // sHNI: its own equal-per-PAN pool, unchanged (opt-out does not apply).
+    var sh = byCat.sHNI;
+    if (sh && sh.length) {
+      var rs = ratesFor('sHNI');
+      equalOwn(sh, PoolMath.category(sh, rs.stcg, rs.brok, rs.bonus).net);
+    }
+
+    return out;
+  },
 };
 window.PoolMath = PoolMath;
 // groupNetProfit is exported below, once it is defined.
@@ -640,41 +724,40 @@ function ratesForCategory(ipoId, category) {
 // predate migration 011, or a finalize that ran before panRows existed) can
 // never compute this differently.
 function buildFinalizePayload(ipoId) {
+  var ipo        = _ipoById[ipoId];
   var ipoAllots  = allotsOfIpo(ipoId);
-  var CAT_ORDER  = ['SME', 'Retail', 'sHNI', 'bHNI'];
-  var categories = CAT_ORDER.filter(function(c){ return ipoAllots.some(function(a){ return a.category === c; }); });
-  var panToMember = function(panId) {
-    var p = _panById[panId];
-    return p ? p.member : null;
-  };
   var r0 = ratesForIpo(ipoId);
 
-  var rows = [], panRows = [];
-  categories.forEach(function(cat) {
-    var catAllots = ipoAllots.filter(function(a){ return a.category === cat; });
-    var cr = ratesForCategory(ipoId, cat);
-    var memberShares  = PoolMath.memberShares(catAllots, cr.stcg, cr.brok, panToMember, cr.bonus);
-    var memberBonuses = PoolMath.memberBonuses(catAllots, cr.stcg, cr.brok, cr.bonus, panToMember);
-    Object.keys(memberShares).forEach(function(memberId) {
-      var poolShare = (memberShares[memberId] && memberShares[memberId].share) || 0;
-      var bonus     = memberBonuses[memberId] || 0;
-      var pans      = (memberShares[memberId] && memberShares[memberId].pans) || 0;
-      var amount    = poolShare + bonus;
-      // A LOSS (amount < 0) gets a settlement row too -- only an exact ₹0
-      // share is skipped, mirroring finalizePayouts exactly.
-      if (amount !== 0) rows.push({ memberId: memberId, category: cat, pans: pans, amount: Math.round(amount), bonusAmount: Math.round(bonus) });
-    });
+  // SME-aware pool share (combined lot/head for SME, per-category equal for
+  // Mainboard) plus the per-category allotted-PAN bonus on top.
+  var pool  = ipoPoolAmounts(ipo, ipoAllots);
+  var bonus = ipoBonusAmounts(ipo, ipoAllots);
 
-    var panAmounts = PoolMath.panAmounts(catAllots, cr.stcg, cr.brok, cr.bonus);
-    var panBonuses = PoolMath.panBonuses(catAllots, cr.stcg, cr.brok, cr.bonus);
-    catAllots.forEach(function(a) {
-      var poolShare = panAmounts[a.id] || 0;
-      var bonus     = panBonuses[a.id] || 0;
-      if (poolShare !== 0 || bonus !== 0) {
-        panRows.push({ panId: a.pan, category: cat, poolShare: Math.round(poolShare), bonusAmount: Math.round(bonus) });
-      }
-    });
+  // panRows: per allotment (PAN + the category it applied in).
+  var panRows = [];
+  ipoAllots.forEach(function(a) {
+    var poolShare = pool[a.id] || 0;
+    var b         = bonus[a.id] || 0;
+    if (poolShare !== 0 || b !== 0) {
+      panRows.push({ panId: a.pan, category: a.category, poolShare: Math.round(poolShare), bonusAmount: Math.round(b) });
+    }
   });
+
+  // rows: aggregate (pool share + bonus) by (member, category).
+  var agg = {};
+  ipoAllots.forEach(function(a) {
+    var p = _panById[a.pan];
+    if (!p) return;
+    var key = p.member + '|' + a.category;
+    if (!agg[key]) agg[key] = { memberId: p.member, category: a.category, pans: 0, amount: 0, bonusAmount: 0 };
+    agg[key].pans++;
+    agg[key].amount      += (pool[a.id] || 0) + (bonus[a.id] || 0);
+    agg[key].bonusAmount += (bonus[a.id] || 0);
+  });
+  // A LOSS (amount < 0) still gets a row; only an exact ₹0 share is skipped.
+  var rows = Object.keys(agg).map(function(k){ return agg[k]; })
+    .filter(function(r){ return Math.round(r.amount) !== 0; })
+    .map(function(r){ return { memberId: r.memberId, category: r.category, pans: r.pans, amount: Math.round(r.amount), bonusAmount: Math.round(r.bonusAmount) }; });
 
   return { rows: rows, panRows: panRows, rates: { stcgRate: r0.stcg, brokerage: r0.brok, bonusRate: r0.bonus } };
 }
@@ -841,7 +924,49 @@ function computeCategoryStats() {
   }).filter(function(c){ return c.applied > 0; });
 }
 
-// Per-member profit totalled across EVERY IPO, ranked highest first. Reuses the
+// Per-allotment POOL share for a whole IPO (the equal/lot split, EXCLUDING the
+// allotted-PAN bonus, which panBonuses adds on top). SME IPOs use the combined
+// lot/head split honouring each PAN's opt-out; Mainboard uses the per-category
+// equal split. Keyed by allotment id. One source of truth for the leaderboards,
+// the member portfolio, the Profit Pool screen and the settlement ledger.
+function ipoPoolAmounts(ipo, ipoAllots) {
+  if (ipo && ipo.type === 'SME') {
+    return PoolMath.smeShares(
+      ipoAllots,
+      function(cat){ return ratesForCategory(ipo.id, cat); },
+      function(panId){ var p = _panById[panId]; return !!(p && p.lotOptOut); }
+    );
+  }
+  var out = {};
+  var cats = {};
+  ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
+  Object.keys(cats).forEach(function(cat) {
+    var r = ratesForCategory(ipo.id, cat);
+    var amts = PoolMath.panAmounts(cats[cat], r.stcg, r.brok, r.bonus);
+    Object.keys(amts).forEach(function(id){ out[id] = amts[id]; });
+  });
+  return out;
+}
+
+// Per-allotment allotted-PAN bonus for a whole IPO (added on top of the pool
+// share), computed per category exactly as on Mainboard.
+function ipoBonusAmounts(ipo, ipoAllots) {
+  var out = {};
+  var cats = {};
+  ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
+  Object.keys(cats).forEach(function(cat) {
+    var r = ratesForCategory(ipo.id, cat);
+    var b = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
+    Object.keys(b).forEach(function(id){ out[id] = b[id]; });
+  });
+  return out;
+}
+
+// Settlement rows for an IPO are produced by buildFinalizePayload (below),
+// the single source shared by the live Finalize button and the backfill repair.
+
+
+
 // same PoolMath.memberShares split the Profit Pool screen uses, and the same
 // rate resolution (finalized pool rates when present, else the local defaults),
 // so a member's leaderboard total equals the sum of their pool shares --
@@ -877,24 +1002,27 @@ function computeMemberProfits() {
       if (mid != null) touch(mid).iposSet[ipo.id] = true;
     });
 
+    var poolAmts = ipoPoolAmounts(ipo, ipoAllots);
+    // Pool share + PAN count, per member (SME-aware).
+    ipoAllots.forEach(function(a) {
+      var mid = panToMember(a.pan);
+      if (mid == null) return;
+      touch(mid).profit += (poolAmts[a.id] || 0);
+      touch(mid).pans++;
+    });
+
+    // Allotted-PAN bonus and solo value stay per-category (same on SME/Mainboard).
     var cats = {};
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
     Object.keys(cats).forEach(function(cat) {
       var r = ratesForCategory(ipo.id, cat);
-      var shares  = PoolMath.memberShares(cats[cat], r.stcg, r.brok, panToMember, r.bonus);
-      var bonuses = PoolMath.memberBonuses(cats[cat], r.stcg, r.brok, r.bonus, panToMember);
+      var bonuses = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
       var solos   = PoolMath.panSolo(cats[cat], r.stcg, r.brok);
-      Object.keys(shares).forEach(function(mid) {
-        touch(mid).profit += shares[mid].share;
-        touch(mid).pans   += shares[mid].pans;
-      });
-      Object.keys(bonuses).forEach(function(mid) {
-        touch(mid).profit += bonuses[mid];
-      });
       cats[cat].forEach(function(a) {
         var mid = panToMember(a.pan);
         if (mid == null) return;
-        touch(mid).solo += (solos[a.id] || 0);
+        touch(mid).profit += (bonuses[a.id] || 0);
+        touch(mid).solo   += (solos[a.id] || 0);
       });
     });
   });
@@ -918,22 +1046,23 @@ function computePanProfits() {
     var ipoAllots = allotsOfIpo(ipo.id);
     if (!ipoAllots.length) return;
 
+    var poolAmts = ipoPoolAmounts(ipo, ipoAllots);
+    var bonusAmts = ipoBonusAmounts(ipo, ipoAllots);
     var cats = {};
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
+    var soloAll = {};
     Object.keys(cats).forEach(function(cat) {
       var r = ratesForCategory(ipo.id, cat);
-      var amounts = PoolMath.panAmounts(cats[cat], r.stcg, r.brok, r.bonus);
-      var bonuses = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
-      var solos   = PoolMath.panSolo(cats[cat], r.stcg, r.brok);
-      cats[cat].forEach(function(a) {
-        // Keyed by a.pan (the PAN id) here, NOT a.id (the allotment row's own
-        // id) -- amounts/bonuses/solos above are keyed by allotment id since
-        // that's what PoolMath returns, but this map is looked up by PAN id below.
-        if (!totals[a.pan]) totals[a.pan] = { profit: 0, solo: 0, apps: 0 };
-        totals[a.pan].profit += (amounts[a.id] || 0) + (bonuses[a.id] || 0);
-        totals[a.pan].solo   += (solos[a.id] || 0);
-        totals[a.pan].apps++;
-      });
+      var s = PoolMath.panSolo(cats[cat], r.stcg, r.brok);
+      Object.keys(s).forEach(function(id){ soloAll[id] = s[id]; });
+    });
+    ipoAllots.forEach(function(a) {
+      // Keyed by a.pan (the PAN id), while poolAmts/bonus/solo are keyed by
+      // allotment id (a.id) — each PAN has one allotment row per IPO.
+      if (!totals[a.pan]) totals[a.pan] = { profit: 0, solo: 0, apps: 0 };
+      totals[a.pan].profit += (poolAmts[a.id] || 0) + (bonusAmts[a.id] || 0);
+      totals[a.pan].solo   += (soloAll[a.id] || 0);
+      totals[a.pan].apps++;
     });
   });
 
@@ -962,17 +1091,10 @@ function memberIpoEarnings(memberId) {
     var allottedMine = mine.filter(function(a){ return a.status === 'allotted'; });
     var gross = allottedMine.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
 
-    var cats = {};
-    ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
+    var pool  = ipoPoolAmounts(ipo, ipoAllots);
+    var bonus = ipoBonusAmounts(ipo, ipoAllots);
     var net = 0;
-    Object.keys(cats).forEach(function(cat) {
-      var r = ratesForCategory(ipo.id, cat);
-      var amounts = PoolMath.panAmounts(cats[cat], r.stcg, r.brok, r.bonus);
-      var bonuses = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
-      cats[cat].forEach(function(a) {
-        if (myPanIds.indexOf(a.pan) >= 0) net += (amounts[a.id] || 0) + (bonuses[a.id] || 0);
-      });
-    });
+    mine.forEach(function(a) { net += (pool[a.id] || 0) + (bonus[a.id] || 0); });
 
     out.push({
       ipo: ipo.id, short: ipo.short, name: ipo.name, type: ipo.type, status: ipo.status,
@@ -1347,15 +1469,21 @@ async function loadDB() {
 
       // ─── PANs ────────────────────────────────────────────────────────────────
       async addPan(fields) {
-        var { data, error } = await window.sb.from('pan_accounts').insert({
+        var base = {
           member_id:   fields.memberId,
           pan:         fields.pan.toUpperCase(),
           holder_name: fields.holderName,
           relation:    fields.relation  || 'Self',
           bank:        fields.bank      || null,
           status:      'Active',
-        }).select().single();
-        if (error) throw error;
+        };
+        var res = await window.sb.from('pan_accounts')
+          .insert(Object.assign({ lot_split_opt_out: !!fields.lotOptOut }, base)).select().single();
+        if (res.error && isMissingColumn(res.error, 'lot_split_opt_out')) {
+          res = await window.sb.from('pan_accounts').insert(base).select().single();   // pre-migration-020
+        }
+        if (res.error) throw res.error;
+        var data = res.data;
         _pans.push(txPans([data])[0]);
         window.DB.pans = _pans; rebuildIndexes();
         return txPans([data])[0];
@@ -1390,10 +1518,15 @@ async function loadDB() {
       },
 
       async updatePan(id, fields) {
-        var { data, error } = await window.sb.from('pan_accounts')
-          .update({ holder_name: fields.holderName, relation: fields.relation || 'Self', bank: fields.bank || null, status: fields.status })
-          .eq('id', id).select().single();
-        if (error) throw error;
+        var base = { holder_name: fields.holderName, relation: fields.relation || 'Self', bank: fields.bank || null, status: fields.status };
+        var upd = Object.assign({}, base);
+        if (fields.lotOptOut !== undefined) upd.lot_split_opt_out = !!fields.lotOptOut;
+        var res = await window.sb.from('pan_accounts').update(upd).eq('id', id).select().single();
+        if (res.error && isMissingColumn(res.error, 'lot_split_opt_out')) {
+          res = await window.sb.from('pan_accounts').update(base).eq('id', id).select().single();   // pre-migration-020
+        }
+        if (res.error) throw res.error;
+        var data = res.data;
         var idx = _pans.findIndex(function(p){ return p.id === id; });
         if (idx !== -1) _pans[idx] = Object.assign({}, _pans[idx], txPans([data])[0]);
         window.DB.pans = _pans; rebuildIndexes();
