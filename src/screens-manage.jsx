@@ -27,6 +27,46 @@ function friendlyDbError(e) {
   return m;
 }
 
+// ── SME lot-split opt-in toggle (admin, per PAN) ──────────────────────────────
+function LotSplitToggle({ value, onChange }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 'var(--r-md)', border: '1px solid var(--border)' }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>SME lot-based pooling</div>
+        <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2, lineHeight: 1.5 }}>
+          {value
+            ? 'Participating — shares SME profit by lots applied with the pool.'
+            : 'Opted out — always takes the plain equal share of its own category.'}
+        </div>
+      </div>
+      <button type="button" role="switch" aria-checked={value} onClick={() => onChange(!value)}
+        style={{ flexShrink: 0, width: 44, height: 26, borderRadius: 999, border: 'none', cursor: 'pointer', position: 'relative', background: value ? 'var(--brand)' : 'var(--border-strong)', transition: 'background .15s', marginTop: 2 }}>
+        <span style={{ position: 'absolute', top: 3, left: value ? 21 : 3, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left .15s', boxShadow: '0 1px 3px rgba(0,0,0,.25)' }} />
+      </button>
+    </div>
+  );
+}
+
+// ── SME per-IPO lot caps (admin) ──────────────────────────────────────────────
+function SmeLotCaps({ retail, shni, onRetail, onShni }) {
+  return (
+    <div style={{ padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 'var(--r-md)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 700 }}>SME split lot levels</div>
+      <div style={{ fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.5, marginTop: -4 }}>
+        Lots each category's applicants commit. Retail profit splits per head, sHNI caps bHNI down to the sHNI level, bHNI is never capped. Leave blank to auto-detect from applications.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label="Retail lots">
+          <input style={inputSt} type="number" min="1" value={retail} onChange={e => onRetail(e.target.value)} placeholder="auto" />
+        </Field>
+        <Field label="sHNI lots">
+          <input style={inputSt} type="number" min="1" value={shni} onChange={e => onShni(e.target.value)} placeholder="auto" />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
 // ── Shared modal wrapper ──────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (
@@ -253,7 +293,10 @@ function PanManagement() {
                       <Avatar name={p.holder} hue={(me.avatarHue + i * 40) % 360} size={40} />
                       <div>
                         <div style={{ fontSize: 14, fontWeight: 700 }}>{p.holder}</div>
-                        <Badge tone={relColors[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
+                        <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <Badge tone={relColors[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
+                          {p.lotOptOut && <Badge tone="warn">Equal split (SME)</Badge>}
+                        </div>
                       </div>
                     </div>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: p.status === 'Active' ? 'var(--profit)' : 'var(--warn)' }}>
@@ -424,9 +467,9 @@ function AdminPanel() {
   };
   const [addIpoStep, setAddIpoStep] = useState(null); // null | 'details' | 'applicants'
   const [newIpoId,  setNewIpoId]  = useState(null);
-  const [ipoForm, setIpoForm]   = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
+  const [ipoForm, setIpoForm]   = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', retailLots: '', shniLots: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
   const [editIpoId,   setEditIpoId]   = useState(null);
-  const [editIpoForm, setEditIpoForm] = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
+  const [editIpoForm, setEditIpoForm] = useState({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', retailLots: '', shniLots: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
   const [editIpoSaving, setEditIpoSaving] = useState(false);
   const [editIpoErr,    setEditIpoErr]    = useState('');
   const [copiedIpo,     setCopiedIpo]     = useState(null);
@@ -440,14 +483,14 @@ function AdminPanel() {
 
   const closeAddIpo = () => {
     setAddIpoStep(null); setNewIpoId(null); setApplicantSel({}); setIpoErr(''); setAppErr('');
-    setIpoForm({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
+    setIpoForm({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', retailLots: '', shniLots: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
   };
 
   const saveIpo = async () => {
     if (!ipoForm.name || !ipoForm.type) { setIpoErr('Name and type are required.'); return; }
     setIpoSaving(true); setIpoErr('');
     try {
-      const saved = await D.mutations.addIpo({ name: ipoForm.name, shortName: ipoForm.shortName, type: ipoForm.type, bandHigh: parseFloat(ipoForm.price)||null, lotSize: parseInt(ipoForm.lotSize)||null, openDate: ipoForm.openDate || null, closeDate: ipoForm.closeDate || null, allotDate: ipoForm.allotDate || null, listDate: ipoForm.listDate || null });
+      const saved = await D.mutations.addIpo({ name: ipoForm.name, shortName: ipoForm.shortName, type: ipoForm.type, bandHigh: parseFloat(ipoForm.price)||null, lotSize: parseInt(ipoForm.lotSize)||null, retailLots: parseInt(ipoForm.retailLots)||null, shniLots: parseInt(ipoForm.shniLots)||null, openDate: ipoForm.openDate || null, closeDate: ipoForm.closeDate || null, allotDate: ipoForm.allotDate || null, listDate: ipoForm.listDate || null });
       setIpos([...window.DB.ipos]);
       setNewIpoId(saved.id);
       // Pre-populate applicant selections — all unchecked, default category by board type
@@ -503,6 +546,7 @@ function AdminPanel() {
   const openEditIpo = (ip) => {
     setEditIpoId(ip.id);
     setEditIpoForm({ name: ip.name, shortName: ip.short || '', type: ip.type, price: ip.bandHigh || '', lotSize: ip.lotSize || '',
+      retailLots: ip.retailLots || '', shniLots: ip.shniLots || '',
       openDate:  (ip.open      || '').slice(0, 10),
       closeDate: (ip.close     || '').slice(0, 10),
       allotDate: (ip.allotDate || '').slice(0, 10),
@@ -520,6 +564,8 @@ function AdminPanel() {
         type: editIpoForm.type,
         bandHigh: parseFloat(editIpoForm.price) || null,
         lotSize: parseInt(editIpoForm.lotSize) || null,
+        retailLots: parseInt(editIpoForm.retailLots) || null,
+        shniLots: parseInt(editIpoForm.shniLots) || null,
         openDate: editIpoForm.openDate,
         closeDate: editIpoForm.closeDate,
         allotDate: editIpoForm.allotDate,
@@ -729,7 +775,7 @@ function AdminPanel() {
   const [editPanSaving, setEditPanSaving] = useState(false);
   const [editPanErr, setEditPanErr]   = useState('');
 
-  const openEditPan = (p) => { setEditPan(p); setEditPanForm({ holderName: p.holder, relation: p.relation || 'Self', bank: p.linkedBank || '', status: p.status || 'Active' }); setEditPanErr(''); };
+  const openEditPan = (p) => { setEditPan(p); setEditPanForm({ holderName: p.holder, relation: p.relation || 'Self', bank: p.linkedBank || '', status: p.status || 'Active', lotOptOut: !!p.lotOptOut }); setEditPanErr(''); };
 
   const saveEditPan = async () => {
     if (!editPanForm.holderName) { setEditPanErr('Holder name is required.'); return; }
@@ -1065,6 +1111,7 @@ function AdminPanel() {
                               <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }} onClick={() => setProfileMember(m.id)} title="View profile">
                                 <span style={{ fontSize: 13, fontWeight: 700, color: p.status === 'Inactive' ? 'var(--ink-3)' : 'var(--ink)' }}>{p.holder}</span>
                                 <Badge tone={{ Self: 'brand', Spouse: 'info', Friend: 'neutral' }[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
+                                {p.lotOptOut && <Badge tone="warn">Equal (SME)</Badge>}
                                 {p.bank && <span style={{ fontSize: 11.5, color: 'var(--ink-3)', background: 'var(--surface-2)', padding: '1px 7px', borderRadius: 6 }}>{p.bank}</span>}
                               </div>
                               {/* PAN number */}
@@ -1118,6 +1165,10 @@ function AdminPanel() {
               <input style={inputSt} type="number" value={ipoForm.lotSize} onChange={e => setIpoForm(p => ({ ...p, lotSize: e.target.value }))} placeholder="15" />
             </Field>
           </div>
+          {ipoForm.type === 'SME' && (
+            <SmeLotCaps retail={ipoForm.retailLots} shni={ipoForm.shniLots}
+              onRetail={v => setIpoForm(p => ({ ...p, retailLots: v }))} onShni={v => setIpoForm(p => ({ ...p, shniLots: v }))} />
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Open date">
               <input style={inputSt} type="date" value={ipoForm.openDate} onChange={e => setIpoForm(p => ({ ...p, openDate: e.target.value }))} />
@@ -1460,6 +1511,10 @@ function AdminPanel() {
               <input style={inputSt} type="number" value={editIpoForm.lotSize} onChange={e => setEditIpoForm(p => ({ ...p, lotSize: e.target.value }))} placeholder="15" />
             </Field>
           </div>
+          {editIpoForm.type === 'SME' && (
+            <SmeLotCaps retail={editIpoForm.retailLots} shni={editIpoForm.shniLots}
+              onRetail={v => setEditIpoForm(p => ({ ...p, retailLots: v }))} onShni={v => setEditIpoForm(p => ({ ...p, shniLots: v }))} />
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Open date">
               <input style={inputSt} type="date" value={editIpoForm.openDate} onChange={e => setEditIpoForm(p => ({ ...p, openDate: e.target.value }))} />
@@ -1515,6 +1570,7 @@ function AdminPanel() {
               <input style={inputSt} value={panForm.bank} onChange={e => setPanForm(p => ({ ...p, bank: e.target.value }))} placeholder="HDFC, Zerodha…" />
             </Field>
           </div>
+          <LotSplitToggle value={!panForm.lotOptOut} onChange={v => setPanForm(p => ({ ...p, lotOptOut: !v }))} />
           {panErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{panErr}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <Button variant="ghost" onClick={() => { setShowAddPan(null); setPanErr(''); }}>Cancel</Button>
@@ -1581,6 +1637,7 @@ function AdminPanel() {
               <option value="Inactive">Inactive</option>
             </select>
           </Field>
+          <LotSplitToggle value={!editPanForm.lotOptOut} onChange={v => setEditPanForm(p => ({ ...p, lotOptOut: !v }))} />
           {editPanErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{editPanErr}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <Button variant="ghost" onClick={() => { setEditPan(null); setEditPanErr(''); }}>Cancel</Button>
@@ -1667,6 +1724,12 @@ function AdminPanel() {
           const g   = st === 'allotted' ? window.rowGain(st, rsp, issuePrice, sh) : 0;
           setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), status: st, shares: val, gain: g,
             ...(st === 'allotted' && !parseFloat(curSp) && lp > 0 ? { sellPrice: String(lp) } : {}) } }));
+        };
+        // Enter the allotment in LOTS instead of shares — converts via the IPO's
+        // lot size (partial allotments: applied 9 lots, got 3 → type 3 here).
+        const updateAllotLots = (a, val) => {
+          const ls = Math.max(0, parseInt(val) || 0);
+          updateShares(a, String(ls * (vIpo?.lotSize || 0)));
         };
         const markAllotted = () => setChanges(prev => {
           const n = { ...prev };
@@ -1859,7 +1922,10 @@ function AdminPanel() {
                         <th style={{ fontWeight: 700, padding: '9px 8px 9px 16px', textAlign: 'left' }}>Applicant</th>
                         <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'left', width: 96 }}>Cat</th>
                         <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'center' }}>Status</th>
-                        <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'right' }}>Shares</th>
+                        <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'right' }}>
+                          <div>Allotted</div>
+                          <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--ink-3)', marginTop: 1 }}>lots or shares</div>
+                        </th>
                         <th style={{ fontWeight: 700, padding: '9px 8px', textAlign: 'right' }}>
                           <div>Sell Price ₹/share</div>
                           <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--ink-3)', marginTop: 1 }}>per allottee</div>
@@ -1918,17 +1984,36 @@ function AdminPanel() {
                               </div>
                             </td>
                             <td style={{ padding: '10px 8px', textAlign: 'right' }}>
-                              {/* Until a row is allotted it has no shares of its own; show the
-                                  applied quantity as the hint instead of a bare "0". */}
-                              <input type="number" min="0" value={status !== 'allotted' && !(parseInt(shares) > 0) ? '' : shares}
-                                onChange={e => updateShares(a, e.target.value)}
-                                placeholder={vIpo?.lotSize ? String((parseInt(changes[a.id]?.lots ?? a.lots, 10) || 1) * vIpo.lotSize) : '0'}
-                                style={{ ...inputSt, width: 74, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
-                              {/* Lots applied — editable (stored on the application). */}
-                              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', gap: 4, marginTop: 4 }}>
-                                <span style={{ fontSize: 10.5, color: 'var(--ink-3)', marginTop: 6 }}>applied</span>
-                                <LotsInput value={changes[a.id]?.lots ?? a.lots ?? 1} cat={category} ipo={vIpo} compact
-                                  onChange={v => setChange(a.id, 'lots', v)} />
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                                {/* Enter the allotment in LOTS (auto-converts to shares via lot size).
+                                    Handy for partial allotments — applied 9 lots, got 3 → type 3. */}
+                                {vIpo?.lotSize > 0 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <span style={{ fontSize: 10.5, color: 'var(--ink-3)', fontWeight: 700 }}>got</span>
+                                    <input type="number" min="0" aria-label="Lots allotted"
+                                      title="Lots allotted — converts to shares"
+                                      value={(parseInt(shares) > 0 && parseInt(shares) % vIpo.lotSize === 0) ? (parseInt(shares) / vIpo.lotSize) : ''}
+                                      onChange={e => updateAllotLots(a, e.target.value)}
+                                      placeholder="lots"
+                                      style={{ ...inputSt, width: 54, padding: '6px 6px', fontSize: 13, textAlign: 'right' }} />
+                                    <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>lots</span>
+                                  </div>
+                                )}
+                                {/* Until a row is allotted it has no shares of its own; show the
+                                    applied quantity as the hint instead of a bare "0". */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <input type="number" min="0" aria-label="Shares allotted" value={status !== 'allotted' && !(parseInt(shares) > 0) ? '' : shares}
+                                    onChange={e => updateShares(a, e.target.value)}
+                                    placeholder={vIpo?.lotSize ? String((parseInt(changes[a.id]?.lots ?? a.lots, 10) || 1) * vIpo.lotSize) : '0'}
+                                    style={{ ...inputSt, width: 74, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
+                                  <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>sh</span>
+                                </div>
+                                {/* Lots applied — editable (stored on the application). */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>applied</span>
+                                  <LotsInput value={changes[a.id]?.lots ?? a.lots ?? 1} cat={category} ipo={vIpo} compact
+                                    onChange={v => setChange(a.id, 'lots', v)} />
+                                </div>
                               </div>
                             </td>
                             <td style={{ padding: '6px 8px', textAlign: 'right' }}>

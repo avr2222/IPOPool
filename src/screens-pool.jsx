@@ -134,6 +134,27 @@ function ProfitPooling({ navigate, id }) {
   });
 
   // Your combined share across ALL categories (pool share + personal bonus)
+  // SME IPOs split differently (combined lot/head pool with per-PAN opt-out),
+  // so rebuild each category's member shares from the SAME payload Finalize will
+  // write — PoolMath.smeShares via buildFinalizePayload — so the preview matches
+  // the actual payout to the rupee. Mainboard keeps the per-category equal split.
+  const isSME = ipo?.type === 'SME';
+  if (isSME) {
+    const payload = window.buildFinalizePayload(sel);
+    const byCat = {};
+    payload.rows.forEach(r => { (byCat[r.category] = byCat[r.category] || {})[r.memberId] = r; });
+    catData.forEach(d => {
+      const ms = {}, mb = {};
+      Object.keys(byCat[d.cat] || {}).forEach(mid => {
+        const r = byCat[d.cat][mid];
+        ms[mid] = { pans: r.pans, share: r.amount - r.bonusAmount };
+        mb[mid] = r.bonusAmount;
+      });
+      d.memberShares = ms;
+      d.memberBonuses = mb;
+    });
+  }
+
   const myPoolShare = catData.reduce((s, d) => s + (d.memberShares[me?.id]?.share || 0), 0);
   const myBonus     = catData.reduce((s, d) => s + (d.memberBonuses[me?.id] || 0), 0);
   const myTotal     = myPoolShare + myBonus;
@@ -230,6 +251,9 @@ function ProfitPooling({ navigate, id }) {
             <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
               {catData.filter(d => d.memberShares[me?.id]).map(d => {
                 const r = d.memberShares[me.id];
+                // SME splits by lots/head, not a flat per-PAN figure, so show
+                // the member's actual share for the category instead of "× perPan".
+                if (isSME) return `${CAT_META[d.cat]?.label || d.cat}: ${f(r.share)}${r.pans > 1 ? ` (${r.pans} PANs)` : ''}`;
                 // The remainder rupees go one each to the first few PANs, so a
                 // share can be ₹1 above pans × perPan — say so rather than
                 // show "1 PAN × ₹217" next to a ₹218 total.
@@ -272,6 +296,16 @@ function ProfitPooling({ navigate, id }) {
         </div>
       )}
 
+      {/* SME split explainer */}
+      {isSME && (
+        <div style={{ display: 'flex', gap: 10, padding: '11px 16px', background: 'var(--info-soft)', borderRadius: 'var(--r-md)', border: '1px solid var(--info)', alignItems: 'flex-start' }}>
+          <Icon name="pool" size={16} color="var(--info)" />
+          <div style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+            <strong>SME lot-based pooling.</strong> Each category's profit is shared across the opted-in pool by lots, capped at that category's lot level: Retail is per head, sHNI caps everyone at the sHNI level (so sHNI and bHNI tie), and bHNI uses full lots applied. PANs opted out (set on the PAN) take only the equal share of their own category.
+          </div>
+        </div>
+      )}
+
       {/* Per-category breakdown */}
       {catData.map(d => {
         const meta    = CAT_META[d.cat] || { label: d.cat, tone: 'neutral', desc: '', textColor: 'var(--ink-2)' };
@@ -298,10 +332,16 @@ function ProfitPooling({ navigate, id }) {
                   <div style={{ fontSize: 10.5, color: 'var(--ink-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em' }}>Allotted</div>
                   <div className="num" style={{ fontSize: 18, fontWeight: 800, color: d.allotted > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{d.allotted}</div>
                 </div>
-                {hasProfit && (
+                {hasProfit && !isSME && (
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: 10.5, color: 'var(--ink-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em' }}>Per PAN</div>
                     <div className="num" style={{ fontSize: 18, fontWeight: 800, color: meta.textColor }}>{f(d.perPan)}</div>
+                  </div>
+                )}
+                {hasProfit && isSME && (
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 10.5, color: 'var(--ink-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em' }}>Net profit</div>
+                    <div className="num" style={{ fontSize: 18, fontWeight: 800, color: meta.textColor }}>{f(d.net)}</div>
                   </div>
                 )}
               </div>
@@ -335,15 +375,31 @@ function ProfitPooling({ navigate, id }) {
                     ))}
                   </div>
                   <div style={{ marginTop: 10, padding: '10px 14px', background: 'var(--brand-tint)', borderRadius: 'var(--r-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <div>
-                      <div style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 600 }}>Net ÷ {d.total} PANs</div>
-                      {d.remainder > 0 && (
-                        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
-                          {d.remainder} PAN{d.remainder !== 1 ? 's' : ''} get ₹1 extra so every rupee is shared
+                    {isSME ? (
+                      <>
+                        <div>
+                          <div style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 600 }}>
+                            Split {d.cat === 'bHNI' ? 'by lots applied' : d.cat === 'sHNI' ? 'by lots, capped at sHNI level' : 'per head (equal)'}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
+                            shared across the opted-in pool
+                          </div>
                         </div>
-                      )}
-                    </div>
-                    <div className="num" style={{ fontSize: 22, fontWeight: 800, color: 'var(--brand)' }}>{f(d.perPan)}<span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-3)' }}>/PAN</span></div>
+                        <div className="num" style={{ fontSize: 20, fontWeight: 800, color: 'var(--brand)' }}>{f(d.net)}</div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <div style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 600 }}>Net ÷ {d.total} PANs</div>
+                          {d.remainder > 0 && (
+                            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
+                              {d.remainder} PAN{d.remainder !== 1 ? 's' : ''} get ₹1 extra so every rupee is shared
+                            </div>
+                          )}
+                        </div>
+                        <div className="num" style={{ fontSize: 22, fontWeight: 800, color: 'var(--brand)' }}>{f(d.perPan)}<span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-3)' }}>/PAN</span></div>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -395,7 +451,9 @@ function ProfitPooling({ navigate, id }) {
           <div>
             <div style={{ fontSize: 14, fontWeight: 800 }}>{totalNet >= 0 ? 'Ready to distribute' : 'Ready to settle (loss)'}</div>
             <div style={{ fontSize: 12.5, color: 'var(--ink-2)', marginTop: 3 }}>
-              {catData.filter(d => d.net !== 0).map(d => `${d.cat}: ${f(d.perPan)}/PAN × ${d.total} applicants`).join(' · ')}
+              {isSME
+                ? catData.filter(d => d.net !== 0).map(d => `${d.cat}: ${f(d.net)} ${d.cat === 'bHNI' ? 'by lots' : d.cat === 'sHNI' ? 'capped lots' : 'per head'}`).join(' · ')
+                : catData.filter(d => d.net !== 0).map(d => `${d.cat}: ${f(d.perPan)}/PAN × ${d.total} applicants`).join(' · ')}
             </div>
             {finalErr && <div style={{ fontSize: 12.5, color: 'var(--loss)', marginTop: 4, fontWeight: 600 }}>{finalErr}</div>}
           </div>
