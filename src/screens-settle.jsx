@@ -218,17 +218,21 @@ function SettlementLedger({ navigate, id }) {
     catBonusByMember[cat] = window.PoolMath.memberBonuses(ca, cr.stcg, cr.brok, cr.bonus, panToMember);
   });
   const myPanIds = D.pans.filter(p => p.member === me?.id).map(p => p.id);
+  const isSME    = ipo?.type === 'SME';
 
-  // Your retained share (exact, summed across all categories) — pool share
-  // plus your personal allotted-PAN bonus, on top, matching what
-  // finalizePayouts (screens-pool.jsx) actually wrote to the settlement.
-  const myShare = categories.reduce((sum, cat) => {
-    const ca = ipoAllots.filter(a => a.category === cat);
-    const cr = window.ratesForCategory(selIpo, cat);
-    const shares  = window.PoolMath.memberShares(ca, cr.stcg, cr.brok, panToMember, cr.bonus);
-    const bonuses = window.PoolMath.memberBonuses(ca, cr.stcg, cr.brok, cr.bonus, panToMember);
-    return sum + (shares[me?.id]?.share || 0) + (bonuses[me?.id] || 0);
-  }, 0);
+  // Your retained share — taken from the SAME payload Finalize writes
+  // (buildFinalizePayload is SME-aware: the combined lot/head split for SME,
+  // per-category equal for Mainboard), so this band reconciles exactly with the
+  // ledger rows below instead of re-deriving per category. amount already folds
+  // in your personal allotted-PAN bonus, matching what was settled.
+  const myCatAmounts = {};   // category -> { amount, pans, bonus }
+  (() => {
+    const pay = window.buildFinalizePayload(selIpo);
+    pay.rows.filter(r => r.memberId === me?.id).forEach(r => {
+      myCatAmounts[r.category] = { amount: r.amount, pans: r.pans, bonus: r.bonusAmount || 0 };
+    });
+  })();
+  const myShare = Object.keys(myCatAmounts).reduce((s, c) => s + myCatAmounts[c].amount, 0);
 
   // Settlement rows for this IPO
   const [rows, setRows] = useState(D.settlements.filter(s => s.ipo === selIpo));
@@ -734,12 +738,9 @@ function SettlementLedger({ navigate, id }) {
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 700 }}>Your retained share</div>
             <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-              {catSummaries.filter(d => {
-                const n = ipoAllots.filter(a => a.category === d.cat && myPanIds.includes(a.pan)).length;
-                return n > 0;
-              }).map(d => {
-                const n = ipoAllots.filter(a => a.category === d.cat && myPanIds.includes(a.pan)).length;
-                return `${d.cat}: ${n} PAN${n>1?'s':''} × ${f(d.perPan)}`;
+              {Object.keys(myCatAmounts).map(cat => {
+                const r = myCatAmounts[cat];
+                return `${cat}: ${r.pans} PAN${r.pans > 1 ? 's' : ''} · ${f(r.amount)}`;
               }).join(' · ')}
               {bonusRate > 0 && <span style={{ color: 'var(--warn)', fontWeight: 700 }}> · includes your allotted-PAN bonus</span>} — already in your account
             </div>
@@ -764,7 +765,7 @@ function SettlementLedger({ navigate, id }) {
               </>
             );
           })()}
-          <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{rows.length} recipient{rows.length !== 1 ? 's' : ''} · {catSummaries.map(d => `${d.cat} ₹${d.perPan.toLocaleString('en-IN')}/PAN`).join(' · ')}</div>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{rows.length} recipient{rows.length !== 1 ? 's' : ''} · {catSummaries.map(d => isSME ? `${d.cat} ${f(d.net, { compact: true })}` : `${d.cat} ₹${d.perPan.toLocaleString('en-IN')}/PAN`).join(' · ')}</div>
         </Card>
         <Card pad={18}>
           <div style={{ fontSize: 12.5, color: 'var(--ink-2)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -873,7 +874,7 @@ function SettlementLedger({ navigate, id }) {
                           <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 1, textAlign: 'right', fontWeight: 700 }}>+{f(bonus)} bonus</div>
                         </>
                       ) : (
-                        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, textAlign: 'right' }}>{r.pans} × {f(catPerPan)}</div>
+                        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, textAlign: 'right' }}>{isSME ? `${r.pans} PAN${r.pans !== 1 ? 's' : ''}` : `${r.pans} × ${f(catPerPan)}`}</div>
                       )}
                     </td>
                     <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: r.amount < 0 ? 'var(--loss)' : 'var(--ink)' }}>{f(r.amount)}</td>
