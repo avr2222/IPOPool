@@ -1083,9 +1083,9 @@ function computeMemberProfits() {
     return p ? p.member : null;
   };
 
-  var totals = {};   // memberId -> { profit, solo, pans, iposSet }
+  var totals = {};   // memberId -> { profit, solo, panSet, iposSet }
   var touch = function(mid) {
-    if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0, iposSet: {} };
+    if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, panSet: {}, iposSet: {} };
     return totals[mid];
   };
 
@@ -1108,10 +1108,20 @@ function computeMemberProfits() {
     var mAmts = ipoMemberAmounts(ipo, ipoAllots);
     Object.keys(mAmts).forEach(function(mid){ touch(mid).profit += mAmts[mid]; });
 
-    // PAN count (the holder's own PANs) and solo value stay with the holder.
+    // Distinct PANs behind each member's take: their own applied PANs plus any
+    // PAN of theirs that funded another member's application (matches the
+    // settlement ledger). Solo value stays with the holder (below).
+    var poolForPans = ipoPoolAmounts(ipo, ipoAllots);
     ipoAllots.forEach(function(a) {
-      var mid = panToMember(a.pan);
-      if (mid != null) touch(mid).pans++;
+      var hp = _panById[a.pan];
+      if (!hp) return;
+      touch(hp.member).panSet[a.pan] = true;    // the member's own applied PAN
+      contributorSlices(a, poolForPans[a.id] || 0, hp.member).forEach(function(s) {
+        // A funding PAN counts for its owner only when it actually earned a
+        // slice (a ₹0-weight backer gets nothing, so it shouldn't inflate the
+        // count); the holder's own PAN is already counted just above.
+        if (s.pan && s.amount !== 0) touch(s.memberId != null ? s.memberId : panToMember(s.pan)).panSet[s.pan] = true;
+      });
     });
     var cats = {};
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
@@ -1126,9 +1136,9 @@ function computeMemberProfits() {
   });
 
   return _members.map(function(m) {
-    var t = totals[m.id] || { profit: 0, solo: 0, pans: 0, iposSet: {} };
+    var t = totals[m.id] || { profit: 0, solo: 0, panSet: {}, iposSet: {} };
     return { id: m.id, name: m.name, avatarHue: m.avatarHue, you: m.you,
-             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), pans: t.pans,
+             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), pans: Object.keys(t.panSet).length,
              iposApplied: Object.keys(t.iposSet).length };
   }).sort(function(a, b){ return b.profit - a.profit; });
 }

@@ -297,7 +297,7 @@ function Dashboard({ navigate, tweaks }) {
         <div style={{ flex: 1, minWidth: 150 }}>
           <div style={{ fontSize: 12.5, color: 'var(--ink-2)', fontWeight: 600 }}>Your pooled position</div>
           <div style={{ fontSize: 16, fontWeight: 800, marginTop: 2 }}>{me.name}<span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span></div>
-          <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>{me.iposApplied} IPO{me.iposApplied === 1 ? '' : 's'} · {me.pans} PAN{me.pans === 1 ? '' : 's'} applied</div>
+          <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>{me.iposApplied} IPO{me.iposApplied === 1 ? '' : 's'} applied · {me.pans} PAN{me.pans === 1 ? '' : 's'}</div>
         </div>
         <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', rowGap: 10 }}>
           <YouStat label="Net profit" value={f(me.profit, { compact: true })} color={me.profit >= 0 ? 'var(--profit)' : 'var(--loss)'}
@@ -458,7 +458,7 @@ function Dashboard({ navigate, tweaks }) {
                 {memberRanks[0].name}{memberRanks[0].you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
               </div>
               <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
-                {memberRanks[0].iposApplied} IPO{memberRanks[0].iposApplied === 1 ? '' : 's'} · {memberRanks[0].pans} PAN{memberRanks[0].pans === 1 ? '' : 's'} applied
+                {memberRanks[0].iposApplied} IPO{memberRanks[0].iposApplied === 1 ? '' : 's'} applied · {memberRanks[0].pans} PAN{memberRanks[0].pans === 1 ? '' : 's'}
               </div>
             </div>
             <div style={{ textAlign: 'right' }}>
