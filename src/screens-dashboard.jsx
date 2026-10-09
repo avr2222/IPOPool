@@ -516,7 +516,7 @@ function Dashboard({ navigate, tweaks }) {
               <div style={{ fontSize: 15, fontWeight: 800, marginTop: 5 }}>
                 {panRanks[0].holder}{panRanks[0].you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
               </div>
-              <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{panRanks[0].memberName} · {panRanks[0].apps} IPO{panRanks[0].apps === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{panRanks[0].memberName} · {panRanks[0].isBacker ? 'Backer' : `${panRanks[0].apps} IPO${panRanks[0].apps === 1 ? '' : 's'}`}{panRanks[0].receivedFunding && ' · group-funded'}</div>
             </div>
             <div style={{ textAlign: 'right' }}>
               <div className="num" style={{ fontSize: 24, fontWeight: 800, color: 'var(--profit)', whiteSpace: 'nowrap' }}>{f(panRanks[0].profit)}</div>
@@ -533,7 +533,10 @@ function Dashboard({ navigate, tweaks }) {
                   {p.holder}{p.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}
                   <span style={{ fontWeight: 600, color: 'var(--ink-3)' }}> · {p.memberName}</span>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 1 }}>{p.apps} IPO{p.apps === 1 ? '' : 's'}</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 1 }}>
+                  {p.isBacker ? 'Backer' : `${p.apps} IPO${p.apps === 1 ? '' : 's'}`}
+                  {p.receivedFunding && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · group-funded</span>}
+                </div>
                 <div style={{ marginTop: 5 }}><Meter value={p.profit} max={topPanProfit} color="var(--profit)" style={{ height: 6 }} /></div>
               </div>
               <div style={{ textAlign: 'right' }}>

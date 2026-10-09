@@ -872,10 +872,12 @@ function SettlementLedger({ navigate, id }) {
                         </>
                       ) : (
                         <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, textAlign: 'right' }}>{
-                          // "N × perPan" only when it actually reconciles with the
-                          // amount (a straight holder row). A backer paid through a
-                          // funding split isn't N×perPan, so show a plain PAN count.
-                          (!isSME && catPerPan > 0 && Math.round(panCount * catPerPan) === Math.round(r.amount))
+                          // "N × perPan" only when it reconciles with the amount (a
+                          // straight holder row). Integer remainder splits can drift
+                          // by up to a rupee per PAN, so allow that tolerance; a
+                          // backer paid through a funding split is off by far more and
+                          // falls back to a plain PAN count.
+                          (!isSME && catPerPan > 0 && Math.abs(panCount * catPerPan - r.amount) <= panCount)
                             ? `${panCount} × ${f(catPerPan)}`
                             : `${panCount} PAN${panCount !== 1 ? 's' : ''}`
                         }</div>

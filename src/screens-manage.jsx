@@ -422,6 +422,8 @@ function PanManagement() {
                         <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
                           <Badge tone={relColors[p.relation] || 'neutral'}>{p.relation || 'Self'}</Badge>
                           {p.lotOptOut && <Badge tone="warn">Equal split (SME)</Badge>}
+                          {pp.receivedFunding && <Badge tone="info">Group-funded</Badge>}
+                          {pp.isBacker && <Badge tone="info">Backer</Badge>}
                         </div>
                       </div>
                     </div>
