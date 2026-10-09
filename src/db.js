@@ -738,15 +738,32 @@ function buildFinalizePayload(ipoId) {
   var pool  = ipoPoolAmounts(ipo, ipoAllots);
   var bonus = ipoBonusAmounts(ipo, ipoAllots);
 
-  // panRows: per allotment (PAN + the category it applied in).
-  var panRows = [];
+  // panRows: one row per RECEIVING PAN per category, funding-aware — the pool
+  // share a PAN actually RECEIVES (its own slice as a funder of any application
+  // it backed, its own application included) plus the allotted-PAN bonus it
+  // keeps as holder. Summed per member these reconcile with `rows` (and the
+  // settlement ledger), so the member portal's per-PAN breakdown and cashflows
+  // match the family total even when a funding group redistributes a share.
+  var panAgg = {};
+  var panBump = function(panId, cat) {
+    var k = panId + '|' + cat;
+    if (!panAgg[k]) panAgg[k] = { panId: panId, category: cat, poolShare: 0, bonusAmount: 0 };
+    return panAgg[k];
+  };
   ipoAllots.forEach(function(a) {
-    var poolShare = pool[a.id] || 0;
-    var b         = bonus[a.id] || 0;
-    if (poolShare !== 0 || b !== 0) {
-      panRows.push({ panId: a.pan, category: a.category, poolShare: Math.round(poolShare), bonusAmount: Math.round(b) });
-    }
+    var hp = _panById[a.pan];
+    if (!hp) return;
+    var b = bonus[a.id] || 0;
+    if (b) panBump(a.pan, a.category).bonusAmount += b;        // bonus → holder PAN
+    contributorSlices(a, pool[a.id] || 0, hp.member).forEach(function(s) {
+      var pid = s.pan || a.pan;
+      if (s.amount) panBump(pid, a.category).poolShare += s.amount;   // slice → funder PAN
+    });
   });
+  var panRows = Object.keys(panAgg).map(function(k) {
+    var r = panAgg[k];
+    return { panId: r.panId, category: r.category, poolShare: Math.round(r.poolShare), bonusAmount: Math.round(r.bonusAmount) };
+  }).filter(function(r){ return r.poolShare !== 0 || r.bonusAmount !== 0; });
 
   // rows: bonus goes to the PAN holder; the pool share is split among the
   // application's funding group (holder always included). Aggregated by
@@ -1227,10 +1244,30 @@ function memberIpoEarnings(memberId) {
     var allottedMine = mine.filter(function(a){ return a.status === 'allotted'; });
     var gross = allottedMine.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
 
+    // Backing breakdown: slices this member earned by funding OTHER members'
+    // applications (so the member can see where that money came from). Keyed by
+    // the holder PAN so two of their PANs funding the same app read as one line.
+    var pool = ipoPoolAmounts(ipo, ipoAllots);
+    var backedBy = {};
+    ipoAllots.forEach(function(a) {
+      var hp = _panById[a.pan];
+      if (!hp || hp.member === memberId) return;   // only PANs owned by someone else
+      contributorSlices(a, pool[a.id] || 0, hp.member).forEach(function(s) {
+        if (s.memberId === memberId && s.amount) {
+          var k = a.pan + '|' + a.category;
+          if (!backedBy[k]) backedBy[k] = { holder: hp.holder, category: a.category, amount: 0 };
+          backedBy[k].amount += s.amount;
+        }
+      });
+    });
+    var backed = Object.keys(backedBy).map(function(k) {
+      return { holder: backedBy[k].holder, category: backedBy[k].category, amount: Math.round(backedBy[k].amount) };
+    }).sort(function(a, b){ return b.amount - a.amount; });
+
     out.push({
       ipo: ipo.id, short: ipo.short, name: ipo.name, type: ipo.type, status: ipo.status,
       applied: mine.length, allotted: allottedMine.length,
-      gross: gross, net: Math.round(net),
+      gross: gross, net: Math.round(net), backed: backed,
       month: ipo.listDate || ipo.allotDate || ipo.close || ipo.open || null,
     });
   });
@@ -1358,11 +1395,19 @@ function buildXirrLegs() {
     var outDate = toDateOrNull(ipo.close) || toDateOrNull(ipo.open);
     if (!outDate) return;
     var amt = ipo.lotValue * (a.lots || 1);
-    (blocksByPan[pan.id] = blocksByPan[pan.id] || []).push({ date: outDate, amount: -amt, memberId: pan.member });
-
     var listedDate = toDateOrNull(ipo.listDate) || toDateOrNull(ipo.allotDate);
     var availDate = (listedDate && listedDate <= today) ? listedDate : today;
-    (contribByPan[pan.id] = contribByPan[pan.id] || []).push({ avail: availDate, amount: amt, memberId: pan.member });
+    // The capital for a funded application is put up by its funders, so split
+    // the block (and its release) across them exactly as the pool share is
+    // split. With no funding this returns the whole amount to the holder, so
+    // non-funded applications are unchanged.
+    contributorSlices(a, amt, pan.member).forEach(function(s) {
+      if (!s.amount) return;
+      var pid = s.pan || pan.id;
+      var mid = s.memberId != null ? s.memberId : panToMember(pid);
+      (blocksByPan[pid]  = blocksByPan[pid]  || []).push({ date: outDate,    amount: -s.amount, memberId: mid });
+      (contribByPan[pid] = contribByPan[pid] || []).push({ avail: availDate, amount:  s.amount, memberId: mid });
+    });
   });
 
   _ipos.forEach(function(ipo) {
@@ -1384,10 +1429,23 @@ function buildXirrLegs() {
       };
 
       cats[cat].forEach(function(a) {
-        var amt = (panAmounts[a.id] || 0) + (panBonuses[a.id] || 0);
-        if (!amt) return;
-        var mid = panToMember(a.pan);
-        (contribByPan[a.pan] = contribByPan[a.pan] || []).push({ avail: settleDateFor(mid), amount: amt, memberId: mid });
+        var poolShare = panAmounts[a.id] || 0;
+        var bonusAmt  = panBonuses[a.id] || 0;
+        var hmid = panToMember(a.pan);
+        // Bonus stays with the holder PAN; the pool share is recognised by the
+        // funders (holder included), so each backer's own XIRR reflects the
+        // capital they put up and the profit they actually received.
+        if (bonusAmt) {
+          (contribByPan[a.pan] = contribByPan[a.pan] || []).push({ avail: settleDateFor(hmid), amount: bonusAmt, memberId: hmid });
+        }
+        if (poolShare) {
+          contributorSlices(a, poolShare, hmid).forEach(function(s) {
+            if (!s.amount) return;
+            var pid = s.pan || a.pan;
+            var mid = s.memberId != null ? s.memberId : panToMember(pid);
+            (contribByPan[pid] = contribByPan[pid] || []).push({ avail: settleDateFor(mid), amount: s.amount, memberId: mid });
+          });
+        }
       });
     });
   });

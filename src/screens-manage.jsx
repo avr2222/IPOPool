@@ -537,14 +537,26 @@ function PanManagement() {
               </thead>
               <tbody>
                 {earnings.map(e => (
-                  <tr key={e.ipo} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '11px 18px', fontWeight: 700, fontSize: 13.5 }}>{e.short}</td>
-                    <td style={{ padding: '11px 18px' }}><Badge tone={e.type === 'SME' ? 'sme' : 'mainboard'}>{e.type}</Badge></td>
-                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.applied}</td>
-                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.allotted}</td>
-                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.gross > 0 ? f(e.gross, { compact: true }) : '—'}</td>
-                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800, color: e.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{e.net > 0 ? f(e.net, { compact: true }) : '—'}</td>
-                  </tr>
+                  <React.Fragment key={e.ipo}>
+                    <tr style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: (e.backed && e.backed.length ? '11px 18px 2px' : '11px 18px'), fontWeight: 700, fontSize: 13.5 }}>{e.short}</td>
+                      <td style={{ padding: '11px 18px' }}><Badge tone={e.type === 'SME' ? 'sme' : 'mainboard'}>{e.type}</Badge></td>
+                      <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.applied}</td>
+                      <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.allotted}</td>
+                      <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.gross > 0 ? f(e.gross, { compact: true }) : '—'}</td>
+                      <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800, color: e.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{e.net > 0 ? f(e.net, { compact: true }) : '—'}</td>
+                    </tr>
+                    {e.backed && e.backed.length > 0 && (
+                      <tr>
+                        <td colSpan={6} style={{ padding: '0 18px 10px', fontSize: 11.5, color: 'var(--ink-3)' }}>
+                          <span style={{ color: 'var(--brand)', fontWeight: 700 }}>↳ Backed</span>
+                          {' '}{e.backed.map((b, i) => (
+                            <span key={i}>{i > 0 ? ' · ' : ' '}{b.holder} ({b.category}) <span style={{ color: 'var(--profit)', fontWeight: 700 }}>+{f(b.amount, { compact: true })}</span></span>
+                          ))}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
                 <tr style={{ borderTop: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
                   <td style={{ padding: '11px 18px', fontWeight: 800 }}>Total</td>
@@ -2045,7 +2057,8 @@ function AdminPanel() {
                     No applications recorded yet. Use "Who applied?" when adding the IPO.
                   </div>
                 ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <>
+                  <table className="table-desktop" style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ fontSize: 11, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em', background: 'var(--surface-2)', position: 'sticky', top: 0, zIndex: 1 }}>
                         <th style={{ fontWeight: 700, padding: '9px 8px 9px 16px', textAlign: 'left' }}>Applicant</th>
@@ -2195,6 +2208,109 @@ function AdminPanel() {
                       })}
                     </tbody>
                   </table>
+                  {/* Phones: one card per applicant — the table's columns don't
+                      fit a narrow screen, so the sell price and funding/remove
+                      controls were getting clipped off the right edge. */}
+                  <div className="cards-mobile">
+                    {shownAllots.length === 0 && (
+                      <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+                        No applicants match.{' '}
+                        <button onClick={() => { setAllotQuery(''); setAllotFilter('all'); }} style={{ border: 'none', background: 'none', color: 'var(--brand)', fontWeight: 700, cursor: 'pointer', padding: 0 }}>Show all</button>
+                      </div>
+                    )}
+                    {shownAllots.map(a => {
+                      const panObj  = D.pan(a.pan);
+                      const mem     = panObj ? D.member(panObj.member) : null;
+                      const category  = changes[a.id]?.category  ?? a.category;
+                      const status    = changes[a.id]?.status    ?? a.status;
+                      const shares    = changes[a.id]?.shares    ?? a.shares;
+                      const gain      = changes[a.id]?.gain      ?? a.gain;
+                      const sellPrice = changes[a.id]?.sellPrice ?? (a.sellPrice != null ? String(a.sellPrice) : '');
+                      const rowBg     = status === 'allotted' ? 'var(--profit-soft)' : status === 'not_allotted' ? 'var(--loss-soft)' : 'var(--surface)';
+                      const sp = parseFloat(sellPrice) || 0;
+                      const computedGain = sp > 0 && issuePrice > 0 ? window.rowGain(status, sp, issuePrice, shares) : gain;
+                      const catOptions = vCats.includes(category) ? vCats : [...vCats, category];
+                      return (
+                        <div key={a.id} style={{ borderTop: '1px solid var(--border)', background: rowBg, padding: '12px 14px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 14, fontWeight: 700 }}>{panObj?.holder || '—'}</div>
+                              <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{mem?.name}{panObj?.pan ? ' · ' + panObj.pan : ''}</div>
+                            </div>
+                            <div style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+                              <IconButton name="groups" size={26}
+                                active={!!D.fundingFor(a.appId).mode}
+                                tip={D.fundingFor(a.appId).mode ? 'Funding group set — edit' : 'Set funding group (who funded this PAN)'}
+                                onClick={() => setFundingApp(a)} />
+                              {status === 'pending' && (
+                                <IconButton name="trash" size={26} tip="Remove applicant"
+                                  onClick={() => askConfirm('Remove applicant', `Remove ${panObj?.holder || 'this applicant'} from ${vIpo?.name}? This cannot be undone.`,
+                                    async () => { await D.mutations.removeApplicant(a.id); setViewIpoId(null); setChanges({}); setSaved(false); }, true, 'Remove')} />
+                              )}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                            <div style={{ display: 'inline-flex', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 3, gap: 2 }}>
+                              {[['allotted', '✓', 'var(--profit)', 'var(--profit-soft)'], ['not_allotted', '✗', 'var(--loss)', 'var(--loss-soft)'], ['pending', '—', 'var(--ink-2)', 'var(--surface-2)']].map(([val, lbl, col, bg]) => (
+                                <button key={val} onClick={() => markStatus(a, val)} style={{
+                                  border: 'none', borderRadius: 'calc(var(--r-md) - 3px)', padding: '7px 15px', fontSize: 15, fontWeight: 800,
+                                  background: status === val ? bg : 'transparent', color: status === val ? col : 'var(--ink-3)',
+                                  boxShadow: status === val ? 'var(--sh-sm)' : 'none', cursor: 'pointer',
+                                }}>{lbl}</button>
+                              ))}
+                            </div>
+                            <select value={category} onChange={e => setChange(a.id, 'category', e.target.value)}
+                              style={{ ...inputSt, width: 'auto', padding: '7px 8px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                              {catOptions.map(c => <option key={c} value={c}>{vCatLabel(c)}</option>)}
+                            </select>
+                          </div>
+                          <div style={{ display: 'flex', gap: 16, marginTop: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                            <div>
+                              <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Allotted</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: status === 'allotted' ? 1 : 0.5 }}>
+                                <span style={{ fontSize: 10.5, color: 'var(--ink-3)', fontWeight: 700 }}>got</span>
+                                {vIpo?.lotSize > 0 && (
+                                  <>
+                                    <input type="number" min="0" aria-label="Lots allotted"
+                                      value={(parseInt(shares) > 0 && parseInt(shares) % vIpo.lotSize === 0) ? (parseInt(shares) / vIpo.lotSize) : ''}
+                                      onChange={e => updateAllotLots(a, e.target.value)} placeholder="0"
+                                      style={{ ...inputSt, width: 48, padding: '7px 6px', fontSize: 14, textAlign: 'right' }} />
+                                    <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>lots</span>
+                                    <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>=</span>
+                                  </>
+                                )}
+                                <input type="number" min="0" aria-label="Shares allotted"
+                                  value={status !== 'allotted' && !(parseInt(shares) > 0) ? '' : shares}
+                                  onChange={e => updateShares(a, e.target.value)} placeholder="0"
+                                  style={{ ...inputSt, width: 74, padding: '7px 8px', fontSize: 14, textAlign: 'right' }} />
+                                <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>sh</span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 5 }}>
+                                <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>applied</span>
+                                <LotsInput value={changes[a.id]?.lots ?? a.lots ?? 1} cat={category} ipo={vIpo} compact onChange={v => setChange(a.id, 'lots', v)} />
+                                <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>lots</span>
+                              </div>
+                            </div>
+                            {status === 'allotted' && (
+                              <div>
+                                <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Sell ₹/share</div>
+                                <input type="number" min="0" step="0.05" value={sellPrice}
+                                  onChange={e => { const sp2 = parseFloat(e.target.value) || 0; const sh = parseInt(changes[a.id]?.shares ?? a.shares) || 0; const g = window.rowGain(status, sp2, issuePrice, sh); setChanges(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), sellPrice: e.target.value, gain: g } })); }}
+                                  placeholder={lp > 0 ? String(lp) : 'e.g. 415.00'}
+                                  style={{ ...inputSt, width: 112, padding: '7px 8px', fontSize: 14, textAlign: 'right' }} />
+                                {computedGain !== 0 && (
+                                  <div className="num" style={{ fontSize: 11.5, color: computedGain > 0 ? 'var(--profit)' : 'var(--loss)', fontWeight: 700, marginTop: 3 }}>
+                                    = {computedGain > 0 ? '+' : '−'}{D.fmtINR(Math.abs(computedGain), { compact: true })} {computedGain > 0 ? 'gain' : 'loss'}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  </>
                 )}
               </div>
 

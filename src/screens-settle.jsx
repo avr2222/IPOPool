@@ -817,7 +817,7 @@ function SettlementLedger({ navigate, id }) {
             <Button variant="ghost" size="sm" icon="download" onClick={exportCSV}>Export</Button>
           </div>
         </div>
-        <div style={{ overflowX: 'auto' }}>
+        <div className="table-desktop" style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
             <thead>
               <tr style={{ fontSize: 11.5, color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
@@ -917,6 +917,70 @@ function SettlementLedger({ navigate, id }) {
               )}
             </tbody>
           </table>
+        </div>
+        {/* Phones: one card per payout — the ledger table is too wide to read on
+            a narrow screen, and Pay / Mark paid need comfortable tap targets. */}
+        <div className="cards-mobile">
+          {filtered.length === 0 && (
+            <div style={{ padding: '28px 18px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13 }}>No entries for this filter.</div>
+          )}
+          {filtered.map(r => {
+            const m = D.member(r.member);
+            if (!m) return null;
+            const isPaid = r.status === 'Paid';
+            const catMeta = (window.CAT_META || {})[r.category] || { label: r.category || '—', tone: 'neutral' };
+            const catPerPan = catSummaries.find(d => d.cat === r.category)?.perPan || 0;
+            const bonus = r.bonusAmount || (catBonusByMember[r.category] || {})[r.member] || 0;
+            const panCount = livePansByRow[r.member + '|' + r.category] ?? r.pans;
+            return (
+              <div key={r.id} style={{ borderTop: '1px solid var(--border)', padding: '14px 16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', minWidth: 0 }}>
+                    <Avatar name={m.name} hue={m.avatarHue} size={34} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}</div>
+                      <div style={{ marginTop: 3 }}><Badge tone={catMeta.tone}>{catMeta.label}</Badge></div>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div className="num" style={{ fontSize: 17, fontWeight: 800, color: r.amount < 0 ? 'var(--loss)' : 'var(--ink)' }}>{f(r.amount)}</div>
+                    {bonus !== 0 ? (
+                      <>
+                        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{f(r.amount - bonus)} pool</div>
+                        <div style={{ fontSize: 11, color: 'var(--warn)', fontWeight: 700 }}>+{f(bonus)} bonus</div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{
+                        (!isSME && catPerPan > 0 && Math.abs(panCount * catPerPan - r.amount) <= panCount)
+                          ? `${panCount} × ${f(catPerPan)}`
+                          : `${panCount} PAN${panCount !== 1 ? 's' : ''}`
+                      }</div>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>{r.date || (isPaid ? '' : 'Not paid yet')}</span>
+                  <div>
+                    {isPaid ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, color: 'var(--profit)' }}>
+                        <StatusDot tone="profit" /> Paid
+                      </span>
+                    ) : isSettled ? (
+                      <span style={{ fontSize: 13, color: 'var(--ink-3)', fontWeight: 600 }}>Pending</span>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        {r.amount > 0 && <UpiPay receiver={m} amount={r.amount} />}
+                        <button onClick={() => markPaid(r.id)} disabled={marking === r.id}
+                          style={{ border: '1px solid var(--profit)', borderRadius: 'var(--r-sm)', padding: '7px 14px', background: 'var(--profit-soft)', color: 'var(--profit)', fontWeight: 700, fontSize: 13, cursor: 'pointer', opacity: marking === r.id ? .6 : 1 }}>
+                          {marking === r.id ? '…' : (r.amount < 0 ? '✓ Mark settled' : '✓ Mark paid')}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </Card>}
 

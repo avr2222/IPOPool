@@ -51,6 +51,16 @@
     .force-mobile .ipo-table-desktop { display: none; }
     .force-mobile .ipo-cards-mobile  { display: block; }
 
+    /* Generic data tables: table on wide screens, cards on phones. Reused by
+       the allotment editor, settlement ledger, leaderboards and member list. */
+    .cards-mobile { display: none; }
+    @media (max-width: 900px) {
+      .table-desktop { display: none; }
+      .cards-mobile  { display: block; }
+    }
+    .force-mobile .table-desktop { display: none; }
+    .force-mobile .cards-mobile  { display: block; }
+
     /* ── Tablet (901–1200px) ────────────────────────────── */
     @media (max-width: 1200px) and (min-width: 901px) {
       .kpi-grid           { grid-template-columns: repeat(3, 1fr) !important; }

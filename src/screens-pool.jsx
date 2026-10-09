@@ -140,7 +140,13 @@ function ProfitPooling({ navigate, id }) {
   // the actual payout to the rupee. Mainboard keeps the per-category equal split.
   const isSME = ipo?.type === 'SME';
   const smeMemberShares = {}, smeMemberBonuses = {};
-  if (isSME) {
+  // Always rebuild each category's member shares from the SAME payload Finalize
+  // writes (window.buildFinalizePayload), so the preview matches the created
+  // ledger to the rupee for EVERY IPO type. This payload is funding-aware: a
+  // funded application's pool share goes to the PANs that funded it, not just
+  // the holder — so for a mainboard IPO with a funding group the preview now
+  // shows the funders as recipients instead of the pre-funding holder split.
+  {
     const payload = window.buildFinalizePayload(sel);
     const byCat = {};
     payload.rows.forEach(r => { (byCat[r.category] = byCat[r.category] || {})[r.memberId] = r; });
@@ -158,12 +164,14 @@ function ProfitPooling({ navigate, id }) {
     // SME shares profit across the whole opted-in pool, so a member who applied
     // in Retail can still receive a share of bHNI profit. The per-category cards
     // show where profit was GENERATED; this shows who actually RECEIVES it.
-    payload.rows.forEach(r => {
-      if (!smeMemberShares[r.memberId]) smeMemberShares[r.memberId] = { pans: 0, share: 0 };
-      smeMemberShares[r.memberId].pans  += r.pans;
-      smeMemberShares[r.memberId].share += (r.amount - r.bonusAmount);
-      smeMemberBonuses[r.memberId] = (smeMemberBonuses[r.memberId] || 0) + r.bonusAmount;
-    });
+    if (isSME) {
+      payload.rows.forEach(r => {
+        if (!smeMemberShares[r.memberId]) smeMemberShares[r.memberId] = { pans: 0, share: 0 };
+        smeMemberShares[r.memberId].pans  += r.pans;
+        smeMemberShares[r.memberId].share += (r.amount - r.bonusAmount);
+        smeMemberBonuses[r.memberId] = (smeMemberBonuses[r.memberId] || 0) + r.bonusAmount;
+      });
+    }
   }
 
   const myPoolShare = catData.reduce((s, d) => s + (d.memberShares[me?.id]?.share || 0), 0);
