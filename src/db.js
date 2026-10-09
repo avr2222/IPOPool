@@ -2101,11 +2101,15 @@ async function loadDB() {
         }
 
         // Reconcile the pool status from what the ledger actually holds now:
-        // rows exist and every one is Paid → Settled, otherwise Distributing.
+        // every payable row is Paid → Settled, otherwise Distributing. A finalize
+        // that produced NO payable rows (an IPO that made no profit — allotted
+        // shares sold at cost) also counts as settled: there is nothing left to
+        // distribute, so the pool should leave the active list rather than sit in
+        // "Distributing" forever.
         var { data: after, error: afterErr } = await window.sb.from('settlements')
           .select('status').eq('pool_id', pool.id);
         if (!afterErr) {
-          var allPaid = (after || []).length > 0 && after.every(function(s){ return s.status === 'Paid'; });
+          var allPaid = (after || []).every(function(s){ return s.status === 'Paid'; });
           await window.sb.from('profit_pools')
             .update({ status: allPaid ? 'Settled' : 'Distributing' }).eq('id', pool.id);
         }
