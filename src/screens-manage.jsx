@@ -67,6 +67,100 @@ function SmeLotCaps({ retail, shni, onRetail, onShni }) {
   );
 }
 
+// ── Funding group editor (internal group pooling) ─────────────────────────────
+// Splits ONE application's PAN pool share among the members who funded it. The
+// PAN holder is always included; the bonus stays with the holder.
+function FundingGroupModal({ appId, holderMemberId, holderName, category, onClose, onDone }) {
+  const D = window.DB;
+  const f = (n) => D.fmtINR(n);
+  const existing = D.fundingFor(appId);
+  const [mode, setMode] = useState(existing.mode || 'off');   // 'off' | 'equal' | 'amount'
+  const seedRows = () => {
+    const rows = existing.contributors.map(c => ({ memberId: c.member, amount: c.amount != null ? String(c.amount) : '' }));
+    if (!rows.some(r => r.memberId === holderMemberId)) rows.unshift({ memberId: holderMemberId, amount: '' });
+    return rows;
+  };
+  const [rows, setRows] = useState(seedRows());
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const used = new Set(rows.map(r => r.memberId));
+  const available = (D.members || []).filter(m => !used.has(m.id));
+  const addMember = (mid) => { if (mid) setRows(rs => [...rs, { memberId: mid, amount: '' }]); };
+  const removeMember = (mid) => setRows(rs => rs.filter(r => r.memberId !== mid));
+  const setAmount = (mid, v) => setRows(rs => rs.map(r => r.memberId === mid ? { ...r, amount: v } : r));
+  const amtTotal = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+
+  const save = async () => {
+    setSaving(true); setErr('');
+    try {
+      if (mode === 'off') await D.mutations.setFunding(appId, null, []);
+      else await D.mutations.setFunding(appId, mode, rows.map(r => ({ memberId: r.memberId, amount: mode === 'amount' ? r.amount : null })));
+      onDone();
+    } catch (e) { setErr(friendlyDbError(e)); setSaving(false); }
+  };
+
+  return (
+    <Modal title={`Funding group — ${holderName}`} onClose={onClose}>
+      <div style={{ fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+        Split this PAN's <strong>pool share</strong> among the members who funded the application. The holder always counts and keeps the allotted-PAN bonus.
+      </div>
+      <Segmented options={['Off', 'Equal', 'By amount']}
+        value={mode === 'off' ? 'Off' : mode === 'equal' ? 'Equal' : 'By amount'}
+        onChange={v => setMode(v === 'Off' ? 'off' : v === 'Equal' ? 'equal' : 'amount')} />
+
+      {mode !== 'off' && (
+        <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
+          {rows.map((r, i) => {
+            const m = D.member(r.memberId);
+            const isHolder = r.memberId === holderMemberId;
+            return (
+              <div key={r.memberId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderTop: i === 0 ? 'none' : '1px solid var(--border)' }}>
+                <Avatar name={m?.name || '?'} hue={m?.avatarHue || 200} size={28} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {m?.name || 'Unknown'}{isHolder && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · holder</span>}
+                  </div>
+                  {mode === 'amount' && amtTotal > 0 && (parseFloat(r.amount) || 0) > 0 && (
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{Math.round((parseFloat(r.amount) || 0) / amtTotal * 100)}% of pool</div>
+                  )}
+                </div>
+                {mode === 'amount' && (
+                  <input type="number" min="0" value={r.amount} onChange={e => setAmount(r.memberId, e.target.value)}
+                    placeholder="₹ in" style={{ ...inputSt, width: 92, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
+                )}
+                {!isHolder
+                  ? <IconButton name="x" size={26} tip="Remove" onClick={() => removeMember(r.memberId)} />
+                  : <div style={{ width: 26 }} />}
+              </div>
+            );
+          })}
+          {available.length > 0 && (
+            <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', background: 'var(--surface-2)' }}>
+              <select value="" onChange={e => { addMember(e.target.value); e.target.value = ''; }}
+                style={{ ...inputSt, padding: '7px 8px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                <option value="">+ Add funder…</option>
+                {available.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === 'amount' && (
+        <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>Amounts are the capital each put in. A member with 0 (or blank) gets no pool slice.</div>
+      )}
+      {err && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{err}</div>}
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={save} style={{ opacity: saving ? .7 : 1, pointerEvents: saving ? 'none' : 'auto' }}>
+          {saving ? 'Saving…' : mode === 'off' ? 'Turn off pooling' : 'Save funding group'}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 // ── Shared modal wrapper ──────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
   return (
@@ -667,6 +761,7 @@ function AdminPanel() {
 
   // ── IPO applicants view ──
   const [viewIpoId,    setViewIpoId]    = useState(null);
+  const [fundingApp,   setFundingApp]   = useState(null);   // allotment row whose funding group is open
   const [viewListPrice, setViewListPrice] = useState('');
 
   // ── Add applicants to existing IPO ──
@@ -2039,16 +2134,22 @@ function AdminPanel() {
                               )}
                             </td>
                             <td style={{ padding: '6px 8px 6px 4px', textAlign: 'center' }}>
-                              {status === 'pending' && (
-                                <IconButton name="trash" size={22} tip="Remove applicant"
-                                  onClick={() => askConfirm(
-                                    'Remove applicant',
-                                    `Remove ${panObj?.holder || 'this applicant'} from ${vIpo?.name}? This cannot be undone.`,
-                                    async () => { await D.mutations.removeApplicant(a.id); setViewIpoId(null); setChanges({}); setSaved(false); },
-                                    true, 'Remove'
-                                  )}
-                                />
-                              )}
+                              <div style={{ display: 'inline-flex', gap: 2, alignItems: 'center' }}>
+                                <IconButton name="groups" size={22}
+                                  active={!!D.fundingFor(a.appId).mode}
+                                  tip={D.fundingFor(a.appId).mode ? 'Funding group set — edit' : 'Set funding group (who funded this PAN)'}
+                                  onClick={() => setFundingApp(a)} />
+                                {status === 'pending' && (
+                                  <IconButton name="trash" size={22} tip="Remove applicant"
+                                    onClick={() => askConfirm(
+                                      'Remove applicant',
+                                      `Remove ${panObj?.holder || 'this applicant'} from ${vIpo?.name}? This cannot be undone.`,
+                                      async () => { await D.mutations.removeApplicant(a.id); setViewIpoId(null); setChanges({}); setSaved(false); },
+                                      true, 'Remove'
+                                    )}
+                                  />
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -2182,6 +2283,20 @@ function AdminPanel() {
       })()}
 
       {/* ── Confirm dialog ── */}
+      {fundingApp && (() => {
+        const p = D.pan(fundingApp.pan);
+        return (
+          <FundingGroupModal
+            appId={fundingApp.appId}
+            holderMemberId={p ? p.member : null}
+            holderName={p?.holder || 'this PAN'}
+            category={fundingApp.category}
+            onClose={() => setFundingApp(null)}
+            onDone={() => { setFundingApp(null); setIpos([...window.DB.ipos]); }}
+          />
+        );
+      })()}
+
       <ConfirmDialog dlg={confirmDlg} onClose={() => setConfirmDlg(null)} />
       {notice && (
         <div role="alert" style={{ position: 'fixed', left: 16, right: 16, bottom: 'calc(76px + env(safe-area-inset-bottom, 0px))', zIndex: 80, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
