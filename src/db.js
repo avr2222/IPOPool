@@ -1358,11 +1358,19 @@ function buildXirrLegs() {
     var outDate = toDateOrNull(ipo.close) || toDateOrNull(ipo.open);
     if (!outDate) return;
     var amt = ipo.lotValue * (a.lots || 1);
-    (blocksByPan[pan.id] = blocksByPan[pan.id] || []).push({ date: outDate, amount: -amt, memberId: pan.member });
-
     var listedDate = toDateOrNull(ipo.listDate) || toDateOrNull(ipo.allotDate);
     var availDate = (listedDate && listedDate <= today) ? listedDate : today;
-    (contribByPan[pan.id] = contribByPan[pan.id] || []).push({ avail: availDate, amount: amt, memberId: pan.member });
+    // The capital for a funded application is put up by its funders, so split
+    // the block (and its release) across them exactly as the pool share is
+    // split. With no funding this returns the whole amount to the holder, so
+    // non-funded applications are unchanged.
+    contributorSlices(a, amt, pan.member).forEach(function(s) {
+      if (!s.amount) return;
+      var pid = s.pan || pan.id;
+      var mid = s.memberId != null ? s.memberId : panToMember(pid);
+      (blocksByPan[pid]  = blocksByPan[pid]  || []).push({ date: outDate,    amount: -s.amount, memberId: mid });
+      (contribByPan[pid] = contribByPan[pid] || []).push({ avail: availDate, amount:  s.amount, memberId: mid });
+    });
   });
 
   _ipos.forEach(function(ipo) {
@@ -1384,10 +1392,23 @@ function buildXirrLegs() {
       };
 
       cats[cat].forEach(function(a) {
-        var amt = (panAmounts[a.id] || 0) + (panBonuses[a.id] || 0);
-        if (!amt) return;
-        var mid = panToMember(a.pan);
-        (contribByPan[a.pan] = contribByPan[a.pan] || []).push({ avail: settleDateFor(mid), amount: amt, memberId: mid });
+        var poolShare = panAmounts[a.id] || 0;
+        var bonusAmt  = panBonuses[a.id] || 0;
+        var hmid = panToMember(a.pan);
+        // Bonus stays with the holder PAN; the pool share is recognised by the
+        // funders (holder included), so each backer's own XIRR reflects the
+        // capital they put up and the profit they actually received.
+        if (bonusAmt) {
+          (contribByPan[a.pan] = contribByPan[a.pan] || []).push({ avail: settleDateFor(hmid), amount: bonusAmt, memberId: hmid });
+        }
+        if (poolShare) {
+          contributorSlices(a, poolShare, hmid).forEach(function(s) {
+            if (!s.amount) return;
+            var pid = s.pan || a.pan;
+            var mid = s.memberId != null ? s.memberId : panToMember(pid);
+            (contribByPan[pid] = contribByPan[pid] || []).push({ avail: settleDateFor(mid), amount: s.amount, memberId: mid });
+          });
+        }
       });
     });
   });
