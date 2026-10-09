@@ -1244,10 +1244,30 @@ function memberIpoEarnings(memberId) {
     var allottedMine = mine.filter(function(a){ return a.status === 'allotted'; });
     var gross = allottedMine.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
 
+    // Backing breakdown: slices this member earned by funding OTHER members'
+    // applications (so the member can see where that money came from). Keyed by
+    // the holder PAN so two of their PANs funding the same app read as one line.
+    var pool = ipoPoolAmounts(ipo, ipoAllots);
+    var backedBy = {};
+    ipoAllots.forEach(function(a) {
+      var hp = _panById[a.pan];
+      if (!hp || hp.member === memberId) return;   // only PANs owned by someone else
+      contributorSlices(a, pool[a.id] || 0, hp.member).forEach(function(s) {
+        if (s.memberId === memberId && s.amount) {
+          var k = a.pan + '|' + a.category;
+          if (!backedBy[k]) backedBy[k] = { holder: hp.holder, category: a.category, amount: 0 };
+          backedBy[k].amount += s.amount;
+        }
+      });
+    });
+    var backed = Object.keys(backedBy).map(function(k) {
+      return { holder: backedBy[k].holder, category: backedBy[k].category, amount: Math.round(backedBy[k].amount) };
+    }).sort(function(a, b){ return b.amount - a.amount; });
+
     out.push({
       ipo: ipo.id, short: ipo.short, name: ipo.name, type: ipo.type, status: ipo.status,
       applied: mine.length, allotted: allottedMine.length,
-      gross: gross, net: Math.round(net),
+      gross: gross, net: Math.round(net), backed: backed,
       month: ipo.listDate || ipo.allotDate || ipo.close || ipo.open || null,
     });
   });

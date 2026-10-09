@@ -537,14 +537,26 @@ function PanManagement() {
               </thead>
               <tbody>
                 {earnings.map(e => (
-                  <tr key={e.ipo} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '11px 18px', fontWeight: 700, fontSize: 13.5 }}>{e.short}</td>
-                    <td style={{ padding: '11px 18px' }}><Badge tone={e.type === 'SME' ? 'sme' : 'mainboard'}>{e.type}</Badge></td>
-                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.applied}</td>
-                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.allotted}</td>
-                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.gross > 0 ? f(e.gross, { compact: true }) : '—'}</td>
-                    <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800, color: e.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{e.net > 0 ? f(e.net, { compact: true }) : '—'}</td>
-                  </tr>
+                  <React.Fragment key={e.ipo}>
+                    <tr style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: (e.backed && e.backed.length ? '11px 18px 2px' : '11px 18px'), fontWeight: 700, fontSize: 13.5 }}>{e.short}</td>
+                      <td style={{ padding: '11px 18px' }}><Badge tone={e.type === 'SME' ? 'sme' : 'mainboard'}>{e.type}</Badge></td>
+                      <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.applied}</td>
+                      <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.allotted}</td>
+                      <td className="num" style={{ padding: '11px 18px', textAlign: 'right', color: 'var(--ink-2)' }}>{e.gross > 0 ? f(e.gross, { compact: true }) : '—'}</td>
+                      <td className="num" style={{ padding: '11px 18px', textAlign: 'right', fontWeight: 800, color: e.net > 0 ? 'var(--profit)' : 'var(--ink-3)' }}>{e.net > 0 ? f(e.net, { compact: true }) : '—'}</td>
+                    </tr>
+                    {e.backed && e.backed.length > 0 && (
+                      <tr>
+                        <td colSpan={6} style={{ padding: '0 18px 10px', fontSize: 11.5, color: 'var(--ink-3)' }}>
+                          <span style={{ color: 'var(--brand)', fontWeight: 700 }}>↳ Backed</span>
+                          {' '}{e.backed.map((b, i) => (
+                            <span key={i}>{i > 0 ? ' · ' : ' '}{b.holder} ({b.category}) <span style={{ color: 'var(--profit)', fontWeight: 700 }}>+{f(b.amount, { compact: true })}</span></span>
+                          ))}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
                 <tr style={{ borderTop: '2px solid var(--border-strong)', background: 'var(--surface-2)' }}>
                   <td style={{ padding: '11px 18px', fontWeight: 800 }}>Total</td>
