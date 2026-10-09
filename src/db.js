@@ -996,10 +996,11 @@ function ipoBonusAmounts(ipo, ipoAllots) {
 }
 
 // ── Internal group pooling ────────────────────────────────────────────────────
-// A PAN's POOL SHARE (not its allotted-PAN bonus) can be split among the
-// members who funded that application. The PAN holder is ALWAYS a contributor.
-// Returns [{ memberId, amount }] summing EXACTLY to poolShare. When the
-// application has no funding group set, the whole share goes to the holder.
+// A PAN's POOL SHARE (not its allotted-PAN bonus) can be split among the PANs
+// that funded that application; each funder's slice is paid to the member who
+// OWNS that PAN. The application's own PAN is ALWAYS a funder. Returns
+// [{ memberId, amount }] (one per funder row — the same member may appear more
+// than once and is summed downstream) totalling EXACTLY poolShare.
 function contributorSlices(a, poolShare, holderMember) {
   var stored = _contributorsByApp[a.appId] || [];
   var mode   = a.fundingMode;
@@ -1009,11 +1010,14 @@ function contributorSlices(a, poolShare, holderMember) {
   if ((mode !== 'equal' && !PROPORTIONAL[mode]) || !stored.length) {
     return [{ memberId: holderMember, amount: poolShare }];
   }
-  // Build the contributor list; the holder is always included.
-  var list = stored.map(function(c){ return { member: c.member, amount: c.amount }; });
-  if (!list.some(function(c){ return c.member === holderMember; })) {
-    list.push({ member: holderMember, amount: null });
-  }
+  // Each funder is a PAN where present (legacy rows carry only a member); the
+  // slice routes to the PAN's owning member. The application's own PAN is
+  // always included.
+  var list = stored.map(function(c){
+    return { pan: c.pan || null, member: (c.pan && _panById[c.pan]) ? _panById[c.pan].member : c.member, amount: c.amount };
+  });
+  var holderIn = list.some(function(c){ return c.pan ? c.pan === a.pan : c.member === holderMember; });
+  if (!holderIn) list.push({ pan: a.pan, member: holderMember, amount: null });
 
   var weightFn, totalWeight;
   if (PROPORTIONAL[mode]) {
@@ -1026,8 +1030,10 @@ function contributorSlices(a, poolShare, holderMember) {
     totalWeight = list.length;
   }
 
-  // Integer-exact split; the first members (sorted by id) absorb the remainder.
-  var sorted = list.slice().sort(function(x, y){ return String(x.member).localeCompare(String(y.member)); });
+  // Integer-exact split; the first funders (sorted by pan/member id) absorb the
+  // rounding remainder.
+  var keyOf = function(c){ return String(c.pan || c.member); };
+  var sorted = list.slice().sort(function(x, y){ return keyOf(x).localeCompare(keyOf(y)); });
   var assigned = 0, parts = [];
   sorted.forEach(function(c){ var s = Math.floor(poolShare * weightFn(c) / totalWeight); parts.push(s); assigned += s; });
   var rem = poolShare - assigned;   // 0 .. list-1 for any sign
@@ -1471,7 +1477,7 @@ async function loadDB() {
     var contribRes = await fetchAll(function(){ return sb.from('application_contributors').select('*').order('id'); });
     if (!contribRes.error) (contribRes.data || []).forEach(function(r) {
       (_contributorsByApp[r.application_id] = _contributorsByApp[r.application_id] || [])
-        .push({ member: r.member_id, amount: r.amount != null ? parseFloat(r.amount) : null });
+        .push({ pan: r.pan_id || null, member: r.member_id, amount: r.amount != null ? parseFloat(r.amount) : null });
     });
     var fundRes = await fetchAll(function(){ return sb.from('applications').select('id, funding_mode').order('id'); });
     if (!fundRes.error) (fundRes.data || []).forEach(function(r){ if (r.funding_mode) _fundingModeByApp[r.id] = r.funding_mode; });
@@ -1873,12 +1879,12 @@ async function loadDB() {
         if (delErr && !isMissingColumn(delErr, 'application_contributors')) throw delErr;
         if (mode && contributors && contributors.length) {
           var payload = contributors.map(function(c) {
-            return { application_id: appId, member_id: c.memberId,
+            return { application_id: appId, pan_id: c.panId || null, member_id: c.memberId,
               amount: (c.amount != null && c.amount !== '') ? parseFloat(c.amount) : null };
           });
           var { error: insErr } = await window.sb.from('application_contributors').insert(payload);
           if (insErr) {
-            if (isMissingColumn(insErr, 'application_contributors')) throw new Error('Run migration 022 in Supabase to enable internal group pooling.');
+            if (isMissingColumn(insErr, 'application_contributors') || isMissingColumn(insErr, 'pan_id')) throw new Error('Run migrations 022 & 024 in Supabase to enable internal group pooling.');
             throw insErr;
           }
         }

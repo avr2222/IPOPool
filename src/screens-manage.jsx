@@ -68,32 +68,45 @@ function SmeLotCaps({ retail, shni, onRetail, onShni }) {
 }
 
 // ── Funding group editor (internal group pooling) ─────────────────────────────
-// Splits ONE application's PAN pool share among the members who funded it. The
-// PAN holder is always included; the bonus stays with the holder.
-function FundingGroupModal({ appId, holderMemberId, holderName, category, onClose, onDone }) {
+// Splits ONE application's PAN pool share among the PAN HOLDERS who funded it;
+// each funder's slice is paid to the member who owns that PAN. The application's
+// own PAN is always included; the allotted-PAN bonus stays with the holder.
+function FundingGroupModal({ appId, holderPanId, ipoId, holderName, category, onClose, onDone }) {
   const D = window.DB;
   const f = (n) => D.fmtINR(n);
   const existing = D.fundingFor(appId);
-  const [mode, setMode] = useState(existing.mode || 'off');   // off | equal | amount | percent | pans
+  const [mode, setMode] = useState(existing.mode === 'pans' ? 'equal' : (existing.mode || 'off'));   // off | equal | amount | percent
   const seedRows = () => {
-    const rows = existing.contributors.map(c => ({ memberId: c.member, amount: c.amount != null ? String(c.amount) : '' }));
-    if (!rows.some(r => r.memberId === holderMemberId)) rows.unshift({ memberId: holderMemberId, amount: '' });
+    // Prefer PAN-level rows; fall back to a member's self PAN for any legacy row.
+    const rows = existing.contributors.map(c => {
+      let panId = c.pan;
+      if (!panId && c.member) { const sp = (D.pans || []).find(p => p.member === c.member); panId = sp ? sp.id : null; }
+      return { panId, amount: c.amount != null ? String(c.amount) : '' };
+    }).filter(r => r.panId);
+    if (!rows.some(r => r.panId === holderPanId)) rows.unshift({ panId: holderPanId, amount: '' });
     return rows;
   };
   const [rows, setRows] = useState(seedRows());
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
-  const MODE_LABEL = { off: 'Off', equal: 'Equal', amount: 'By ₹', percent: 'By %', pans: 'By PAN' };
-  const LABEL_MODE = { 'Off': 'off', 'Equal': 'equal', 'By ₹': 'amount', 'By %': 'percent', 'By PAN': 'pans' };
-  const proportional = mode === 'amount' || mode === 'percent' || mode === 'pans';
-  const unit = mode === 'amount' ? '₹ in' : mode === 'percent' ? '%' : 'PANs';
+  const MODE_LABEL = { off: 'Off', equal: 'Equal', amount: 'By ₹', percent: 'By %' };
+  const LABEL_MODE = { 'Off': 'off', 'Equal': 'equal', 'By ₹': 'amount', 'By %': 'percent' };
+  const proportional = mode === 'amount' || mode === 'percent';
 
-  const used = new Set(rows.map(r => r.memberId));
-  const available = (D.members || []).filter(m => !used.has(m.id));
-  const addMember = (mid) => { if (mid) setRows(rs => [...rs, { memberId: mid, amount: '' }]); };
-  const removeMember = (mid) => setRows(rs => rs.filter(r => r.memberId !== mid));
-  const setAmount = (mid, v) => setRows(rs => rs.map(r => r.memberId === mid ? { ...r, amount: v } : r));
+  // The PAN's own pool share for this IPO (pre-split) — from the same payload
+  // Finalize writes, so the admin sees exactly what they're dividing.
+  const panShare = (() => {
+    try { const r = (window.buildFinalizePayload(ipoId).panRows || []).find(x => x.panId === holderPanId); return r ? r.poolShare : null; }
+    catch (e) { return null; }
+  })();
+
+  const panInfo = (pid) => { const p = D.pan(pid); const m = p ? D.member(p.member) : null; return { holder: p?.holder || '—', owner: m?.name || '', hue: m?.avatarHue || 200, ownerId: p?.member }; };
+  const used = new Set(rows.map(r => r.panId));
+  const available = (D.pans || []).filter(p => !used.has(p.id));
+  const addPan = (pid) => { if (pid) setRows(rs => [...rs, { panId: pid, amount: '' }]); };
+  const removePan = (pid) => setRows(rs => rs.filter(r => r.panId !== pid));
+  const setAmount = (pid, v) => setRows(rs => rs.map(r => r.panId === pid ? { ...r, amount: v } : r));
   const weightTotal = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
   const pctOff = mode === 'percent' && Math.round(weightTotal) !== 100;
 
@@ -102,7 +115,7 @@ function FundingGroupModal({ appId, holderMemberId, holderName, category, onClos
     setSaving(true); setErr('');
     try {
       if (mode === 'off') await D.mutations.setFunding(appId, null, []);
-      else await D.mutations.setFunding(appId, mode, rows.map(r => ({ memberId: r.memberId, amount: proportional ? r.amount : null })));
+      else await D.mutations.setFunding(appId, mode, rows.map(r => ({ panId: r.panId, memberId: panInfo(r.panId).ownerId, amount: proportional ? r.amount : null })));
       onDone();
     } catch (e) { setErr(friendlyDbError(e)); setSaving(false); }
   };
@@ -110,58 +123,63 @@ function FundingGroupModal({ appId, holderMemberId, holderName, category, onClos
   return (
     <Modal title={`Funding group — ${holderName}`} onClose={onClose}>
       <div style={{ fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
-        Split this PAN's <strong>pool share</strong> among the members who funded the application. The holder always counts and keeps the allotted-PAN bonus.
+        Split this PAN's <strong>pool share</strong>{panShare != null && panShare !== 0 ? <> (<strong style={{ color: 'var(--brand)' }}>{f(panShare)}</strong>)</> : null} among the PANs that funded it. Each funder's slice is paid to the member who owns that PAN; the holder keeps the allotted-PAN bonus.
       </div>
-      <Segmented options={['Off', 'Equal', 'By ₹', 'By %', 'By PAN']}
+      <Segmented options={['Off', 'Equal', 'By ₹', 'By %']}
         value={MODE_LABEL[mode]} onChange={v => setMode(LABEL_MODE[v])} size="sm" />
 
       {mode !== 'off' && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
           {rows.map((r, i) => {
-            const m = D.member(r.memberId);
-            const isHolder = r.memberId === holderMemberId;
+            const info = panInfo(r.panId);
+            const isHolder = r.panId === holderPanId;
             const w = parseFloat(r.amount) || 0;
             return (
-              <div key={r.memberId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderTop: i === 0 ? 'none' : '1px solid var(--border)' }}>
-                <Avatar name={m?.name || '?'} hue={m?.avatarHue || 200} size={28} />
+              <div key={r.panId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderTop: i === 0 ? 'none' : '1px solid var(--border)' }}>
+                <Avatar name={info.holder} hue={info.hue} size={28} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {m?.name || 'Unknown'}{isHolder && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · holder</span>}
+                    {info.holder}{isHolder && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · this PAN</span>}
                   </div>
-                  {proportional && weightTotal > 0 && w > 0 && (
-                    <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{Math.round(w / weightTotal * 100)}% of pool</div>
-                  )}
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                    paid to {info.owner}{proportional && weightTotal > 0 && w > 0 ? ` · ${Math.round(w / weightTotal * 100)}% of pool` : ''}
+                  </div>
                 </div>
                 {proportional && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <input type="number" min="0" step={mode === 'pans' ? '1' : 'any'} value={r.amount} onChange={e => setAmount(r.memberId, e.target.value)}
-                      placeholder={unit} style={{ ...inputSt, width: 78, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
-                    <span style={{ fontSize: 10.5, color: 'var(--ink-3)', width: mode === 'pans' ? 28 : 12 }}>{mode === 'percent' ? '%' : mode === 'pans' ? 'PAN' : '₹'}</span>
+                    <input type="number" min="0" step="any" value={r.amount} onChange={e => setAmount(r.panId, e.target.value)}
+                      placeholder={mode === 'amount' ? '₹ in' : '%'} style={{ ...inputSt, width: 78, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
+                    <span style={{ fontSize: 10.5, color: 'var(--ink-3)', width: 12 }}>{mode === 'percent' ? '%' : '₹'}</span>
                   </div>
                 )}
                 {!isHolder
-                  ? <IconButton name="x" size={26} tip="Remove" onClick={() => removeMember(r.memberId)} />
+                  ? <IconButton name="x" size={26} tip="Remove" onClick={() => removePan(r.panId)} />
                   : <div style={{ width: 26 }} />}
               </div>
             );
           })}
           {available.length > 0 && (
             <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', background: 'var(--surface-2)' }}>
-              <select value="" onChange={e => { addMember(e.target.value); e.target.value = ''; }}
+              <select value="" onChange={e => { addPan(e.target.value); e.target.value = ''; }}
                 style={{ ...inputSt, padding: '7px 8px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                <option value="">+ Add funder…</option>
-                {available.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                <option value="">+ Add a funding PAN…</option>
+                {available.map(p => {
+                  const m = D.member(p.member);
+                  return <option key={p.id} value={p.id}>{p.holder}{m && m.name !== p.holder ? ` — ${m.name}` : ''}</option>;
+                })}
               </select>
             </div>
           )}
         </div>
       )}
 
+      {mode === 'equal' && (
+        <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>Split equally per PAN. Add a member's PANs more than once to weight them by PAN count.</div>
+      )}
       {proportional && (
         <div style={{ fontSize: 11.5, color: pctOff ? 'var(--loss)' : 'var(--ink-3)', fontWeight: pctOff ? 700 : 400 }}>
-          {mode === 'amount' && 'Amounts are the capital each put in. 0 (or blank) gets no pool slice.'}
+          {mode === 'amount' && 'Amounts are the capital each PAN put in. 0 (or blank) gets no slice.'}
           {mode === 'percent' && `Percentages must total 100% — currently ${Math.round(weightTotal)}%.`}
-          {mode === 'pans' && 'Number of PANs each member contributed. 0 (or blank) gets no pool slice.'}
         </div>
       )}
       {err && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{err}</div>}
@@ -2302,7 +2320,8 @@ function AdminPanel() {
         return (
           <FundingGroupModal
             appId={fundingApp.appId}
-            holderMemberId={p ? p.member : null}
+            holderPanId={fundingApp.pan}
+            ipoId={fundingApp.ipo}
             holderName={p?.holder || 'this PAN'}
             category={fundingApp.category}
             onClose={() => setFundingApp(null)}
