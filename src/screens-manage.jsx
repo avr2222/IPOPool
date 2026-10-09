@@ -2110,36 +2110,41 @@ function AdminPanel() {
                                 ))}
                               </div>
                             </td>
-                            <td style={{ padding: '10px 8px', textAlign: 'right' }}>
-                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                                {/* Enter the allotment in LOTS (auto-converts to shares via lot size).
-                                    Handy for partial allotments — applied 9 lots, got 3 → type 3. */}
-                                {vIpo?.lotSize > 0 && (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                    <span style={{ fontSize: 10.5, color: 'var(--ink-3)', fontWeight: 700 }}>got</span>
-                                    <input type="number" min="0" aria-label="Lots allotted"
-                                      title="Lots allotted — converts to shares"
-                                      value={(parseInt(shares) > 0 && parseInt(shares) % vIpo.lotSize === 0) ? (parseInt(shares) / vIpo.lotSize) : ''}
-                                      onChange={e => updateAllotLots(a, e.target.value)}
-                                      placeholder="lots"
-                                      style={{ ...inputSt, width: 54, padding: '6px 6px', fontSize: 13, textAlign: 'right' }} />
-                                    <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>lots</span>
-                                  </div>
-                                )}
-                                {/* Until a row is allotted it has no shares of its own; show the
-                                    applied quantity as the hint instead of a bare "0". */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
+                                {/* "Got" quantity on a SINGLE line that reads as a conversion:
+                                    got [3] lots = [1800] sh. Enter whichever is handy — lots
+                                    auto-convert via lot size (partial allotment: applied 9, got 3).
+                                    Dimmed until the row is actually a "got" so an empty box on a
+                                    not-got row can't be mistaken for a real allotment. */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 3, opacity: status === 'allotted' ? 1 : 0.45 }}>
+                                  <span style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 700, marginRight: 1 }}>got</span>
+                                  {vIpo?.lotSize > 0 && (
+                                    <>
+                                      <input type="number" min="0" aria-label="Lots allotted"
+                                        title="Lots allotted — converts to shares"
+                                        value={(parseInt(shares) > 0 && parseInt(shares) % vIpo.lotSize === 0) ? (parseInt(shares) / vIpo.lotSize) : ''}
+                                        onChange={e => updateAllotLots(a, e.target.value)}
+                                        placeholder="0"
+                                        style={{ ...inputSt, width: 42, padding: '5px 5px', fontSize: 13, textAlign: 'right' }} />
+                                      <span style={{ fontSize: 10, color: 'var(--ink-3)' }}>lots</span>
+                                      <span style={{ fontSize: 12, color: 'var(--ink-3)', margin: '0 1px' }}>=</span>
+                                    </>
+                                  )}
+                                  {/* Blank placeholder (not the applied count) so a not-got row
+                                      never looks like it was allotted that many shares. */}
                                   <input type="number" min="0" aria-label="Shares allotted" value={status !== 'allotted' && !(parseInt(shares) > 0) ? '' : shares}
                                     onChange={e => updateShares(a, e.target.value)}
-                                    placeholder={vIpo?.lotSize ? String((parseInt(changes[a.id]?.lots ?? a.lots, 10) || 1) * vIpo.lotSize) : '0'}
-                                    style={{ ...inputSt, width: 74, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
-                                  <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>sh</span>
+                                    placeholder="0"
+                                    style={{ ...inputSt, width: 66, padding: '5px 7px', fontSize: 13, textAlign: 'right' }} />
+                                  <span style={{ fontSize: 10, color: 'var(--ink-3)' }}>sh</span>
                                 </div>
-                                {/* Lots applied — editable (stored on the application). */}
+                                {/* Lots applied — reference, editable (stored on the application). */}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                  <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>applied</span>
+                                  <span style={{ fontSize: 10, color: 'var(--ink-3)' }}>applied</span>
                                   <LotsInput value={changes[a.id]?.lots ?? a.lots ?? 1} cat={category} ipo={vIpo} compact
                                     onChange={v => setChange(a.id, 'lots', v)} />
+                                  <span style={{ fontSize: 10, color: 'var(--ink-3)' }}>lots</span>
                                 </div>
                               </div>
                             </td>
