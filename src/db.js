@@ -738,15 +738,32 @@ function buildFinalizePayload(ipoId) {
   var pool  = ipoPoolAmounts(ipo, ipoAllots);
   var bonus = ipoBonusAmounts(ipo, ipoAllots);
 
-  // panRows: per allotment (PAN + the category it applied in).
-  var panRows = [];
+  // panRows: one row per RECEIVING PAN per category, funding-aware — the pool
+  // share a PAN actually RECEIVES (its own slice as a funder of any application
+  // it backed, its own application included) plus the allotted-PAN bonus it
+  // keeps as holder. Summed per member these reconcile with `rows` (and the
+  // settlement ledger), so the member portal's per-PAN breakdown and cashflows
+  // match the family total even when a funding group redistributes a share.
+  var panAgg = {};
+  var panBump = function(panId, cat) {
+    var k = panId + '|' + cat;
+    if (!panAgg[k]) panAgg[k] = { panId: panId, category: cat, poolShare: 0, bonusAmount: 0 };
+    return panAgg[k];
+  };
   ipoAllots.forEach(function(a) {
-    var poolShare = pool[a.id] || 0;
-    var b         = bonus[a.id] || 0;
-    if (poolShare !== 0 || b !== 0) {
-      panRows.push({ panId: a.pan, category: a.category, poolShare: Math.round(poolShare), bonusAmount: Math.round(b) });
-    }
+    var hp = _panById[a.pan];
+    if (!hp) return;
+    var b = bonus[a.id] || 0;
+    if (b) panBump(a.pan, a.category).bonusAmount += b;        // bonus → holder PAN
+    contributorSlices(a, pool[a.id] || 0, hp.member).forEach(function(s) {
+      var pid = s.pan || a.pan;
+      if (s.amount) panBump(pid, a.category).poolShare += s.amount;   // slice → funder PAN
+    });
   });
+  var panRows = Object.keys(panAgg).map(function(k) {
+    var r = panAgg[k];
+    return { panId: r.panId, category: r.category, poolShare: Math.round(r.poolShare), bonusAmount: Math.round(r.bonusAmount) };
+  }).filter(function(r){ return r.poolShare !== 0 || r.bonusAmount !== 0; });
 
   // rows: bonus goes to the PAN holder; the pool share is split among the
   // application's funding group (holder always included). Aggregated by
