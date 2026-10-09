@@ -40,6 +40,9 @@ var _currentUid  = null;
 // ~60k comparisons per refresh at 63 IPOs / 1000 applications. Rebuilt by
 // rebuildIndexes() whenever one of the arrays changes.
 var _ipoById = {}, _panById = {}, _allotsByIpo = {}, _allotsByPan = {};
+// Internal group pooling (migration 022): application_id -> [{member, amount}],
+// and application_id -> 'equal'|'amount'. Populated resiliently in loadDB.
+var _contributorsByApp = {}, _fundingModeByApp = {};
 function rebuildIndexes() {
   _ipoById = {}; _ipos.forEach(function(i){ _ipoById[i.id] = i; });
   _panById = {}; _pans.forEach(function(p){ _panById[p.id] = p; });
@@ -258,6 +261,10 @@ function txAllotments(rows) {
       // see that an sHNI applied for 14 lots and has to retype every HNI share
       // count by hand.
       lots:      r.applications.lots || 1,
+      // Internal group pooling (migration 022): how this application's PAN pool
+      // share is split among its funders. Read from a side map so a missing
+      // column/table pre-migration can't fail the main allotments fetch.
+      fundingMode: _fundingModeByApp[r.application_id] || null,
       status:    r.status,
       shares:    r.shares || 0,
       gain:      r.gain   || 0,
@@ -741,16 +748,26 @@ function buildFinalizePayload(ipoId) {
     }
   });
 
-  // rows: aggregate (pool share + bonus) by (member, category).
+  // rows: bonus goes to the PAN holder; the pool share is split among the
+  // application's funding group (holder always included). Aggregated by
+  // (member, category) so backers get their own settlement rows.
   var agg = {};
+  var bump = function(mid, cat) {
+    var k = mid + '|' + cat;
+    if (!agg[k]) agg[k] = { memberId: mid, category: cat, pans: 0, amount: 0, bonusAmount: 0 };
+    return agg[k];
+  };
   ipoAllots.forEach(function(a) {
-    var p = _panById[a.pan];
-    if (!p) return;
-    var key = p.member + '|' + a.category;
-    if (!agg[key]) agg[key] = { memberId: p.member, category: a.category, pans: 0, amount: 0, bonusAmount: 0 };
-    agg[key].pans++;
-    agg[key].amount      += (pool[a.id] || 0) + (bonus[a.id] || 0);
-    agg[key].bonusAmount += (bonus[a.id] || 0);
+    var hp = _panById[a.pan];
+    if (!hp) return;
+    var b = bonus[a.id] || 0;
+    var holderCell = bump(hp.member, a.category);
+    holderCell.pans++;                       // PAN count stays with the holder
+    holderCell.amount      += b;             // bonus to the holder
+    holderCell.bonusAmount += b;
+    contributorSlices(a, pool[a.id] || 0, hp.member).forEach(function(s) {
+      bump(s.memberId, a.category).amount += s.amount;   // pool share to funders
+    });
   });
   // A LOSS (amount < 0) still gets a row; only an exact ₹0 share is skipped.
   var rows = Object.keys(agg).map(function(k){ return agg[k]; })
@@ -978,8 +995,60 @@ function ipoBonusAmounts(ipo, ipoAllots) {
   return out;
 }
 
-// Settlement rows for an IPO are produced by buildFinalizePayload (below),
-// the single source shared by the live Finalize button and the backfill repair.
+// ── Internal group pooling ────────────────────────────────────────────────────
+// A PAN's POOL SHARE (not its allotted-PAN bonus) can be split among the
+// members who funded that application. The PAN holder is ALWAYS a contributor.
+// Returns [{ memberId, amount }] summing EXACTLY to poolShare. When the
+// application has no funding group set, the whole share goes to the holder.
+function contributorSlices(a, poolShare, holderMember) {
+  var stored = _contributorsByApp[a.appId] || [];
+  var mode   = a.fundingMode;
+  if ((mode !== 'equal' && mode !== 'amount') || !stored.length) {
+    return [{ memberId: holderMember, amount: poolShare }];
+  }
+  // Build the contributor list; the holder is always included.
+  var list = stored.map(function(c){ return { member: c.member, amount: c.amount }; });
+  if (!list.some(function(c){ return c.member === holderMember; })) {
+    list.push({ member: holderMember, amount: null });
+  }
+
+  var weightFn, totalWeight;
+  if (mode === 'amount') {
+    weightFn = function(c){ return c.amount > 0 ? c.amount : 0; };
+    totalWeight = list.reduce(function(s, c){ return s + weightFn(c); }, 0);
+    // No one recorded a positive amount → fall back to the holder keeping all.
+    if (totalWeight <= 0) return [{ memberId: holderMember, amount: poolShare }];
+  } else {
+    weightFn = function(){ return 1; };
+    totalWeight = list.length;
+  }
+
+  // Integer-exact split; the first members (sorted by id) absorb the remainder.
+  var sorted = list.slice().sort(function(x, y){ return String(x.member).localeCompare(String(y.member)); });
+  var assigned = 0, parts = [];
+  sorted.forEach(function(c){ var s = Math.floor(poolShare * weightFn(c) / totalWeight); parts.push(s); assigned += s; });
+  var rem = poolShare - assigned;   // 0 .. list-1 for any sign
+  return sorted.map(function(c, i){ return { memberId: c.member, amount: parts[i] + (i < rem ? 1 : 0) }; });
+}
+
+// Per-member amounts for a whole IPO, AFTER internal group pooling:
+// each allotment's bonus goes to its PAN holder, and its pool share is split
+// among the funding group (holder always included). Returns { memberId: amount }.
+function ipoMemberAmounts(ipo, ipoAllots) {
+  var pool  = ipoPoolAmounts(ipo, ipoAllots);
+  var bonus = ipoBonusAmounts(ipo, ipoAllots);
+  var out = {};
+  var add = function(mid, v){ if (mid != null) out[mid] = (out[mid] || 0) + v; };
+  ipoAllots.forEach(function(a) {
+    var hp = _panById[a.pan];
+    if (!hp) return;
+    add(hp.member, bonus[a.id] || 0);   // bonus stays with the holder
+    contributorSlices(a, pool[a.id] || 0, hp.member).forEach(function(s){ add(s.memberId, s.amount); });
+  });
+  return out;
+}
+
+
 
 
 
@@ -1018,27 +1087,25 @@ function computeMemberProfits() {
       if (mid != null) touch(mid).iposSet[ipo.id] = true;
     });
 
-    var poolAmts = ipoPoolAmounts(ipo, ipoAllots);
-    // Pool share + PAN count, per member (SME-aware).
+    // Profit per member AFTER internal group pooling: each PAN's pool share is
+    // split among its funders, its bonus stays with the holder. ipoMemberAmounts
+    // handles both, so a backer with no PAN of their own still earns here.
+    var mAmts = ipoMemberAmounts(ipo, ipoAllots);
+    Object.keys(mAmts).forEach(function(mid){ touch(mid).profit += mAmts[mid]; });
+
+    // PAN count (the holder's own PANs) and solo value stay with the holder.
     ipoAllots.forEach(function(a) {
       var mid = panToMember(a.pan);
-      if (mid == null) return;
-      touch(mid).profit += (poolAmts[a.id] || 0);
-      touch(mid).pans++;
+      if (mid != null) touch(mid).pans++;
     });
-
-    // Allotted-PAN bonus and solo value stay per-category (same on SME/Mainboard).
     var cats = {};
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
     Object.keys(cats).forEach(function(cat) {
       var r = ratesForCategory(ipo.id, cat);
-      var bonuses = PoolMath.panBonuses(cats[cat], r.stcg, r.brok, r.bonus);
-      var solos   = PoolMath.panSolo(cats[cat], r.stcg, r.brok);
+      var solos = PoolMath.panSolo(cats[cat], r.stcg, r.brok);
       cats[cat].forEach(function(a) {
         var mid = panToMember(a.pan);
-        if (mid == null) return;
-        touch(mid).profit += (bonuses[a.id] || 0);
-        touch(mid).solo   += (solos[a.id] || 0);
+        if (mid != null) touch(mid).solo += (solos[a.id] || 0);
       });
     });
   });
@@ -1096,21 +1163,19 @@ function computePanProfits() {
 // settlement screens use (so it reconciles exactly). Newest first.
 function memberIpoEarnings(memberId) {
   var myPanIds = _pans.filter(function(p){ return p.member === memberId; }).map(function(p){ return p.id; });
-  if (!myPanIds.length) return [];
   var out = [];
   _ipos.forEach(function(ipo) {
     var ipoAllots = allotsOfIpo(ipo.id);
     if (!ipoAllots.length) return;
     var mine = ipoAllots.filter(function(a){ return myPanIds.indexOf(a.pan) >= 0; });
-    if (!mine.length) return;
+
+    // Net is this member's take for the IPO AFTER internal pooling — their
+    // share of their own PANs plus any share from PANs they backed.
+    var net = ipoMemberAmounts(ipo, ipoAllots)[memberId] || 0;
+    if (!mine.length && net === 0) return;   // not involved at all
 
     var allottedMine = mine.filter(function(a){ return a.status === 'allotted'; });
     var gross = allottedMine.reduce(function(s, a){ return s + (a.gain || 0); }, 0);
-
-    var pool  = ipoPoolAmounts(ipo, ipoAllots);
-    var bonus = ipoBonusAmounts(ipo, ipoAllots);
-    var net = 0;
-    mine.forEach(function(a) { net += (pool[a.id] || 0) + (bonus[a.id] || 0); });
 
     out.push({
       ipo: ipo.id, short: ipo.short, name: ipo.name, type: ipo.type, status: ipo.status,
@@ -1394,6 +1459,21 @@ async function loadDB() {
   _members     = txMembers    (membersRes.data  || []);
   _pans        = txPans       (pansRes.data     || []);
   _ipos        = sortIposByRecency(txIpos(iposRes.data || []));
+
+  // Internal group pooling (migration 022). Fetched separately and resiliently
+  // so a database without the table/column still loads — the maps stay empty,
+  // which means "no internal pooling" (every PAN keeps its own share).
+  _contributorsByApp = {}; _fundingModeByApp = {};
+  try {
+    var contribRes = await fetchAll(function(){ return sb.from('application_contributors').select('*').order('id'); });
+    if (!contribRes.error) (contribRes.data || []).forEach(function(r) {
+      (_contributorsByApp[r.application_id] = _contributorsByApp[r.application_id] || [])
+        .push({ member: r.member_id, amount: r.amount != null ? parseFloat(r.amount) : null });
+    });
+    var fundRes = await fetchAll(function(){ return sb.from('applications').select('id, funding_mode').order('id'); });
+    if (!fundRes.error) (fundRes.data || []).forEach(function(r){ if (r.funding_mode) _fundingModeByApp[r.id] = r.funding_mode; });
+  } catch (e) { /* pre-migration-022: no internal pooling */ }
+
   _allotments  = [];
   rebuildIndexes();                                  // txAllotments looks IPOs up
   _allotments  = txAllotments (allotRes.data    || []);
@@ -1444,6 +1524,10 @@ async function loadDB() {
     allotsOfIpo: allotsOfIpo,
     allotsOfPan: allotsOfPan,
     memberIpoEarnings: memberIpoEarnings,
+    // Internal group pooling: funding group for one application.
+    fundingFor: function(appId) {
+      return { mode: _fundingModeByApp[appId] || null, contributors: (_contributorsByApp[appId] || []).slice() };
+    },
 
     // ── Mutations ──────────────────────────────────────────────────────────────
     mutations: {
@@ -1769,7 +1853,34 @@ async function loadDB() {
         await loadDB();
       },
 
-      // ─── Settlements ─────────────────────────────────────────────────────────
+      // ─── Internal group pooling (migration 022) ────────────────────────────
+      // Set the funding group for one application. mode: 'equal' | 'amount' |
+      // null (off). contributors: [{ memberId, amount }] — the holder is always
+      // included by the math, so the UI may omit or include them.
+      async setFunding(appId, mode, contributors) {
+        var { error: modeErr } = await window.sb.from('applications')
+          .update({ funding_mode: mode || null }).eq('id', appId);
+        if (modeErr) {
+          if (isMissingColumn(modeErr, 'funding_mode')) throw new Error('Run migration 022 in Supabase to enable internal group pooling.');
+          throw modeErr;
+        }
+        // Replace the contributor rows for this application.
+        var { error: delErr } = await window.sb.from('application_contributors').delete().eq('application_id', appId);
+        if (delErr && !isMissingColumn(delErr, 'application_contributors')) throw delErr;
+        if (mode && contributors && contributors.length) {
+          var payload = contributors.map(function(c) {
+            return { application_id: appId, member_id: c.memberId,
+              amount: (c.amount != null && c.amount !== '') ? parseFloat(c.amount) : null };
+          });
+          var { error: insErr } = await window.sb.from('application_contributors').insert(payload);
+          if (insErr) {
+            if (isMissingColumn(insErr, 'application_contributors')) throw new Error('Run migration 022 in Supabase to enable internal group pooling.');
+            throw insErr;
+          }
+        }
+        await loadDB();
+      },
+
       // Generate settlement rows for an IPO from the current pool math.
       // rows:    [{ memberId, category, pans, amount, bonusAmount }] — family-
       //          level, amount is pool share + bonusAmount combined (unchanged
