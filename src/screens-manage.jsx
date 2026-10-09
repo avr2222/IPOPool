@@ -74,7 +74,7 @@ function FundingGroupModal({ appId, holderMemberId, holderName, category, onClos
   const D = window.DB;
   const f = (n) => D.fmtINR(n);
   const existing = D.fundingFor(appId);
-  const [mode, setMode] = useState(existing.mode || 'off');   // 'off' | 'equal' | 'amount'
+  const [mode, setMode] = useState(existing.mode || 'off');   // off | equal | amount | percent | pans
   const seedRows = () => {
     const rows = existing.contributors.map(c => ({ memberId: c.member, amount: c.amount != null ? String(c.amount) : '' }));
     if (!rows.some(r => r.memberId === holderMemberId)) rows.unshift({ memberId: holderMemberId, amount: '' });
@@ -84,18 +84,25 @@ function FundingGroupModal({ appId, holderMemberId, holderName, category, onClos
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
+  const MODE_LABEL = { off: 'Off', equal: 'Equal', amount: 'By ₹', percent: 'By %', pans: 'By PAN' };
+  const LABEL_MODE = { 'Off': 'off', 'Equal': 'equal', 'By ₹': 'amount', 'By %': 'percent', 'By PAN': 'pans' };
+  const proportional = mode === 'amount' || mode === 'percent' || mode === 'pans';
+  const unit = mode === 'amount' ? '₹ in' : mode === 'percent' ? '%' : 'PANs';
+
   const used = new Set(rows.map(r => r.memberId));
   const available = (D.members || []).filter(m => !used.has(m.id));
   const addMember = (mid) => { if (mid) setRows(rs => [...rs, { memberId: mid, amount: '' }]); };
   const removeMember = (mid) => setRows(rs => rs.filter(r => r.memberId !== mid));
   const setAmount = (mid, v) => setRows(rs => rs.map(r => r.memberId === mid ? { ...r, amount: v } : r));
-  const amtTotal = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  const weightTotal = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  const pctOff = mode === 'percent' && Math.round(weightTotal) !== 100;
 
   const save = async () => {
+    if (pctOff) { setErr(`Percentages must total 100% (currently ${Math.round(weightTotal)}%).`); return; }
     setSaving(true); setErr('');
     try {
       if (mode === 'off') await D.mutations.setFunding(appId, null, []);
-      else await D.mutations.setFunding(appId, mode, rows.map(r => ({ memberId: r.memberId, amount: mode === 'amount' ? r.amount : null })));
+      else await D.mutations.setFunding(appId, mode, rows.map(r => ({ memberId: r.memberId, amount: proportional ? r.amount : null })));
       onDone();
     } catch (e) { setErr(friendlyDbError(e)); setSaving(false); }
   };
@@ -105,15 +112,15 @@ function FundingGroupModal({ appId, holderMemberId, holderName, category, onClos
       <div style={{ fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
         Split this PAN's <strong>pool share</strong> among the members who funded the application. The holder always counts and keeps the allotted-PAN bonus.
       </div>
-      <Segmented options={['Off', 'Equal', 'By amount']}
-        value={mode === 'off' ? 'Off' : mode === 'equal' ? 'Equal' : 'By amount'}
-        onChange={v => setMode(v === 'Off' ? 'off' : v === 'Equal' ? 'equal' : 'amount')} />
+      <Segmented options={['Off', 'Equal', 'By ₹', 'By %', 'By PAN']}
+        value={MODE_LABEL[mode]} onChange={v => setMode(LABEL_MODE[v])} size="sm" />
 
       {mode !== 'off' && (
         <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
           {rows.map((r, i) => {
             const m = D.member(r.memberId);
             const isHolder = r.memberId === holderMemberId;
+            const w = parseFloat(r.amount) || 0;
             return (
               <div key={r.memberId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderTop: i === 0 ? 'none' : '1px solid var(--border)' }}>
                 <Avatar name={m?.name || '?'} hue={m?.avatarHue || 200} size={28} />
@@ -121,13 +128,16 @@ function FundingGroupModal({ appId, holderMemberId, holderName, category, onClos
                   <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {m?.name || 'Unknown'}{isHolder && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · holder</span>}
                   </div>
-                  {mode === 'amount' && amtTotal > 0 && (parseFloat(r.amount) || 0) > 0 && (
-                    <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{Math.round((parseFloat(r.amount) || 0) / amtTotal * 100)}% of pool</div>
+                  {proportional && weightTotal > 0 && w > 0 && (
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{Math.round(w / weightTotal * 100)}% of pool</div>
                   )}
                 </div>
-                {mode === 'amount' && (
-                  <input type="number" min="0" value={r.amount} onChange={e => setAmount(r.memberId, e.target.value)}
-                    placeholder="₹ in" style={{ ...inputSt, width: 92, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
+                {proportional && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input type="number" min="0" step={mode === 'pans' ? '1' : 'any'} value={r.amount} onChange={e => setAmount(r.memberId, e.target.value)}
+                      placeholder={unit} style={{ ...inputSt, width: 78, padding: '6px 8px', fontSize: 13, textAlign: 'right' }} />
+                    <span style={{ fontSize: 10.5, color: 'var(--ink-3)', width: mode === 'pans' ? 28 : 12 }}>{mode === 'percent' ? '%' : mode === 'pans' ? 'PAN' : '₹'}</span>
+                  </div>
                 )}
                 {!isHolder
                   ? <IconButton name="x" size={26} tip="Remove" onClick={() => removeMember(r.memberId)} />
@@ -147,13 +157,17 @@ function FundingGroupModal({ appId, holderMemberId, holderName, category, onClos
         </div>
       )}
 
-      {mode === 'amount' && (
-        <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>Amounts are the capital each put in. A member with 0 (or blank) gets no pool slice.</div>
+      {proportional && (
+        <div style={{ fontSize: 11.5, color: pctOff ? 'var(--loss)' : 'var(--ink-3)', fontWeight: pctOff ? 700 : 400 }}>
+          {mode === 'amount' && 'Amounts are the capital each put in. 0 (or blank) gets no pool slice.'}
+          {mode === 'percent' && `Percentages must total 100% — currently ${Math.round(weightTotal)}%.`}
+          {mode === 'pans' && 'Number of PANs each member contributed. 0 (or blank) gets no pool slice.'}
+        </div>
       )}
       {err && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" onClick={save} style={{ opacity: saving ? .7 : 1, pointerEvents: saving ? 'none' : 'auto' }}>
+        <Button variant="primary" onClick={save} style={{ opacity: (saving || pctOff) ? .55 : 1, pointerEvents: (saving || pctOff) ? 'none' : 'auto' }}>
           {saving ? 'Saving…' : mode === 'off' ? 'Turn off pooling' : 'Save funding group'}
         </Button>
       </div>

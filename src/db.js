@@ -1003,7 +1003,10 @@ function ipoBonusAmounts(ipo, ipoAllots) {
 function contributorSlices(a, poolShare, holderMember) {
   var stored = _contributorsByApp[a.appId] || [];
   var mode   = a.fundingMode;
-  if ((mode !== 'equal' && mode !== 'amount') || !stored.length) {
+  // 'amount' (₹), 'percent' (%) and 'pans' (PAN count) all split proportionally
+  // by the stored weight — only the unit the admin typed differs.
+  var PROPORTIONAL = { amount: true, percent: true, pans: true };
+  if ((mode !== 'equal' && !PROPORTIONAL[mode]) || !stored.length) {
     return [{ memberId: holderMember, amount: poolShare }];
   }
   // Build the contributor list; the holder is always included.
@@ -1013,10 +1016,10 @@ function contributorSlices(a, poolShare, holderMember) {
   }
 
   var weightFn, totalWeight;
-  if (mode === 'amount') {
+  if (PROPORTIONAL[mode]) {
     weightFn = function(c){ return c.amount > 0 ? c.amount : 0; };
     totalWeight = list.reduce(function(s, c){ return s + weightFn(c); }, 0);
-    // No one recorded a positive amount → fall back to the holder keeping all.
+    // No one recorded a positive weight → fall back to the holder keeping all.
     if (totalWeight <= 0) return [{ memberId: holderMember, amount: poolShare }];
   } else {
     weightFn = function(){ return 1; };
@@ -1862,6 +1865,7 @@ async function loadDB() {
           .update({ funding_mode: mode || null }).eq('id', appId);
         if (modeErr) {
           if (isMissingColumn(modeErr, 'funding_mode')) throw new Error('Run migration 022 in Supabase to enable internal group pooling.');
+          if (/check constraint|funding_mode_check/i.test(modeErr.message || '')) throw new Error('Run migration 023 in Supabase to enable the % and PAN-count split modes.');
           throw modeErr;
         }
         // Replace the contributor rows for this application.
