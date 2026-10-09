@@ -754,7 +754,11 @@ function buildFinalizePayload(ipoId) {
   var agg = {};
   var bump = function(mid, cat) {
     var k = mid + '|' + cat;
-    if (!agg[k]) agg[k] = { memberId: mid, category: cat, pans: 0, amount: 0, bonusAmount: 0 };
+    // panSet collects the DISTINCT PANs that make up this (member, category)
+    // payout -- the member's own allotted PAN AND any PAN of theirs that funded
+    // another member's application. Counting only the holder's PAN undercounted
+    // a backer who is paid purely (or partly) through their funding PANs.
+    if (!agg[k]) agg[k] = { memberId: mid, category: cat, panSet: {}, amount: 0, bonusAmount: 0 };
     return agg[k];
   };
   ipoAllots.forEach(function(a) {
@@ -762,17 +766,19 @@ function buildFinalizePayload(ipoId) {
     if (!hp) return;
     var b = bonus[a.id] || 0;
     var holderCell = bump(hp.member, a.category);
-    holderCell.pans++;                       // PAN count stays with the holder
+    holderCell.panSet[a.pan] = true;         // the allotted PAN counts for the holder
     holderCell.amount      += b;             // bonus to the holder
     holderCell.bonusAmount += b;
     contributorSlices(a, pool[a.id] || 0, hp.member).forEach(function(s) {
-      bump(s.memberId, a.category).amount += s.amount;   // pool share to funders
+      var cell = bump(s.memberId, a.category);
+      cell.amount += s.amount;               // pool share to funders
+      if (s.pan) cell.panSet[s.pan] = true;  // the funding PAN counts for its owner
     });
   });
   // A LOSS (amount < 0) still gets a row; only an exact ₹0 share is skipped.
   var rows = Object.keys(agg).map(function(k){ return agg[k]; })
     .filter(function(r){ return Math.round(r.amount) !== 0; })
-    .map(function(r){ return { memberId: r.memberId, category: r.category, pans: r.pans, amount: Math.round(r.amount), bonusAmount: Math.round(r.bonusAmount) }; });
+    .map(function(r){ return { memberId: r.memberId, category: r.category, pans: Object.keys(r.panSet).length, amount: Math.round(r.amount), bonusAmount: Math.round(r.bonusAmount) }; });
 
   return { rows: rows, panRows: panRows, rates: { stcgRate: r0.stcg, brokerage: r0.brok, bonusRate: r0.bonus } };
 }
@@ -1008,7 +1014,7 @@ function contributorSlices(a, poolShare, holderMember) {
   // by the stored weight — only the unit the admin typed differs.
   var PROPORTIONAL = { amount: true, percent: true, pans: true };
   if ((mode !== 'equal' && !PROPORTIONAL[mode]) || !stored.length) {
-    return [{ memberId: holderMember, amount: poolShare }];
+    return [{ memberId: holderMember, amount: poolShare, pan: a.pan }];
   }
   // Each funder is a PAN where present (legacy rows carry only a member); the
   // slice routes to the PAN's owning member. The application's own PAN is
@@ -1024,7 +1030,7 @@ function contributorSlices(a, poolShare, holderMember) {
     weightFn = function(c){ return c.amount > 0 ? c.amount : 0; };
     totalWeight = list.reduce(function(s, c){ return s + weightFn(c); }, 0);
     // No one recorded a positive weight → fall back to the holder keeping all.
-    if (totalWeight <= 0) return [{ memberId: holderMember, amount: poolShare }];
+    if (totalWeight <= 0) return [{ memberId: holderMember, amount: poolShare, pan: a.pan }];
   } else {
     weightFn = function(){ return 1; };
     totalWeight = list.length;
@@ -1037,7 +1043,7 @@ function contributorSlices(a, poolShare, holderMember) {
   var assigned = 0, parts = [];
   sorted.forEach(function(c){ var s = Math.floor(poolShare * weightFn(c) / totalWeight); parts.push(s); assigned += s; });
   var rem = poolShare - assigned;   // 0 .. list-1 for any sign
-  return sorted.map(function(c, i){ return { memberId: c.member, amount: parts[i] + (i < rem ? 1 : 0) }; });
+  return sorted.map(function(c, i){ return { memberId: c.member, amount: parts[i] + (i < rem ? 1 : 0), pan: c.pan || null }; });
 }
 
 // Per-member amounts for a whole IPO, AFTER internal group pooling:
