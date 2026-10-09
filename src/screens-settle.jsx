@@ -245,34 +245,20 @@ function SettlementLedger({ navigate, id }) {
   // it catches every route by which the two can diverge.
   const ledgerStale = useMemo(() => {
     if (!rows.length) return false;
+    // Compare the stored rows against the SAME payload Finalize writes
+    // (buildFinalizePayload is SME-aware — combined lot/cap split for SME,
+    // per-category equal for Mainboard). Recomputing with a per-category
+    // split here would never match an SME ledger and flag it stale forever.
+    const pay = window.buildFinalizePayload(selIpo);
     const expected = {};
-    categories.forEach(cat => {
-      const cr = window.ratesForCategory(selIpo, cat);
-      const catAllots = ipoAllots.filter(a => a.category === cat);
-      const shares  = window.PoolMath.memberShares(catAllots, cr.stcg, cr.brok, panToMember, cr.bonus);
-      const bonuses = window.PoolMath.memberBonuses(catAllots, cr.stcg, cr.brok, cr.bonus, panToMember);
-      // finalizePayouts (screens-pool.jsx) writes ONE row per (member,
-      // category) with amount = pool share + personal bonus, and only when
-      // that sum is NOT exactly ₹0 -- a member whose fair entitlement rounds
-      // down to exactly ₹0 legitimately gets no row, but a real loss (a
-      // negative sum) gets a row same as a profit. Mirror both of those
-      // exactly, or this permanently reports "stale" for any pool where at
-      // least one member's rounded total is ₹0: their absent row would
-      // forever look like a missing one, surviving even a fresh, fully
-      // correct re-finalize.
-      const mids = new Set([...Object.keys(shares), ...Object.keys(bonuses)]);
-      mids.forEach(mid => {
-        const total = (shares[mid]?.share || 0) + (bonuses[mid] || 0);
-        if (total !== 0) expected[mid + '|' + cat] = total;
-      });
-    });
+    pay.rows.forEach(r => { expected[r.memberId + '|' + r.category] = r.amount; });
     const seen = new Set();
     for (const r of rows) {
       const k = r.member + '|' + r.category;
       seen.add(k);
       if (expected[k] === undefined || expected[k] !== r.amount) return true;
     }
-    // A member who now qualifies (total > 0) but has no ledger row is equally stale.
+    // A member who now qualifies (amount ≠ 0) but has no ledger row is equally stale.
     return Object.keys(expected).some(k => !seen.has(k));
   }, [rows, ipoAllots, categories, selIpo]);
 

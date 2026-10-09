@@ -139,6 +139,7 @@ function ProfitPooling({ navigate, id }) {
   // write — PoolMath.smeShares via buildFinalizePayload — so the preview matches
   // the actual payout to the rupee. Mainboard keeps the per-category equal split.
   const isSME = ipo?.type === 'SME';
+  const smeMemberShares = {}, smeMemberBonuses = {};
   if (isSME) {
     const payload = window.buildFinalizePayload(sel);
     const byCat = {};
@@ -152,6 +153,16 @@ function ProfitPooling({ navigate, id }) {
       });
       d.memberShares = ms;
       d.memberBonuses = mb;
+    });
+    // Combined pool payouts (one row per member, summed across categories) —
+    // SME shares profit across the whole opted-in pool, so a member who applied
+    // in Retail can still receive a share of bHNI profit. The per-category cards
+    // show where profit was GENERATED; this shows who actually RECEIVES it.
+    payload.rows.forEach(r => {
+      if (!smeMemberShares[r.memberId]) smeMemberShares[r.memberId] = { pans: 0, share: 0 };
+      smeMemberShares[r.memberId].pans  += r.pans;
+      smeMemberShares[r.memberId].share += (r.amount - r.bonusAmount);
+      smeMemberBonuses[r.memberId] = (smeMemberBonuses[r.memberId] || 0) + r.bonusAmount;
     });
   }
 
@@ -348,18 +359,22 @@ function ProfitPooling({ navigate, id }) {
             </div>
 
             {!hasProfit ? (
-              /* No allotments in this category */
+              /* No profit generated in this category */
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '18px 20px', color: 'var(--ink-3)' }}>
                 <div style={{ width: 36, height: 36, borderRadius: 9, background: 'var(--bg)', display: 'grid', placeItems: 'center' }}><Icon name="x" size={18} /></div>
                 <div>
                   <div style={{ fontSize: 13.5, fontWeight: 700 }}>No allotments in {meta.label} category</div>
-                  <div style={{ fontSize: 12, marginTop: 2 }}>{d.total} PAN{d.total !== 1 ? 's' : ''} applied — no profit distribution for this group.</div>
+                  <div style={{ fontSize: 12, marginTop: 2 }}>
+                    {isSME
+                      ? `${d.total} PAN${d.total !== 1 ? 's' : ''} applied — these still share the SME pool (see Member payouts below).`
+                      : `${d.total} PAN${d.total !== 1 ? 's' : ''} applied — no profit distribution for this group.`}
+                  </div>
                 </div>
               </div>
             ) : (
-              <div className="pool-main" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
+              <div className="pool-main" style={{ display: 'grid', gridTemplateColumns: isSME ? '1fr' : '1fr 1fr', gap: 0 }}>
                 {/* Profit breakdown */}
-                <div style={{ padding: '16px 20px', borderRight: '1px solid var(--border)' }}>
+                <div style={{ padding: '16px 20px', borderRight: isSME ? 'none' : '1px solid var(--border)' }}>
                   <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 12 }}>Profit breakdown</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                     {[
@@ -403,16 +418,31 @@ function ProfitPooling({ navigate, id }) {
                   </div>
                 </div>
 
-                {/* Member shares in this category */}
-                <div>
-                  <div style={{ padding: '16px 20px 10px', fontSize: 13, fontWeight: 800 }}>Member shares ({meta.label})</div>
-                  <MemberSharesTable D={D} shares={d.memberShares} bonuses={d.memberBonuses} f={f} />
-                </div>
+                {/* Member shares in this category (Mainboard: per-category equal.
+                    SME shares across the whole pool, shown in one combined table below.) */}
+                {!isSME && (
+                  <div>
+                    <div style={{ padding: '16px 20px 10px', fontSize: 13, fontWeight: 800 }}>Member shares ({meta.label})</div>
+                    <MemberSharesTable D={D} shares={d.memberShares} bonuses={d.memberBonuses} f={f} />
+                  </div>
+                )}
               </div>
             )}
           </Card>
         );
       })}
+
+      {/* Combined member payouts (SME) — who actually receives what, across the
+          whole opted-in pool (Retail PANs can receive bHNI/sHNI profit, etc.). */}
+      {isSME && Object.keys(smeMemberShares).length > 0 && (
+        <Card pad={0} style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800 }}>Member payouts</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>Each member's total share across the SME pool</div>
+          </div>
+          <MemberSharesTable D={D} shares={smeMemberShares} bonuses={smeMemberBonuses} f={f} />
+        </Card>
+      )}
 
       {/* Allotted PANs list */}
       {ipoAllots.some(a => a.status === 'allotted') && (
