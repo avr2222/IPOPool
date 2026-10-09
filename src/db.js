@@ -1273,6 +1273,33 @@ function memberIpoEarnings(memberId) {
   });
   return out.sort(function(a, b){ return String(b.month || '').localeCompare(String(a.month || '')); });
 }
+
+// Why each member is in an IPO's payout, for the pool-screen badges:
+//   allotted — holds a PAN that was allotted (gets the allotted-PAN bonus)
+//   applied  — holds a PAN that applied to this IPO (shares the pool)
+//   backer   — received a funding slice from a PAN they do NOT own (internal
+//              group pooling), i.e. money that came from funding, not their own
+//              application.
+// Returns { [memberId]: { allotted, applied, backer } }.
+function memberPoolRoles(ipoId) {
+  var ipo       = _ipoById[ipoId];
+  var ipoAllots = allotsOfIpo(ipoId);
+  var pool      = ipoPoolAmounts(ipo, ipoAllots);
+  var roles = {};
+  var roleFor = function(mid){ return (roles[mid] = roles[mid] || { allotted: false, applied: false, backer: false }); };
+  ipoAllots.forEach(function(a) {
+    var hp = _panById[a.pan];
+    if (!hp) return;
+    roleFor(hp.member).applied = true;
+    if (a.status === 'allotted') roleFor(hp.member).allotted = true;
+    contributorSlices(a, pool[a.id] || 0, hp.member).forEach(function(s) {
+      if (s.amount && s.memberId != null && s.memberId !== hp.member) roleFor(s.memberId).backer = true;
+    });
+  });
+  return roles;
+}
+window.memberPoolRoles = memberPoolRoles;
+
 // The same blocked capital gets reused across many IPOs -- applied, released a
 // few days later, applied again -- so a flat profit figure (or even the ROI%
 // above) hides how efficiently that capital was recycled. XIRR is the standard

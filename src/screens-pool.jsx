@@ -17,7 +17,7 @@ const CAT_META = {
 // is each member's personal allotted-PAN bonus, kept on top of their equal
 // pool share -- shown as its own column only when at least one is non-zero,
 // so a pool with no bonus configured renders exactly as before.
-function MemberSharesTable({ D, shares, f, bonuses }) {
+function MemberSharesTable({ D, shares, f, bonuses, roles }) {
   const hasBonus = bonuses && Object.values(bonuses).some(b => b > 0);
   const rows = Object.entries(shares || {})
     .map(([mid, row]) => ({ mid, m: D.member(mid), pans: row.pans, share: row.share, bonus: (bonuses && bonuses[mid]) || 0 }))
@@ -43,7 +43,19 @@ function MemberSharesTable({ D, shares, f, bonuses }) {
             <td style={{ padding: '10px 20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Avatar name={m.name} hue={m.avatarHue} size={28} you={m.you} />
-                <span style={{ fontSize: 13, fontWeight: 700 }}>{m.name.split(' ')[0]}{m.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}</span>
+                <div style={{ minWidth: 0 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{m.name.split(' ')[0]}{m.you && <span style={{ color: 'var(--brand)', fontWeight: 600 }}> · You</span>}</span>
+                  {roles && roles[mid] && (() => {
+                    const r = roles[mid];
+                    return (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 3 }}>
+                        {r.allotted && <Badge tone="profit" icon="check" style={{ fontSize: 9.5, padding: '1px 6px' }}>Allotted</Badge>}
+                        {r.applied && !r.allotted && <Badge tone="info" icon="pan" style={{ fontSize: 9.5, padding: '1px 6px' }}>Pooled</Badge>}
+                        {r.backer && <Badge tone="brand" icon="groups" style={{ fontSize: 9.5, padding: '1px 6px' }}>Backer</Badge>}
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
             </td>
             <td style={{ textAlign: 'center', padding: '10px 8px' }}>
@@ -173,6 +185,11 @@ function ProfitPooling({ navigate, id }) {
       });
     }
   }
+
+  // Why each member is in the SME payout (allotted / pooled from own application
+  // / backer via funding) — drives the "source" badges in the Member payouts
+  // table so it's clear where each person's share came from.
+  const memberRoles = isSME ? window.memberPoolRoles(sel) : {};
 
   const myPoolShare = catData.reduce((s, d) => s + (d.memberShares[me?.id]?.share || 0), 0);
   const myBonus     = catData.reduce((s, d) => s + (d.memberBonuses[me?.id] || 0), 0);
@@ -469,8 +486,16 @@ function ProfitPooling({ navigate, id }) {
           <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
             <div style={{ fontSize: 13.5, fontWeight: 800 }}>Member payouts</div>
             <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>Each member's total share across the SME pool</div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 8 }}>
+              <Badge tone="profit" icon="check" style={{ fontSize: 9.5, padding: '1px 6px' }}>Allotted</Badge>
+              <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>got an allotment</span>
+              <Badge tone="info" icon="pan" style={{ fontSize: 9.5, padding: '1px 6px' }}>Pooled</Badge>
+              <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>share from own application</span>
+              <Badge tone="brand" icon="groups" style={{ fontSize: 9.5, padding: '1px 6px' }}>Backer</Badge>
+              <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>share from funding another PAN</span>
+            </div>
           </div>
-          <MemberSharesTable D={D} shares={smeMemberShares} bonuses={smeMemberBonuses} f={f} />
+          <MemberSharesTable D={D} shares={smeMemberShares} bonuses={smeMemberBonuses} f={f} roles={memberRoles} />
         </Card>
       )}
 
