@@ -226,8 +226,16 @@ function SettlementLedger({ navigate, id }) {
   // ledger rows below instead of re-deriving per category. amount already folds
   // in your personal allotted-PAN bonus, matching what was settled.
   const myCatAmounts = {};   // category -> { amount, pans, bonus }
+  // Live PAN-count per (member|category). The count frozen into the ledger at
+  // finalize only tallied the holder's own allotted PAN, so a backer paid
+  // through several of their funding PANs showed too few (e.g. "1 PAN" for a
+  // member who funded via two). Recompute it from the same payload Finalize
+  // uses and prefer it for display; amounts stay frozen (ledgerStale flags any
+  // real drift separately).
+  const livePansByRow = {};
   (() => {
     const pay = window.buildFinalizePayload(selIpo);
+    pay.rows.forEach(r => { livePansByRow[r.memberId + '|' + r.category] = r.pans; });
     pay.rows.filter(r => r.memberId === me?.id).forEach(r => {
       myCatAmounts[r.category] = { amount: r.amount, pans: r.pans, bonus: r.bonusAmount || 0 };
     });
@@ -829,6 +837,9 @@ function SettlementLedger({ navigate, id }) {
                 // fall back to a live PoolMath recompute for a legacy row from
                 // before migration 011 added bonus_amount, where it's always 0.
                 const bonus = r.bonusAmount || (catBonusByMember[r.category] || {})[r.member] || 0;
+                // Prefer the live PAN-count (counts funding PANs too); fall back
+                // to the frozen value for a row the live payload no longer emits.
+                const panCount = livePansByRow[r.member + '|' + r.category] ?? r.pans;
                 return (
                   <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '12px 18px' }}>
@@ -845,7 +856,7 @@ function SettlementLedger({ navigate, id }) {
                     </td>
                     <td style={{ padding: '12px 18px', textAlign: 'right' }}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 3 }}>
-                        {Array.from({ length: r.pans }).map((_, i) => (
+                        {Array.from({ length: panCount }).map((_, i) => (
                           <div key={i} style={{ width: 9, height: 9, borderRadius: '50%', background: `hsl(${m.avatarHue} 55% 52%)` }} />
                         ))}
                       </div>
@@ -860,7 +871,14 @@ function SettlementLedger({ navigate, id }) {
                           <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 1, textAlign: 'right', fontWeight: 700 }}>+{f(bonus)} bonus</div>
                         </>
                       ) : (
-                        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, textAlign: 'right' }}>{isSME ? `${r.pans} PAN${r.pans !== 1 ? 's' : ''}` : `${r.pans} × ${f(catPerPan)}`}</div>
+                        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, textAlign: 'right' }}>{
+                          // "N × perPan" only when it actually reconciles with the
+                          // amount (a straight holder row). A backer paid through a
+                          // funding split isn't N×perPan, so show a plain PAN count.
+                          (!isSME && catPerPan > 0 && Math.round(panCount * catPerPan) === Math.round(r.amount))
+                            ? `${panCount} × ${f(catPerPan)}`
+                            : `${panCount} PAN${panCount !== 1 ? 's' : ''}`
+                        }</div>
                       )}
                     </td>
                     <td className="num" style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 800, color: r.amount < 0 ? 'var(--loss)' : 'var(--ink)' }}>{f(r.amount)}</td>
