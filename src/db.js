@@ -1083,9 +1083,9 @@ function computeMemberProfits() {
     return p ? p.member : null;
   };
 
-  var totals = {};   // memberId -> { profit, solo, pans, iposSet }
+  var totals = {};   // memberId -> { profit, solo, panSet, iposSet }
   var touch = function(mid) {
-    if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, pans: 0, iposSet: {} };
+    if (!totals[mid]) totals[mid] = { profit: 0, solo: 0, panSet: {}, iposSet: {} };
     return totals[mid];
   };
 
@@ -1108,10 +1108,20 @@ function computeMemberProfits() {
     var mAmts = ipoMemberAmounts(ipo, ipoAllots);
     Object.keys(mAmts).forEach(function(mid){ touch(mid).profit += mAmts[mid]; });
 
-    // PAN count (the holder's own PANs) and solo value stay with the holder.
+    // Distinct PANs behind each member's take: their own applied PANs plus any
+    // PAN of theirs that funded another member's application (matches the
+    // settlement ledger). Solo value stays with the holder (below).
+    var poolForPans = ipoPoolAmounts(ipo, ipoAllots);
     ipoAllots.forEach(function(a) {
-      var mid = panToMember(a.pan);
-      if (mid != null) touch(mid).pans++;
+      var hp = _panById[a.pan];
+      if (!hp) return;
+      touch(hp.member).panSet[a.pan] = true;    // the member's own applied PAN
+      contributorSlices(a, poolForPans[a.id] || 0, hp.member).forEach(function(s) {
+        // A funding PAN counts for its owner only when it actually earned a
+        // slice (a ₹0-weight backer gets nothing, so it shouldn't inflate the
+        // count); the holder's own PAN is already counted just above.
+        if (s.pan && s.amount !== 0) touch(s.memberId != null ? s.memberId : panToMember(s.pan)).panSet[s.pan] = true;
+      });
     });
     var cats = {};
     ipoAllots.forEach(function(a){ (cats[a.category] = cats[a.category] || []).push(a); });
@@ -1126,9 +1136,9 @@ function computeMemberProfits() {
   });
 
   return _members.map(function(m) {
-    var t = totals[m.id] || { profit: 0, solo: 0, pans: 0, iposSet: {} };
+    var t = totals[m.id] || { profit: 0, solo: 0, panSet: {}, iposSet: {} };
     return { id: m.id, name: m.name, avatarHue: m.avatarHue, you: m.you,
-             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), pans: t.pans,
+             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), pans: Object.keys(t.panSet).length,
              iposApplied: Object.keys(t.iposSet).length };
   }).sort(function(a, b){ return b.profit - a.profit; });
 }
@@ -1139,7 +1149,17 @@ function computeMemberProfits() {
 // within the same family). Reuses the identical per-category math as
 // computeMemberProfits, just keyed by PAN id instead of aggregated by member.
 function computePanProfits() {
-  var totals = {};   // panId -> { profit, solo, apps }
+  // Funding-aware, so per-PAN profits reconcile EXACTLY with the member totals
+  // (computeMemberProfits) and the settlement ledger: each PAN's allotted-PAN
+  // bonus stays with the holder PAN, and the pool share is split among the
+  // application's funding PANs (the holder's own PAN always included). A PAN
+  // that funded another member's application earns its slice here even if it
+  // never applied itself.
+  var totals = {};   // panId -> { profit, solo, apps, received, backer }
+  var touch = function(pid) {
+    if (!totals[pid]) totals[pid] = { profit: 0, solo: 0, apps: 0, received: false, backer: false };
+    return totals[pid];
+  };
   _ipos.forEach(function(ipo) {
     var ipoAllots = allotsOfIpo(ipo.id);
     if (!ipoAllots.length) return;
@@ -1155,21 +1175,36 @@ function computePanProfits() {
       Object.keys(s).forEach(function(id){ soloAll[id] = s[id]; });
     });
     ipoAllots.forEach(function(a) {
-      // Keyed by a.pan (the PAN id), while poolAmts/bonus/solo are keyed by
-      // allotment id (a.id) — each PAN has one allotment row per IPO.
-      if (!totals[a.pan]) totals[a.pan] = { profit: 0, solo: 0, apps: 0 };
-      totals[a.pan].profit += (poolAmts[a.id] || 0) + (bonusAmts[a.id] || 0);
-      totals[a.pan].solo   += (soloAll[a.id] || 0);
-      totals[a.pan].apps++;
+      var hp = _panById[a.pan];
+      if (!hp) return;
+      // poolAmts/bonus/solo are keyed by allotment id (a.id); PAN totals are
+      // keyed by the PAN id. Each PAN has one allotment row per IPO.
+      var holder = touch(a.pan);
+      holder.profit += (bonusAmts[a.id] || 0);   // allotted-PAN bonus → holder PAN
+      holder.solo   += (soloAll[a.id] || 0);     // standalone value stays with the holder
+      holder.apps++;
+      // Pool share split among the funding PANs; each slice credits its own PAN.
+      contributorSlices(a, poolAmts[a.id] || 0, hp.member).forEach(function(s) {
+        var pid = s.pan || a.pan;                // legacy member-only slice → holder PAN
+        touch(pid).profit += s.amount;
+        if (pid !== a.pan) { touch(pid).backer = true; holder.received = true; }
+      });
     });
   });
 
   return _pans.map(function(p) {
-    var t = totals[p.id] || { profit: 0, solo: 0, apps: 0 };
+    var t = totals[p.id] || { profit: 0, solo: 0, apps: 0, received: false, backer: false };
     var m = _members.find(function(x){ return x.id === p.member; });
+    // The "vs solo" comparison measures the category-pool effect, not the
+    // capital arrangement. Suppress it when funding muddies the figure — a
+    // holder PAN that others funded (keeps less than it generated), or a pure
+    // backer PAN (no standalone application of its own) — so the delta can't
+    // read as a loss or an inflated gain.
+    var hideSolo = t.received || (t.apps === 0 && t.backer);
     return { id: p.id, pan: p.pan, holder: p.holder, memberName: m ? m.name : '',
              avatarHue: m ? m.avatarHue : 200, you: !!(m && m.you),
-             profit: Math.round(t.profit), soloProfit: Math.round(t.solo), apps: t.apps };
+             profit: Math.round(t.profit), soloProfit: hideSolo ? null : Math.round(t.solo),
+             apps: t.apps, receivedFunding: t.received, isBacker: t.apps === 0 && t.backer };
   }).sort(function(a, b){ return b.profit - a.profit; });
 }
 
