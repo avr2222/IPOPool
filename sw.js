@@ -2,7 +2,7 @@
 // Strategy: network-first for app files and CDN libs (so deploys reach users
 // without bumping this version), cache fallback for offline, and network-only
 // for Supabase API calls (so reads are never served stale after writes).
-const CACHE = 'ipo-pool-v62';
+const CACHE = 'ipo-pool-v63';
 
 const APP_ASSETS = [
   './',
@@ -11,18 +11,19 @@ const APP_ASSETS = [
   './src/supabase-client.js',
   './src/qrcode.js',
   './src/db.js',
-  './src/tweaks-panel.jsx',
-  './src/charts.jsx',
-  './src/components.jsx',
-  './src/screens-auth.jsx',
-  './src/screens-member.jsx',
-  './src/screens-dashboard.jsx',
-  './src/screens-ipo.jsx',
-  './src/screens-pool.jsx',
-  './src/screens-settle.jsx',
-  './src/screens-manage.jsx',
-  './src/screens-settings.jsx',
-  './src/app.jsx',
+  // Precompiled app (from src/*.jsx via build.js) — no in-browser Babel.
+  './build/tweaks-panel.js',
+  './build/charts.js',
+  './build/components.js',
+  './build/screens-auth.js',
+  './build/screens-member.js',
+  './build/screens-dashboard.js',
+  './build/screens-ipo.js',
+  './build/screens-pool.js',
+  './build/screens-settle.js',
+  './build/screens-manage.js',
+  './build/screens-settings.js',
+  './build/app.js',
   './icon.svg',
   './manifest.json',
 ];
