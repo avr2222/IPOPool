@@ -1657,7 +1657,7 @@ function Dashboard({
     className: "kpi-grid",
     style: {
       display: 'grid',
-      gridTemplateColumns: layout === 'compact' ? 'repeat(3,1fr)' : `repeat(${kpiCards.length},1fr)`,
+      gridTemplateColumns: layout === 'compact' ? 'repeat(3,1fr)' : 'repeat(4,1fr)',
       gap: 12
     }
   }, kpiCards.map((k, i) => React.createElement(KPICard, {

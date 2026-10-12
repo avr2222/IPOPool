@@ -580,7 +580,7 @@ function Dashboard({ navigate, tweaks }) {
 
       {/* KPI grid */}
       {layout !== 'spotlight' && (
-        <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: layout === 'compact' ? 'repeat(3,1fr)' : `repeat(${kpiCards.length},1fr)`, gap: 12 }}>
+        <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: layout === 'compact' ? 'repeat(3,1fr)' : 'repeat(4,1fr)', gap: 12 }}>
           {kpiCards.map((k, i) => <KPICard key={i} {...k} onClick={k.nav ? () => navigate(k.nav) : undefined} />)}
         </div>
       )}
