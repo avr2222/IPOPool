@@ -1,0 +1,13 @@
+{
+  "name": "ipo-pool",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Group IPO pooling PWA. Build-time only: the app itself is static (no bundler/runtime deps) — this just precompiles the browser JSX so Babel doesn't run in the browser.",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/preset-react": "^7.26.3"
+  }
+}
