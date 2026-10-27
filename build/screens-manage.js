@@ -4448,10 +4448,12 @@ function AdminPanel() {
         fontWeight: 700
       }
     }, "· ⏳ ", pending, " pending")), (() => {
-      const byCat = {};
+      const byCat = {},
+        allotByCat = {};
       vAllots.forEach(a => {
         const c = changes[a.id]?.category ?? a.category;
         byCat[c] = (byCat[c] || 0) + 1;
+        if ((changes[a.id]?.status ?? a.status) === 'allotted') allotByCat[c] = (allotByCat[c] || 0) + 1;
       });
       const cats = ['Retail', 'sHNI', 'bHNI', 'SME'].filter(c => byCat[c]);
       if (!cats.length) return null;
@@ -4473,7 +4475,11 @@ function AdminPanel() {
           padding: '2px 9px',
           color: 'var(--ink-2)'
         }
-      }, vCatLabel(c), " · ", byCat[c])));
+      }, vCatLabel(c), " · ", React.createElement("span", {
+        style: {
+          color: allotByCat[c] ? 'var(--profit)' : 'var(--ink-2)'
+        }
+      }, allotByCat[c] || 0), "/", byCat[c])));
     })())), React.createElement(IconButton, {
       name: "x",
       size: 32,
