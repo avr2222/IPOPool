@@ -1936,15 +1936,23 @@ function AdminPanel() {
                       {pending  > 0 && <span style={{ color: 'var(--warn)', fontWeight: 700 }}>· ⏳ {pending} pending</span>}
                     </div>
                     {(() => {
-                      const byCat = {};
-                      vAllots.forEach(a => { const c = changes[a.id]?.category ?? a.category; byCat[c] = (byCat[c] || 0) + 1; });
+                      // Applied AND allotted per category -- "Retail 8" alone didn't
+                      // say how many of those 8 actually got shares, which is exactly
+                      // what matters once results come in (a board with 100%
+                      // allotment reads very differently from one with 10%).
+                      const byCat = {}, allotByCat = {};
+                      vAllots.forEach(a => {
+                        const c = changes[a.id]?.category ?? a.category;
+                        byCat[c] = (byCat[c] || 0) + 1;
+                        if ((changes[a.id]?.status ?? a.status) === 'allotted') allotByCat[c] = (allotByCat[c] || 0) + 1;
+                      });
                       const cats = ['Retail', 'sHNI', 'bHNI', 'SME'].filter(c => byCat[c]);
                       if (!cats.length) return null;
                       return (
                         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
                           {cats.map(c => (
                             <span key={c} style={{ fontSize: 10.5, fontWeight: 700, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 999, padding: '2px 9px', color: 'var(--ink-2)' }}>
-                              {vCatLabel(c)} · {byCat[c]}
+                              {vCatLabel(c)} · <span style={{ color: allotByCat[c] ? 'var(--profit)' : 'var(--ink-2)' }}>{allotByCat[c] || 0}</span>/{byCat[c]}
                             </span>
                           ))}
                         </div>
