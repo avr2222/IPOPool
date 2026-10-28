@@ -5068,7 +5068,7 @@ function AdminPanel() {
         active: !!D.fundingFor(a.appId).mode,
         tip: D.fundingFor(a.appId).mode ? 'Funding group set — edit' : 'Set funding group (who funded this PAN)',
         onClick: () => setFundingApp(a)
-      }), status === 'pending' && React.createElement(IconButton, {
+      }), (status === 'pending' || status === 'not_allotted') && React.createElement(IconButton, {
         name: "trash",
         size: 22,
         tip: "Remove applicant",
@@ -5154,7 +5154,7 @@ function AdminPanel() {
         active: !!D.fundingFor(a.appId).mode,
         tip: D.fundingFor(a.appId).mode ? 'Funding group set — edit' : 'Set funding group (who funded this PAN)',
         onClick: () => setFundingApp(a)
-      }), status === 'pending' && React.createElement(IconButton, {
+      }), (status === 'pending' || status === 'not_allotted') && React.createElement(IconButton, {
         name: "trash",
         size: 26,
         tip: "Remove applicant",

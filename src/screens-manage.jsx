@@ -2199,7 +2199,7 @@ function AdminPanel() {
                                   active={!!D.fundingFor(a.appId).mode}
                                   tip={D.fundingFor(a.appId).mode ? 'Funding group set — edit' : 'Set funding group (who funded this PAN)'}
                                   onClick={() => setFundingApp(a)} />
-                                {status === 'pending' && (
+                                {(status === 'pending' || status === 'not_allotted') && (
                                   <IconButton name="trash" size={22} tip="Remove applicant"
                                     onClick={() => askConfirm(
                                       'Remove applicant',
@@ -2250,7 +2250,7 @@ function AdminPanel() {
                                 active={!!D.fundingFor(a.appId).mode}
                                 tip={D.fundingFor(a.appId).mode ? 'Funding group set — edit' : 'Set funding group (who funded this PAN)'}
                                 onClick={() => setFundingApp(a)} />
-                              {status === 'pending' && (
+                              {(status === 'pending' || status === 'not_allotted') && (
                                 <IconButton name="trash" size={26} tip="Remove applicant"
                                   onClick={() => askConfirm('Remove applicant', `Remove ${panObj?.holder || 'this applicant'} from ${vIpo?.name}? This cannot be undone.`,
                                     async () => { await D.mutations.removeApplicant(a.id); setViewIpoId(null); setChanges({}); setSaved(false); }, true, 'Remove')} />
