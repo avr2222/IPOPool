@@ -1,0 +1,27 @@
+{
+  "id": "./#/me",
+  "name": "IPO Pool — My Profits",
+  "short_name": "My IPO Pool",
+  "description": "Check your own PAN's IPO allotments, profits and pending settlements — no password, just your PAN.",
+  "start_url": "./#/me",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F6F7F9",
+  "theme_color": "#0B8A4B",
+  "lang": "en-IN",
+  "categories": ["finance"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
