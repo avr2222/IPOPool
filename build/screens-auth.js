@@ -73,9 +73,76 @@ function Logo({
     }
   }, "Pool")));
 }
+function ChooserOption({
+  icon,
+  title,
+  subtitle,
+  onClick,
+  style
+}) {
+  const [h, setH] = useState(false);
+  return React.createElement("button", {
+    onClick: onClick,
+    onMouseEnter: () => setH(true),
+    onMouseLeave: () => setH(false),
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 14,
+      width: '100%',
+      textAlign: 'left',
+      border: '1.5px solid ' + (h ? 'var(--brand)' : 'var(--border-strong)'),
+      borderRadius: 'var(--r-md)',
+      padding: '16px 16px',
+      background: h ? 'var(--brand-tint)' : 'var(--surface)',
+      cursor: 'pointer',
+      transition: 'all .15s',
+      ...style
+    }
+  }, React.createElement("div", {
+    style: {
+      width: 40,
+      height: 40,
+      borderRadius: 'var(--r-sm)',
+      background: 'var(--brand-tint)',
+      display: 'grid',
+      placeItems: 'center',
+      flexShrink: 0
+    }
+  }, React.createElement(Icon, {
+    name: icon,
+    size: 19,
+    color: "var(--brand)"
+  })), React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, React.createElement("div", {
+    style: {
+      fontSize: 15,
+      fontWeight: 800,
+      color: 'var(--ink)'
+    }
+  }, title), React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--ink-3)',
+      marginTop: 1
+    }
+  }, subtitle)), React.createElement(Icon, {
+    name: "chevR",
+    size: 16,
+    color: "var(--ink-3)",
+    style: {
+      flexShrink: 0
+    }
+  }));
+}
 function LoginScreen({
   onLogin
 }) {
+  const [mode, setMode] = useState(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -198,7 +265,54 @@ function LoginScreen({
     }
   }, React.createElement(Logo, {
     size: 28
-  })), React.createElement("h1", {
+  })), mode === null ? React.createElement(React.Fragment, null, React.createElement("h1", {
+    style: {
+      fontSize: 26,
+      fontWeight: 800,
+      letterSpacing: '-.02em',
+      margin: '0 0 6px'
+    }
+  }, "Welcome"), React.createElement("p", {
+    style: {
+      color: 'var(--ink-3)',
+      fontSize: 14.5,
+      margin: '0 0 26px'
+    }
+  }, "Choose how you'd like to sign in."), React.createElement(ChooserOption, {
+    icon: "shield",
+    title: "Admin Login",
+    subtitle: "Manage IPOs, allotments and the pool",
+    onClick: () => setMode('admin')
+  }), React.createElement(ChooserOption, {
+    icon: "pan",
+    title: "Member Login",
+    subtitle: "Check your own PAN's profits",
+    onClick: () => {
+      window.location.hash = '#/me';
+      window.location.reload();
+    },
+    style: {
+      marginTop: 12
+    }
+  })) : React.createElement(React.Fragment, null, React.createElement("button", {
+    onClick: () => setMode(null),
+    style: {
+      border: 'none',
+      background: 'none',
+      padding: 0,
+      marginBottom: 18,
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 5,
+      color: 'var(--ink-3)',
+      fontSize: 13,
+      fontWeight: 700,
+      cursor: 'pointer'
+    }
+  }, React.createElement(Icon, {
+    name: "chevL",
+    size: 14
+  }), " Back"), React.createElement("h1", {
     style: {
       fontSize: 26,
       fontWeight: 800,
@@ -320,7 +434,7 @@ function LoginScreen({
       opacity: loading ? .7 : 1,
       pointerEvents: loading ? 'none' : 'auto'
     }
-  }, loading ? 'Signing in…' : 'Login'))));
+  }, loading ? 'Signing in…' : 'Login')))));
 }
 Object.assign(window, {
   LoginScreen,
