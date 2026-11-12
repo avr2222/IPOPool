@@ -8,9 +8,13 @@ source. After editing ANY `src/*.jsx`, regenerate the build or the change
 won't reach the app:
 
 ```
-npm install   # once, to get @babel/core + @babel/preset-react
+npm ci        # once; installs the exact Babel versions in package-lock.json
 npm run build # transpiles src/*.jsx -> build/*.js
+npm test      # money-math invariants (test/poolmath.test.js)
 ```
+
+CI (`.github/workflows/ci.yml`) rebuilds and fails if `build/` differs from
+what `src/` produces, so a forgotten rebuild is caught on the PR.
 
 `build/*.js` is committed (the deploy just serves the repo). Never hand-edit
 `build/*.js` — edit the `src/*.jsx` and rebuild. Plain-JS files
