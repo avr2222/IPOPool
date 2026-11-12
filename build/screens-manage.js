@@ -1938,6 +1938,7 @@ function AdminPanel() {
   const [editPanSaving, setEditPanSaving] = useState(false);
   const [editPanErr, setEditPanErr] = useState('');
   const openEditPan = p => {
+    setPinReset('');
     setEditPan(p);
     setEditPanForm({
       holderName: p.holder,
@@ -1948,6 +1949,18 @@ function AdminPanel() {
     });
     setEditPanErr('');
   };
+  const [pinReset, setPinReset] = useState('');
+  const resetMemberPin = () => askConfirm('Reset member PIN', `Reset the member-portal PIN for ${editPan?.holder || 'this PAN'}? They will be logged out on every device and choose a new PIN the next time they log in.`, async () => {
+    setPinReset('working');
+    setEditPanErr('');
+    try {
+      await D.mutations.resetMemberPin(editPan.id);
+      setPinReset('done');
+    } catch (e) {
+      setPinReset('');
+      setEditPanErr(e.message || 'Could not reset the PIN.');
+    }
+  }, true, 'Reset PIN');
   const saveEditPan = async () => {
     if (!editPanForm.holderName) {
       setEditPanErr('Holder name is required.');
@@ -4285,7 +4298,39 @@ function AdminPanel() {
       ...p,
       lotOptOut: !v
     }))
-  }), editPanErr && React.createElement("div", {
+  }), React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      border: '1px solid var(--border)',
+      borderRadius: 'var(--r-md)',
+      padding: '10px 12px'
+    }
+  }, React.createElement("div", {
+    style: {
+      minWidth: 0
+    }
+  }, React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      fontWeight: 700,
+      color: 'var(--ink-2)'
+    }
+  }, "Member login PIN"), React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: pinReset === 'done' ? 'var(--profit)' : 'var(--ink-3)',
+      fontWeight: pinReset === 'done' ? 700 : 400,
+      lineHeight: 1.45
+    }
+  }, pinReset === 'done' ? 'PIN cleared. They choose a new one at their next login.' : 'Forgotten PIN? Reset it and the member picks a new one.')), React.createElement(Button, {
+    variant: "ghost",
+    size: "sm",
+    onClick: resetMemberPin,
+    disabled: pinReset === 'working'
+  }, pinReset === 'working' ? 'Resetting…' : 'Reset PIN')), editPanErr && React.createElement("div", {
     style: {
       color: 'var(--loss)',
       fontSize: 13,
