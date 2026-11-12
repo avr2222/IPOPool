@@ -71,8 +71,18 @@ section('IPO timeline from close date');
   check('weekend-only gap -> allot Fri 14 Aug, list Tue 18 Aug', b.allot === '2026-08-14' && b.list === '2026-08-18', JSON.stringify(b));
   const c = t('2027-01-27');   // Wed; Tue 26 Jan 2027 Republic Day inside the window
   check('fixed-date holiday any year: open skips 26 Jan 2027 -> Fri 22 Jan', c.open === '2027-01-22', JSON.stringify(c));
-  const d = t('2026-10-16');   // moving festival (Dussehra) is NOT skipped
-  check('moving festivals are not assumed', d.list === '2026-10-21', JSON.stringify(d));
+  const d = t('2026-10-16');   // Fri; Dussehra Tue 20 Oct 2026 is in the published list
+  check('published festival holiday is skipped -> list Thu 22 Oct', d.allot === '2026-10-19' && d.list === '2026-10-22', JSON.stringify(d));
+  check('a festival close date is flagged', /Dussehra/.test(t('2026-10-20').closeWarning || ''));
+  const e0 = t('2027-10-28');  // Thu; nothing known for 2027 beyond fixed dates
+  check('unknown year: festivals not assumed', e0.allot === '2027-10-29' && e0.list === '2027-11-02', JSON.stringify(e0));
+  win.setExtraHolidays('2027-10-29 Diwali\nnot a date\n2027-02-30\n2027-10-29');
+  const e1 = t('2027-10-28');
+  check('admin-added holiday is skipped', e1.allot === '2027-11-01' && e1.list === '2027-11-03', JSON.stringify(e1));
+  check('holiday list parser keeps only real, unique dates',
+    JSON.stringify(win.parseHolidayList('2027-10-29 Diwali, 2027-02-30\n2027-03-22 2027-10-29')) === '["2027-03-22","2027-10-29"]');
+  win.setExtraHolidays('');
+  check('clearing extra holidays restores the default', t('2027-10-28').allot === '2027-10-29');
   check('a holiday close date is flagged', !!t('2026-10-02').closeWarning);
   check('a normal close date is not flagged', t('2026-10-01').closeWarning === null);
   check('a bad date gives no timeline', t('not-a-date') === null && t('') === null);

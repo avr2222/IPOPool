@@ -6,6 +6,7 @@ function SettingsScreen() {
   const [brokerage, setBrokerage] = useState(() => window.poolSetting('brokerage'));
   const [bonusRate, setBonusRate] = useState(() => window.poolSetting('allotBonus'));
   const [idleRate, setIdleRate] = useState(() => window.poolSetting('idleRate'));
+  const [holidays, setHolidays] = useState(() => window.extraHolidaysText());
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState('');
@@ -32,7 +33,8 @@ function SettingsScreen() {
         stcg,
         brokerage,
         allotBonus: bonusRate,
-        idleRate
+        idleRate,
+        marketHolidays: holidays
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2200);
@@ -312,6 +314,57 @@ function SettingsScreen() {
       color: 'var(--ink-2)'
     }
   }, "%"))))), React.createElement(Card, {
+    pad: 24
+  }, React.createElement(SectionTitle, {
+    title: "Market holidays",
+    sub: "Used when the IPO dates fill in from the close date"
+  }), React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 20,
+      marginTop: 4
+    }
+  }, React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6
+    }
+  }, React.createElement("div", {
+    style: {
+      fontSize: 13.5,
+      fontWeight: 700
+    }
+  }, "Extra market holidays"), React.createElement("textarea", {
+    value: holidays,
+    onChange: e => setHolidays(e.target.value),
+    rows: 5,
+    spellCheck: false,
+    placeholder: '2027-03-22\n2027-10-29',
+    style: {
+      ...inputStyle,
+      maxWidth: 260,
+      fontFamily: 'inherit',
+      resize: 'vertical'
+    }
+  }), (() => {
+    const n = window.parseHolidayList(holidays).length;
+    const typed = holidays.split(/\n/).filter(l => l.trim()).length;
+    return typed > 0 && React.createElement("div", {
+      style: {
+        fontSize: 12,
+        fontWeight: 600,
+        color: n < typed ? 'var(--warn)' : 'var(--ink-3)'
+      }
+    }, n, " valid date", n === 1 ? '' : 's', n < typed ? ` — ${typed - n} line${typed - n === 1 ? '' : 's'} not recognised (use YYYY-MM-DD)` : '');
+  })(), React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--ink-3)',
+      lineHeight: 1.5
+    }
+  }, `Weekends, fixed-date holidays and the published ${Object.keys(window.DATED_HOLIDAYS || {}).map(d => d.slice(0, 4)).filter((y, i, a) => a.indexOf(y) === i).join(', ')} exchange list are already built in. Add any other closed days here, one date per line as YYYY-MM-DD — for example next year's festival holidays once the exchange publishes them, or a one-off closure. Saved with the Save button at the bottom of this page.`)))), React.createElement(Card, {
     pad: 24
   }, React.createElement(SectionTitle, {
     title: "Data repair",

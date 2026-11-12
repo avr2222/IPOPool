@@ -28,3 +28,4 @@ worker picks up changes.
 ## Supabase migrations
 SQL in `supabase/migrations/`. Apply new ones in order in the Supabase SQL
 editor. The internal group-pooling feature needs migrations through 026.
+Migration 027 adds admin-entered market holidays (Settings).
