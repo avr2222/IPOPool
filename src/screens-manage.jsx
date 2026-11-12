@@ -621,8 +621,33 @@ function AdminPanel() {
   const [appSaving,    setAppSaving]    = useState(false);
   const [appErr,       setAppErr]       = useState('');
 
+  // Paste-to-fill for the New IPO form (see parseIpoPaste in db.js).
+  const [ipoPasteOpen, setIpoPasteOpen] = useState(false);
+  const [ipoPasteText, setIpoPasteText] = useState('');
+  const [ipoPasteNote, setIpoPasteNote] = useState(null);   // { filled, derived, missing: [labels] }
+  const IPO_PASTE_LABELS = { name: 'name', type: 'board', price: 'price', lotSize: 'lot size', openDate: 'open date', closeDate: 'close date', allotDate: 'allotment date', listDate: 'listing date' };
+  const applyIpoPaste = () => {
+    const { fields } = window.parseIpoPaste(ipoPasteText);
+    setIpoForm(prev => {
+      // A pasted close date fills the other dates the usual way; dates the
+      // paste states explicitly then win over the computed ones.
+      let next = fields.closeDate ? withAutoDates(prev, fields.closeDate) : { ...prev };
+      Object.keys(fields).forEach(k => { next[k] = String(fields[k]); });
+      return next;
+    });
+    // Dates worked out from a pasted close date are filled, not missing.
+    const derived = fields.closeDate ? ['openDate', 'allotDate', 'listDate'].filter(k => fields[k] == null) : [];
+    const keys = Object.keys(IPO_PASTE_LABELS);
+    setIpoPasteNote({
+      filled:  keys.filter(k => fields[k] != null).map(k => IPO_PASTE_LABELS[k]),
+      derived: derived.map(k => IPO_PASTE_LABELS[k]),
+      missing: keys.filter(k => fields[k] == null && !derived.includes(k)).map(k => IPO_PASTE_LABELS[k]),
+    });
+  };
+
   const closeAddIpo = () => {
     setAddIpoStep(null); setNewIpoId(null); setApplicantSel({}); setIpoErr(''); setAppErr('');
+    setIpoPasteOpen(false); setIpoPasteText(''); setIpoPasteNote(null);
     setIpoForm({ name: '', shortName: '', type: 'SME', price: '', lotSize: '', retailLots: '', shniLots: '', openDate: '', closeDate: '', allotDate: '', listDate: '' });
   };
 
@@ -1284,6 +1309,38 @@ function AdminPanel() {
       {/* ── Step 1: IPO details ── */}
       {addIpoStep === 'details' && (
         <Modal title="New IPO" onClose={closeAddIpo}>
+          <div style={{ border: '1px dashed var(--border-strong)', borderRadius: 'var(--r-md)', padding: '10px 12px', background: 'var(--surface-2)' }}>
+            <button onClick={() => setIpoPasteOpen(o => !o)}
+              style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700, color: 'var(--brand)', width: '100%', textAlign: 'left' }}>
+              <Icon name={ipoPasteOpen ? 'chevD' : 'chevR'} size={14} /> Paste IPO details to fill this form
+            </button>
+            {ipoPasteOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+                <div style={{ fontSize: 11.5, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                  Copy the details table from an IPO page (name, price band, lot size, dates, listing exchange) and paste it here. Nothing is saved until you press Next — check every field first.
+                </div>
+                <textarea value={ipoPasteText} onChange={e => { setIpoPasteText(e.target.value); setIpoPasteNote(null); }} rows={5} spellCheck={false}
+                  placeholder={'Tata Technologies IPO\nPrice Band  ₹475 to ₹500 per share\nLot Size  30 Shares\nIPO Close Date  Fri, Nov 24, 2023\nListing At  BSE, NSE'}
+                  style={{ ...inputSt, fontFamily: 'inherit', fontSize: 12.5, resize: 'vertical' }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <Button variant="soft" size="sm" onClick={applyIpoPaste} disabled={!ipoPasteText.trim()}>Fill form</Button>
+                  {ipoPasteNote && (
+                    <div style={{ fontSize: 12, lineHeight: 1.5, flex: '1 1 200px' }}>
+                      {ipoPasteNote.filled.length > 0
+                        ? <span style={{ color: 'var(--profit)', fontWeight: 700 }}>Filled: {ipoPasteNote.filled.join(', ')}.</span>
+                        : <span style={{ color: 'var(--loss)', fontWeight: 700 }}>Couldn't recognise any IPO details in that text.</span>}
+                      {ipoPasteNote.derived.length > 0 && (
+                        <span style={{ color: 'var(--ink-2)', fontWeight: 600 }}> Worked out from the close date: {ipoPasteNote.derived.join(', ')}.</span>
+                      )}
+                      {ipoPasteNote.filled.length > 0 && ipoPasteNote.missing.length > 0 && (
+                        <span style={{ color: 'var(--warn)', fontWeight: 700 }}> Not found: {ipoPasteNote.missing.join(', ')}.</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <Field label="Company name *">
             <input style={inputSt} value={ipoForm.name} onChange={e => setIpoForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Tata Technologies" autoFocus />
           </Field>
