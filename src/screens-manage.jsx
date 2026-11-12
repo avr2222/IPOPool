@@ -941,7 +941,21 @@ function AdminPanel() {
   const [editPanSaving, setEditPanSaving] = useState(false);
   const [editPanErr, setEditPanErr]   = useState('');
 
-  const openEditPan = (p) => { setEditPan(p); setEditPanForm({ holderName: p.holder, relation: p.relation || 'Self', bank: p.linkedBank || '', status: p.status || 'Active', lotOptOut: !!p.lotOptOut }); setEditPanErr(''); };
+  const openEditPan = (p) => { setPinReset(''); setEditPan(p); setEditPanForm({ holderName: p.holder, relation: p.relation || 'Self', bank: p.linkedBank || '', status: p.status || 'Active', lotOptOut: !!p.lotOptOut }); setEditPanErr(''); };
+
+  // Member-portal PIN reset (migration 028): for a member who forgot their
+  // PIN, or when the wrong person claimed a PAN first.
+  const [pinReset, setPinReset] = useState('');   // '' | 'working' | 'done'
+  const resetMemberPin = () => askConfirm(
+    'Reset member PIN',
+    `Reset the member-portal PIN for ${editPan?.holder || 'this PAN'}? They will be logged out on every device and choose a new PIN the next time they log in.`,
+    async () => {
+      setPinReset('working'); setEditPanErr('');
+      try { await D.mutations.resetMemberPin(editPan.id); setPinReset('done'); }
+      catch (e) { setPinReset(''); setEditPanErr(e.message || 'Could not reset the PIN.'); }
+    },
+    true, 'Reset PIN'
+  );
 
   const saveEditPan = async () => {
     if (!editPanForm.holderName) { setEditPanErr('Holder name is required.'); return; }
@@ -1836,6 +1850,17 @@ function AdminPanel() {
             </select>
           </Field>
           <LotSplitToggle value={!editPanForm.lotOptOut} onChange={v => setEditPanForm(p => ({ ...p, lotOptOut: !v }))} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '10px 12px' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink-2)' }}>Member login PIN</div>
+              <div style={{ fontSize: 11.5, color: pinReset === 'done' ? 'var(--profit)' : 'var(--ink-3)', fontWeight: pinReset === 'done' ? 700 : 400, lineHeight: 1.45 }}>
+                {pinReset === 'done' ? 'PIN cleared. They choose a new one at their next login.' : 'Forgotten PIN? Reset it and the member picks a new one.'}
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" onClick={resetMemberPin} disabled={pinReset === 'working'}>
+              {pinReset === 'working' ? 'Resetting…' : 'Reset PIN'}
+            </Button>
+          </div>
           {editPanErr && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600 }}>{editPanErr}</div>}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <Button variant="ghost" onClick={() => { setEditPan(null); setEditPanErr(''); }}>Cancel</Button>

@@ -1,5 +1,5 @@
 /* ============================================================
-   IPO Pool — Member self-service portal (PAN login, no password)
+   IPO Pool — Member self-service portal (PAN + PIN login)
    Opened via the shared deep link  #/apply/<ipoId>
    Talks ONLY to window.MemberAPI (SECURITY DEFINER RPCs); never
    loads the full admin dataset.
@@ -46,10 +46,17 @@ function MemberPortal({ ipoId }) {
   const [ipo,     setIpo]     = useState(null);
   const [ipoErr,  setIpoErr]  = useState('');
   const [tab,     setTab]     = useState(applyMode ? 'apply' : 'summary');
+  // A PIN login (migration 028) yields a session token, remembered in
+  // localStorage so the installed app opens straight to the member's profits.
+  // The pre-028 PAN-only session carries the PAN itself as its credential, so
+  // it stays in sessionStorage and ends with the tab, as before.
   const [session, setSession] = useState(() => {
-    try { return JSON.parse(sessionStorage.getItem(MEMBER_SESSION_KEY) || 'null'); }
-    catch (e) { return null; }
+    try {
+      const s = JSON.parse(localStorage.getItem(MEMBER_SESSION_KEY) || sessionStorage.getItem(MEMBER_SESSION_KEY) || 'null');
+      return s && (s.token || s.loginPan) ? { ...s, key: s.token || s.loginPan } : null;
+    } catch (e) { return null; }
   });
+  const [expired, setExpired] = useState(false);
 
   // Load the linked IPO once (works pre-login). Nothing to load at #/me.
   useEffect(() => {
@@ -61,14 +68,27 @@ function MemberPortal({ ipoId }) {
     return () => { alive = false; };
   }, [ipoId]);
 
-  const onLogin = (s) => {
-    setSession(s);
-    try { sessionStorage.setItem(MEMBER_SESSION_KEY, JSON.stringify(s)); } catch (e) {}
-  };
-  const onLogout = () => {
-    setSession(null);
+  const forget = () => {
+    try { localStorage.removeItem(MEMBER_SESSION_KEY); } catch (e) {}
     try { sessionStorage.removeItem(MEMBER_SESSION_KEY); } catch (e) {}
   };
+  const onLogin = (s) => {
+    setExpired(false);
+    setSession({ ...s, key: s.token || s.loginPan });
+    forget();
+    try { (s.token ? localStorage : sessionStorage).setItem(MEMBER_SESSION_KEY, JSON.stringify(s)); } catch (e) {}
+  };
+  const onLogout = () => {
+    window.MemberAPI.logout(session);
+    setSession(null);
+    forget();
+  };
+  // Any member call that finds the session dead (expired, PIN reset by the
+  // admin, PAN deactivated) lands here: back to the login screen, with a note.
+  useEffect(() => {
+    window.MemberAPI.onSessionExpired = () => { forget(); setSession(null); setExpired(true); };
+    return () => { window.MemberAPI.onSessionExpired = null; };
+  }, []);
 
   return (
     <div style={{ minHeight: '100vh', background: 'radial-gradient(1100px 480px at 50% -8%, var(--brand-tint), transparent 62%), var(--bg)', display: 'grid', placeItems: 'center', padding: '28px 14px calc(28px + env(safe-area-inset-bottom, 0px))' }}>
@@ -88,7 +108,7 @@ function MemberPortal({ ipoId }) {
               <div style={{ fontSize: 13.5, color: 'var(--ink-3)' }}>{ipoErr}</div>
             </Card>
           : !session
-            ? <MemberLogin ipo={ipo} onLogin={onLogin} />
+            ? <MemberLogin ipo={ipo} onLogin={onLogin} expired={expired} applyMode={applyMode} />
             : (
               <>
                 {/* No tab bar at #/me — there is no IPO to apply to. */}
@@ -139,11 +159,11 @@ function MemberSummary({ session }) {
 
   useEffect(() => {
     let alive = true;
-    window.MemberAPI.summary(session.loginPan)
+    window.MemberAPI.summary(session)
       .then(d => { if (alive) { setData(d || {}); setLoading(false); } })
       .catch(() => { if (alive) { setErr('Could not load your profits. Please try again.'); setLoading(false); } });
     return () => { alive = false; };
-  }, [session.loginPan]);
+  }, [session.key]);
 
   if (loading) return <Card pad={28} style={{ textAlign: 'center', color: 'var(--ink-3)', fontSize: 13.5 }}>Loading your profits…</Card>;
   if (err)     return <Card pad={28} style={{ textAlign: 'center', color: 'var(--loss)', fontSize: 13.5, fontWeight: 600 }}>{err}</Card>;
@@ -315,30 +335,71 @@ function MemberSummary({ session }) {
   );
 }
 
-function MemberLogin({ ipo, onLogin }) {
+function MemberLogin({ ipo, onLogin, expired, applyMode }) {
+  const [step,    setStep]    = useState('pan');   // 'pan' | 'create' (first login: choose a PIN) | 'enter'
   const [pan,     setPan]     = useState('');
+  const [pin,     setPin]     = useState('');
+  const [pin2,    setPin2]    = useState('');
   const [loading, setLoading] = useState(false);
   const [err,     setErr]     = useState('');
 
   const clean = pan.trim().toUpperCase();
   const looksValid = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(clean);
+  const pinOk = /^[0-9]{4,6}$/.test(pin);
+
+  const finish = (res) => {
+    // Token sessions don't keep the PAN on the device; the pre-028 fallback
+    // has nothing else to identify the member with.
+    const base = { memberId: res.member_id, name: res.name, holder: res.login_holder || '', isHead: !!res.is_head, pans: res.pans || [] };
+    onLogin(res.token ? { ...base, token: res.token } : { ...base, loginPan: clean });
+  };
+  const lockedMsg = (res) => {
+    const mins = Math.max(1, Math.ceil((res.retry_seconds || 900) / 60));
+    return `Too many wrong PINs. Try again in ${mins} minute${mins === 1 ? '' : 's'}, or ask the admin to reset your PIN.`;
+  };
+  const backToPan = () => { setStep('pan'); setPin(''); setPin2(''); setErr(''); };
 
   const submit = async () => {
-    if (!clean) { setErr('Enter your PAN number.'); return; }
+    if (loading) return;
+    if (step === 'pan' && !clean) { setErr('Enter your PAN number.'); return; }
+    if (step !== 'pan' && !pinOk) { setErr('Your PIN is 4 to 6 digits.'); return; }
+    if (step === 'create' && pin !== pin2) { setErr("Those two PINs don't match."); return; }
     setLoading(true); setErr('');
     try {
-      const res = await window.MemberAPI.login(clean);
-      if (!res || !res.member_id) {
+      const res = step === 'pan'    ? await window.MemberAPI.login(clean)
+                : step === 'create' ? await window.MemberAPI.login(clean, null, pin)
+                :                     await window.MemberAPI.login(clean, pin);
+      if (!res) {
+        setStep('pan'); setPin(''); setPin2('');
         setErr("That PAN isn't registered in this pool. Ask the admin to add it.");
-        setLoading(false);
+      } else if (res.status === 'ok') {
+        finish(res);
         return;
+      } else if (res.status === 'needs_pin_setup') {
+        setStep('create'); setPin(''); setPin2('');
+      } else if (res.status === 'needs_pin') {
+        // Also where a 'create' lands if this PAN already has a PIN.
+        if (step === 'create') setErr('This PAN already has a PIN. Enter it to continue.');
+        setStep('enter'); setPin(''); setPin2('');
+      } else if (res.status === 'wrong_pin') {
+        setPin('');
+        setErr(`Wrong PIN. ${res.attempts_left} ${res.attempts_left === 1 ? 'try' : 'tries'} left before a 15-minute lock.`);
+      } else if (res.status === 'locked') {
+        setPin('');
+        setErr(lockedMsg(res));
+      } else {
+        setErr('Could not log you in. Try again.');
       }
-      onLogin({ loginPan: clean, memberId: res.member_id, name: res.name, holder: res.login_holder || '', isHead: !!res.is_head, pans: res.pans || [] });
     } catch (e) {
-      setErr('Could not verify your PAN. Check your connection and try again.');
-      setLoading(false);
+      setErr('Could not verify your details. Check your connection and try again.');
     }
+    setLoading(false);
   };
+
+  const boxSt = (on) => ({ display: 'flex', alignItems: 'center', gap: 10, border: '1.5px solid', borderColor: on ? 'var(--brand)' : 'var(--border-strong)', borderRadius: 'var(--r-md)', padding: '13px 15px', background: 'var(--surface)' });
+  const pinInputSt = { border: 'none', outline: 'none', fontSize: 18, fontWeight: 700, letterSpacing: '.3em', width: '100%', background: 'transparent', color: 'var(--ink)' };
+  const labelSt = { fontSize: 13, fontWeight: 700, color: 'var(--ink-2)', display: 'block', marginBottom: 8 };
+  const onPin = (set) => (e) => { set(e.target.value.replace(/[^0-9]/g, '').slice(0, 6)); setErr(''); };
 
   return (
     <Card pad={26}>
@@ -354,28 +415,74 @@ function MemberLogin({ ipo, onLogin }) {
           </div>
         </div>
       )}
-      <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-.01em' }}>Record your application</div>
-      <div style={{ fontSize: 13.5, color: 'var(--ink-3)', margin: '4px 0 20px' }}>
-        Already applied in your Demat? Enter your PAN to fill in which of your family PANs applied. No password needed.
-      </div>
+      {expired && step === 'pan' && !err && (
+        <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '9px 12px', fontSize: 12.5, fontWeight: 600, color: 'var(--ink-2)', marginBottom: 16 }}>
+          Your login has ended. Please log in again.
+        </div>
+      )}
 
-      <label style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink-2)', display: 'block', marginBottom: 8 }}>Your PAN number</label>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1.5px solid', borderColor: looksValid ? 'var(--brand)' : 'var(--border-strong)', borderRadius: 'var(--r-md)', padding: '13px 15px', background: 'var(--surface)', marginBottom: err ? 10 : 20 }}>
-        <Icon name="pan" size={16} color="var(--ink-2)" style={{ flexShrink: 0 }} />
-        <input value={pan} onChange={e => { setPan(e.target.value); setErr(''); }}
-          onKeyDown={e => e.key === 'Enter' && submit()}
-          placeholder="ABCDE1234F" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
-          style={{ border: 'none', outline: 'none', fontSize: 15, fontWeight: 700, letterSpacing: '.06em', width: '100%', background: 'transparent', color: 'var(--ink)', textTransform: 'uppercase' }} />
-      </div>
+      {step === 'pan' && (
+        <>
+          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-.01em' }}>{applyMode ? 'Record your application' : 'See your profits'}</div>
+          <div style={{ fontSize: 13.5, color: 'var(--ink-3)', margin: '4px 0 20px' }}>
+            {applyMode
+              ? 'Already applied in your Demat? Enter your PAN to fill in which of your family PANs applied.'
+              : 'Enter your PAN to see your allotments, profits and pending settlements.'}
+          </div>
+
+          <label style={labelSt}>Your PAN number</label>
+          <div style={{ ...boxSt(looksValid), marginBottom: err ? 10 : 20 }}>
+            <Icon name="pan" size={16} color="var(--ink-2)" style={{ flexShrink: 0 }} />
+            <input value={pan} onChange={e => { setPan(e.target.value); setErr(''); }}
+              onKeyDown={e => e.key === 'Enter' && submit()}
+              placeholder="ABCDE1234F" autoCapitalize="characters" autoCorrect="off" spellCheck={false} aria-label="PAN number"
+              style={{ border: 'none', outline: 'none', fontSize: 15, fontWeight: 700, letterSpacing: '.06em', width: '100%', background: 'transparent', color: 'var(--ink)', textTransform: 'uppercase' }} />
+          </div>
+        </>
+      )}
+
+      {step !== 'pan' && (
+        <>
+          <button onClick={backToPan}
+            style={{ border: 'none', background: 'none', padding: 0, marginBottom: 14, display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--ink-3)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+            <Icon name="chevL" size={14} /> {clean}
+          </button>
+          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-.01em' }}>{step === 'create' ? 'Choose a PIN' : 'Enter your PIN'}</div>
+          <div style={{ fontSize: 13.5, color: 'var(--ink-3)', margin: '4px 0 20px' }}>
+            {step === 'create'
+              ? "First time here with this PAN. Pick a 4 to 6 digit PIN — you'll need it on a new device. If you forget it, the admin can reset it."
+              : 'The PIN you chose for this PAN. Forgotten it? Ask the admin to reset it.'}
+          </div>
+
+          <label style={labelSt}>{step === 'create' ? 'New PIN' : 'PIN'}</label>
+          <div style={{ ...boxSt(pinOk), marginBottom: step === 'create' ? 14 : (err ? 10 : 20) }}>
+            <Icon name="lock" size={16} color="var(--ink-2)" style={{ flexShrink: 0 }} />
+            <input value={pin} onChange={onPin(setPin)} onKeyDown={e => e.key === 'Enter' && submit()} autoFocus
+              type="password" inputMode="numeric" autoComplete={step === 'create' ? 'new-password' : 'current-password'} maxLength={6} aria-label={step === 'create' ? 'New PIN' : 'PIN'}
+              placeholder="••••" style={pinInputSt} />
+          </div>
+          {step === 'create' && (
+            <>
+              <label style={labelSt}>Confirm PIN</label>
+              <div style={{ ...boxSt(pinOk && pin === pin2), marginBottom: err ? 10 : 20 }}>
+                <Icon name="lock" size={16} color="var(--ink-2)" style={{ flexShrink: 0 }} />
+                <input value={pin2} onChange={onPin(setPin2)} onKeyDown={e => e.key === 'Enter' && submit()}
+                  type="password" inputMode="numeric" autoComplete="new-password" maxLength={6} aria-label="Confirm PIN"
+                  placeholder="••••" style={pinInputSt} />
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       {err && <div style={{ color: 'var(--loss)', fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{err}</div>}
 
       <Button variant="primary" size="lg" full onClick={submit} iconRight={loading ? undefined : 'chevR'}
         style={{ opacity: loading ? .7 : 1, pointerEvents: loading ? 'none' : 'auto' }}>
-        {loading ? 'Checking…' : 'Continue'}
+        {loading ? 'Checking…' : step === 'create' ? 'Set PIN and continue' : 'Continue'}
       </Button>
       <div style={{ fontSize: 11.5, color: 'var(--ink-4, var(--ink-3))', textAlign: 'center', marginTop: 14 }}>
-        Only PANs the admin has registered can apply.
+        {step === 'pan' ? 'Only PANs the admin has registered can log in.' : 'You stay logged in on this device until you log out.'}
       </div>
     </Card>
   );
@@ -413,7 +520,7 @@ function MemberApply({ ipo, session }) {
   useEffect(() => {
     if (!ipo || !ipo.id) { setLoading(false); return; }
     let alive = true;
-    window.MemberAPI.myIpoApplications(session.loginPan, ipo.id)
+    window.MemberAPI.myIpoApplications(session, ipo.id)
       .then(existing => {
         if (!alive) return;
         const applied = {};
@@ -433,7 +540,7 @@ function MemberApply({ ipo, session }) {
       })
       .catch(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [ipo && ipo.id, session.loginPan]);
+  }, [ipo && ipo.id, session.key]);
 
   const setRow = (id, patch) => setRows(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   const selected    = pans.filter(p => rows[p.id] && rows[p.id].on);
@@ -453,7 +560,7 @@ function MemberApply({ ipo, session }) {
         category: rows[p.id].category,
         lots: Math.max(1, parseInt(rows[p.id].lots, 10) || 1),
       }));
-      const res = await window.MemberAPI.submitApplications(session.loginPan, ipo.id, payload);
+      const res = await window.MemberAPI.submitApplications(session, ipo.id, payload);
       setDone({ count: (res && res.count) || payload.length, updated: hasExisting });
     } catch (e) {
       setErr(e.message || 'Could not save your application. Please try again.');
@@ -651,11 +758,11 @@ function IpoApplicantsGrid({ ipo, session }) {
   useEffect(() => {
     let alive = true;
     setLoading(true); setErr('');
-    window.MemberAPI.ipoApplicants(session.loginPan, ipo.id)
+    window.MemberAPI.ipoApplicants(session, ipo.id)
       .then(d => { if (alive) { setRows(d || []); setLoading(false); } })
       .catch(() => { if (alive) { setErr('Could not load applicants. Please try again.'); setLoading(false); } });
     return () => { alive = false; };
-  }, [ipo.id, session.loginPan]);
+  }, [ipo.id, session.key]);
 
   const cols = [
     { key: 'holder',   label: 'Applicant', align: 'left', get: r => r.holder || '' },

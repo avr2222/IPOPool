@@ -1952,6 +1952,16 @@ async function loadDB() {
         if (holidaysLocalOnly) throw new Error('Settings saved, but the extra market holidays are on this device only. Run migration 027_market_holidays.sql in Supabase to share them.');
       },
 
+      // Clear a PAN's member-portal PIN (migration 028). The member picks a
+      // new one at their next login; their devices are logged out.
+      async resetMemberPin(panId) {
+        var res = await window.sb.rpc('admin_reset_member_pin', { p_pan_id: panId });
+        if (res.error) {
+          if (memberFnMissing(res.error)) throw new Error('Run migration 028_member_pin_sessions.sql in Supabase to enable member PINs.');
+          throw res.error;
+        }
+      },
+
       async updatePan(id, fields) {
         var base = { holder_name: fields.holderName, relation: fields.relation || 'Self', bank: fields.bank || null, status: fields.status };
         var upd = Object.assign({}, base);
@@ -2567,43 +2577,88 @@ window.SME_INDIVIDUAL_MAX_LOTS = SME_INDIVIDUAL_MAX_LOTS;
 window.SME_NII_MIN_LOTS        = SME_NII_MIN_LOTS;
 window.buildApplyMessage = buildApplyMessage;
 
-// ── Member self-service API (PAN login, no Supabase session) ──────────────────
-// Thin wrappers over the SECURITY DEFINER RPCs from migration 004. Available
-// WITHOUT loadDB (members are anonymous and never load the full admin dataset).
+// ── Member self-service API (PAN + PIN login, no Supabase session) ───────────
+// Thin wrappers over SECURITY DEFINER RPCs. Available WITHOUT loadDB (members
+// are anonymous and never load the full admin dataset).
+//
+// Migration 028 added a PIN and session tokens: login returns a token, and
+// every later call sends that token (the *_t functions) instead of the PAN.
+// A database that predates 028 has neither, so login falls back to the old
+// PAN-only function and calls go to the PAN-taking originals -- that keeps
+// the portal working between deploying this code and running the migration.
+//
+// `auth` is the portal session: { token } after a PIN login, or { loginPan }
+// in the pre-028 fallback.
+function memberFnMissing(err) {
+  var m = (err && err.message) || '';
+  return !!err && (err.code === 'PGRST202' || /could not find the function/i.test(m) || /function .* does not exist/i.test(m));
+}
+// The token is unknown/expired, the PAN was deactivated, or (after migration
+// 029) a pre-PIN session is calling a function it may no longer use. All mean
+// the same thing to the member: log in again.
+function memberSessionDead(err) {
+  var m = (err && err.message) || '';
+  return !!err && (/MEMBER_SESSION_INVALID/.test(m) || err.code === '42501' || /permission denied for function/i.test(m));
+}
+async function memberCall(auth, tokenFn, legacyFn, args) {
+  var useToken = !!(auth && auth.token);
+  var res = await window.sb.rpc(useToken ? tokenFn : legacyFn,
+    Object.assign(useToken ? { p_token: auth.token } : { p_login_pan: auth && auth.loginPan }, args || {}));
+  if (res.error) {
+    if (memberSessionDead(res.error)) {
+      if (window.MemberAPI.onSessionExpired) window.MemberAPI.onSessionExpired();
+      var e = new Error('Your login has expired. Please log in again.');
+      e.sessionExpired = true;
+      throw e;
+    }
+    throw res.error;
+  }
+  return res.data;
+}
 window.MemberAPI = {
-  login: async function (pan) {
-    var res = await window.sb.rpc('member_login', { p_pan: pan });
+  onSessionExpired: null,   // set by the portal; called when a call finds the session dead
+  // login(pan)              -> { status: 'needs_pin_setup' | 'needs_pin' } or null (unknown PAN)
+  // login(pan, pin)         -> { status: 'ok', token, member_id, name, pans, ... }
+  //                            | { status: 'wrong_pin', attempts_left } | { status: 'locked', retry_seconds }
+  // login(pan, null, newPin)-> sets the PIN at first login, then as 'ok'
+  // Pre-028 database: { status: 'ok', legacy: true, ...member fields } with no token.
+  login: async function (pan, pin, newPin) {
+    var res = await window.sb.rpc('member_login_v2', { p_pan: pan, p_pin: pin || null, p_new_pin: newPin || null });
+    if (res.error && memberFnMissing(res.error)) {
+      var old = await window.sb.rpc('member_login', { p_pan: pan });
+      if (old.error) throw old.error;
+      return old.data ? Object.assign({ status: 'ok', legacy: true }, old.data) : null;
+    }
     if (res.error) throw res.error;
-    return res.data;   // { member_id, name, pans:[{id,holder,relation,pan_masked}] } or null
+    return res.data;
+  },
+  logout: async function (auth) {
+    if (!auth || !auth.token) return;
+    try { await window.sb.rpc('member_logout_t', { p_token: auth.token }); } catch (e) {}
   },
   getApplyIpo: async function (ipoId) {
     var res = await window.sb.rpc('get_apply_ipo', { p_ipo: ipoId });
     if (res.error) throw res.error;
     return res.data;   // { id, name, short, type, status, band_*, lot_*, *_date } or null
   },
-  submitApplications: async function (loginPan, ipoId, rows) {
+  submitApplications: async function (auth, ipoId, rows) {
     // rows: [{ pan_id, category, lots }]
-    var res = await window.sb.rpc('submit_applications', { p_login_pan: loginPan, p_ipo: ipoId, p_rows: rows });
-    if (res.error) throw res.error;
-    return res.data;   // { ok:true, count:N }
+    return memberCall(auth, 'submit_applications_t', 'submit_applications', { p_ipo: ipoId, p_rows: rows });   // { ok:true, count:N }
   },
-  summary: async function (loginPan) {
+  summary: async function (auth) {
     await loadPoolSettings();   // anon can read pool_settings (019)
-    var idleRate = poolSetting('idleRate');
-    var res = await window.sb.rpc('member_summary', { p_login_pan: loginPan, p_idle_rate: idleRate });
-    if (res.error) throw res.error;
-    return res.data;   // { name, total_profit, total_bonus, paid_profit, pending_profit, ipos_applied, pans_applied, allotments, rank, total_members, ipos:[...], pans:[...]|null (head only) }
+    // { name, total_profit, total_bonus, paid_profit, pending_profit, ipos_applied, pans_applied, allotments, rank, total_members, ipos:[...], pans:[...]|null (head only) }
+    return memberCall(auth, 'member_summary_t', 'member_summary', { p_idle_rate: poolSetting('idleRate') });
   },
-  myIpoApplications: async function (loginPan, ipoId) {
-    var res = await window.sb.rpc('my_ipo_applications', { p_login_pan: loginPan, p_ipo: ipoId });
-    if (res.error) throw res.error;
-    return res.data || [];   // [{ pan_id, category, lots, allot_status }]
+  myIpoApplications: async function (auth, ipoId) {
+    return (await memberCall(auth, 'my_ipo_applications_t', 'my_ipo_applications', { p_ipo: ipoId })) || [];   // [{ pan_id, category, lots, allot_status }]
   },
-  ipoApplicants: async function (loginPan, ipoId) {
-    var res = await window.sb.rpc('ipo_applicants', { p_login_pan: loginPan, p_ipo: ipoId });
-    if (res.error) throw res.error;
-    return res.data || [];   // [{ pan_id, holder, pan_masked, member_name, category, lots, status, shares, sell_price, gain }]
+  ipoApplicants: async function (auth, ipoId) {
+    // [{ pan_id, holder, pan_masked, member_name, category, lots, status, shares, sell_price, gain }]
+    return (await memberCall(auth, 'ipo_applicants_t', 'ipo_applicants', { p_ipo: ipoId })) || [];
   },
 };
+window.memberFnMissing = memberFnMissing;
+window.memberSessionDead = memberSessionDead;
 
 })();

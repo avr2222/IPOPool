@@ -23,11 +23,16 @@ function MemberPortal({
   const [tab, setTab] = useState(applyMode ? 'apply' : 'summary');
   const [session, setSession] = useState(() => {
     try {
-      return JSON.parse(sessionStorage.getItem(MEMBER_SESSION_KEY) || 'null');
+      const s = JSON.parse(localStorage.getItem(MEMBER_SESSION_KEY) || sessionStorage.getItem(MEMBER_SESSION_KEY) || 'null');
+      return s && (s.token || s.loginPan) ? {
+        ...s,
+        key: s.token || s.loginPan
+      } : null;
     } catch (e) {
       return null;
     }
   });
+  const [expired, setExpired] = useState(false);
   useEffect(() => {
     if (!applyMode) return;
     let alive = true;
@@ -40,18 +45,40 @@ function MemberPortal({
       alive = false;
     };
   }, [ipoId]);
-  const onLogin = s => {
-    setSession(s);
+  const forget = () => {
     try {
-      sessionStorage.setItem(MEMBER_SESSION_KEY, JSON.stringify(s));
+      localStorage.removeItem(MEMBER_SESSION_KEY);
     } catch (e) {}
-  };
-  const onLogout = () => {
-    setSession(null);
     try {
       sessionStorage.removeItem(MEMBER_SESSION_KEY);
     } catch (e) {}
   };
+  const onLogin = s => {
+    setExpired(false);
+    setSession({
+      ...s,
+      key: s.token || s.loginPan
+    });
+    forget();
+    try {
+      (s.token ? localStorage : sessionStorage).setItem(MEMBER_SESSION_KEY, JSON.stringify(s));
+    } catch (e) {}
+  };
+  const onLogout = () => {
+    window.MemberAPI.logout(session);
+    setSession(null);
+    forget();
+  };
+  useEffect(() => {
+    window.MemberAPI.onSessionExpired = () => {
+      forget();
+      setSession(null);
+      setExpired(true);
+    };
+    return () => {
+      window.MemberAPI.onSessionExpired = null;
+    };
+  }, []);
   return React.createElement("div", {
     style: {
       minHeight: '100vh',
@@ -102,7 +129,9 @@ function MemberPortal({
     }
   }, ipoErr)) : !session ? React.createElement(MemberLogin, {
     ipo: ipo,
-    onLogin: onLogin
+    onLogin: onLogin,
+    expired: expired,
+    applyMode: applyMode
   }) : React.createElement(React.Fragment, null, applyMode && React.createElement("div", {
     style: {
       display: 'flex',
@@ -154,7 +183,7 @@ function MemberSummary({
   }, [cashflows]);
   useEffect(() => {
     let alive = true;
-    window.MemberAPI.summary(session.loginPan).then(d => {
+    window.MemberAPI.summary(session).then(d => {
       if (alive) {
         setData(d || {});
         setLoading(false);
@@ -168,7 +197,7 @@ function MemberSummary({
     return () => {
       alive = false;
     };
-  }, [session.loginPan]);
+  }, [session.key]);
   if (loading) return React.createElement(Card, {
     pad: 28,
     style: {
@@ -587,39 +616,124 @@ function MemberSummary({
 }
 function MemberLogin({
   ipo,
-  onLogin
+  onLogin,
+  expired,
+  applyMode
 }) {
+  const [step, setStep] = useState('pan');
   const [pan, setPan] = useState('');
+  const [pin, setPin] = useState('');
+  const [pin2, setPin2] = useState('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const clean = pan.trim().toUpperCase();
   const looksValid = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(clean);
+  const pinOk = /^[0-9]{4,6}$/.test(pin);
+  const finish = res => {
+    const base = {
+      memberId: res.member_id,
+      name: res.name,
+      holder: res.login_holder || '',
+      isHead: !!res.is_head,
+      pans: res.pans || []
+    };
+    onLogin(res.token ? {
+      ...base,
+      token: res.token
+    } : {
+      ...base,
+      loginPan: clean
+    });
+  };
+  const lockedMsg = res => {
+    const mins = Math.max(1, Math.ceil((res.retry_seconds || 900) / 60));
+    return `Too many wrong PINs. Try again in ${mins} minute${mins === 1 ? '' : 's'}, or ask the admin to reset your PIN.`;
+  };
+  const backToPan = () => {
+    setStep('pan');
+    setPin('');
+    setPin2('');
+    setErr('');
+  };
   const submit = async () => {
-    if (!clean) {
+    if (loading) return;
+    if (step === 'pan' && !clean) {
       setErr('Enter your PAN number.');
+      return;
+    }
+    if (step !== 'pan' && !pinOk) {
+      setErr('Your PIN is 4 to 6 digits.');
+      return;
+    }
+    if (step === 'create' && pin !== pin2) {
+      setErr("Those two PINs don't match.");
       return;
     }
     setLoading(true);
     setErr('');
     try {
-      const res = await window.MemberAPI.login(clean);
-      if (!res || !res.member_id) {
+      const res = step === 'pan' ? await window.MemberAPI.login(clean) : step === 'create' ? await window.MemberAPI.login(clean, null, pin) : await window.MemberAPI.login(clean, pin);
+      if (!res) {
+        setStep('pan');
+        setPin('');
+        setPin2('');
         setErr("That PAN isn't registered in this pool. Ask the admin to add it.");
-        setLoading(false);
+      } else if (res.status === 'ok') {
+        finish(res);
         return;
+      } else if (res.status === 'needs_pin_setup') {
+        setStep('create');
+        setPin('');
+        setPin2('');
+      } else if (res.status === 'needs_pin') {
+        if (step === 'create') setErr('This PAN already has a PIN. Enter it to continue.');
+        setStep('enter');
+        setPin('');
+        setPin2('');
+      } else if (res.status === 'wrong_pin') {
+        setPin('');
+        setErr(`Wrong PIN. ${res.attempts_left} ${res.attempts_left === 1 ? 'try' : 'tries'} left before a 15-minute lock.`);
+      } else if (res.status === 'locked') {
+        setPin('');
+        setErr(lockedMsg(res));
+      } else {
+        setErr('Could not log you in. Try again.');
       }
-      onLogin({
-        loginPan: clean,
-        memberId: res.member_id,
-        name: res.name,
-        holder: res.login_holder || '',
-        isHead: !!res.is_head,
-        pans: res.pans || []
-      });
     } catch (e) {
-      setErr('Could not verify your PAN. Check your connection and try again.');
-      setLoading(false);
+      setErr('Could not verify your details. Check your connection and try again.');
     }
+    setLoading(false);
+  };
+  const boxSt = on => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    border: '1.5px solid',
+    borderColor: on ? 'var(--brand)' : 'var(--border-strong)',
+    borderRadius: 'var(--r-md)',
+    padding: '13px 15px',
+    background: 'var(--surface)'
+  });
+  const pinInputSt = {
+    border: 'none',
+    outline: 'none',
+    fontSize: 18,
+    fontWeight: 700,
+    letterSpacing: '.3em',
+    width: '100%',
+    background: 'transparent',
+    color: 'var(--ink)'
+  };
+  const labelSt = {
+    fontSize: 13,
+    fontWeight: 700,
+    color: 'var(--ink-2)',
+    display: 'block',
+    marginBottom: 8
+  };
+  const onPin = set => e => {
+    set(e.target.value.replace(/[^0-9]/g, '').slice(0, 6));
+    setErr('');
   };
   return React.createElement(Card, {
     pad: 26
@@ -657,36 +771,34 @@ function MemberLogin({
     }
   }, React.createElement(Badge, {
     tone: ipo.type === 'SME' ? 'sme' : 'mainboard'
-  }, ipo.type), ipo.band_high ? React.createElement("span", null, "₹", ipo.band_low, "–", ipo.band_high) : null))), React.createElement("div", {
+  }, ipo.type), ipo.band_high ? React.createElement("span", null, "₹", ipo.band_low, "–", ipo.band_high) : null))), expired && step === 'pan' && !err && React.createElement("div", {
+    style: {
+      background: 'var(--surface-2)',
+      border: '1px solid var(--border)',
+      borderRadius: 'var(--r-sm)',
+      padding: '9px 12px',
+      fontSize: 12.5,
+      fontWeight: 600,
+      color: 'var(--ink-2)',
+      marginBottom: 16
+    }
+  }, "Your login has ended. Please log in again."), step === 'pan' && React.createElement(React.Fragment, null, React.createElement("div", {
     style: {
       fontSize: 18,
       fontWeight: 800,
       letterSpacing: '-.01em'
     }
-  }, "Record your application"), React.createElement("div", {
+  }, applyMode ? 'Record your application' : 'See your profits'), React.createElement("div", {
     style: {
       fontSize: 13.5,
       color: 'var(--ink-3)',
       margin: '4px 0 20px'
     }
-  }, "Already applied in your Demat? Enter your PAN to fill in which of your family PANs applied. No password needed."), React.createElement("label", {
-    style: {
-      fontSize: 13,
-      fontWeight: 700,
-      color: 'var(--ink-2)',
-      display: 'block',
-      marginBottom: 8
-    }
+  }, applyMode ? 'Already applied in your Demat? Enter your PAN to fill in which of your family PANs applied.' : 'Enter your PAN to see your allotments, profits and pending settlements.'), React.createElement("label", {
+    style: labelSt
   }, "Your PAN number"), React.createElement("div", {
     style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-      border: '1.5px solid',
-      borderColor: looksValid ? 'var(--brand)' : 'var(--border-strong)',
-      borderRadius: 'var(--r-md)',
-      padding: '13px 15px',
-      background: 'var(--surface)',
+      ...boxSt(looksValid),
       marginBottom: err ? 10 : 20
     }
   }, React.createElement(Icon, {
@@ -707,6 +819,7 @@ function MemberLogin({
     autoCapitalize: "characters",
     autoCorrect: "off",
     spellCheck: false,
+    "aria-label": "PAN number",
     style: {
       border: 'none',
       outline: 'none',
@@ -718,7 +831,88 @@ function MemberLogin({
       color: 'var(--ink)',
       textTransform: 'uppercase'
     }
-  })), err && React.createElement("div", {
+  }))), step !== 'pan' && React.createElement(React.Fragment, null, React.createElement("button", {
+    onClick: backToPan,
+    style: {
+      border: 'none',
+      background: 'none',
+      padding: 0,
+      marginBottom: 14,
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 5,
+      color: 'var(--ink-3)',
+      fontSize: 13,
+      fontWeight: 700,
+      cursor: 'pointer'
+    }
+  }, React.createElement(Icon, {
+    name: "chevL",
+    size: 14
+  }), " ", clean), React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontWeight: 800,
+      letterSpacing: '-.01em'
+    }
+  }, step === 'create' ? 'Choose a PIN' : 'Enter your PIN'), React.createElement("div", {
+    style: {
+      fontSize: 13.5,
+      color: 'var(--ink-3)',
+      margin: '4px 0 20px'
+    }
+  }, step === 'create' ? "First time here with this PAN. Pick a 4 to 6 digit PIN — you'll need it on a new device. If you forget it, the admin can reset it." : 'The PIN you chose for this PAN. Forgotten it? Ask the admin to reset it.'), React.createElement("label", {
+    style: labelSt
+  }, step === 'create' ? 'New PIN' : 'PIN'), React.createElement("div", {
+    style: {
+      ...boxSt(pinOk),
+      marginBottom: step === 'create' ? 14 : err ? 10 : 20
+    }
+  }, React.createElement(Icon, {
+    name: "lock",
+    size: 16,
+    color: "var(--ink-2)",
+    style: {
+      flexShrink: 0
+    }
+  }), React.createElement("input", {
+    value: pin,
+    onChange: onPin(setPin),
+    onKeyDown: e => e.key === 'Enter' && submit(),
+    autoFocus: true,
+    type: "password",
+    inputMode: "numeric",
+    autoComplete: step === 'create' ? 'new-password' : 'current-password',
+    maxLength: 6,
+    "aria-label": step === 'create' ? 'New PIN' : 'PIN',
+    placeholder: "••••",
+    style: pinInputSt
+  })), step === 'create' && React.createElement(React.Fragment, null, React.createElement("label", {
+    style: labelSt
+  }, "Confirm PIN"), React.createElement("div", {
+    style: {
+      ...boxSt(pinOk && pin === pin2),
+      marginBottom: err ? 10 : 20
+    }
+  }, React.createElement(Icon, {
+    name: "lock",
+    size: 16,
+    color: "var(--ink-2)",
+    style: {
+      flexShrink: 0
+    }
+  }), React.createElement("input", {
+    value: pin2,
+    onChange: onPin(setPin2),
+    onKeyDown: e => e.key === 'Enter' && submit(),
+    type: "password",
+    inputMode: "numeric",
+    autoComplete: "new-password",
+    maxLength: 6,
+    "aria-label": "Confirm PIN",
+    placeholder: "••••",
+    style: pinInputSt
+  })))), err && React.createElement("div", {
     style: {
       color: 'var(--loss)',
       fontSize: 13,
@@ -735,14 +929,14 @@ function MemberLogin({
       opacity: loading ? .7 : 1,
       pointerEvents: loading ? 'none' : 'auto'
     }
-  }, loading ? 'Checking…' : 'Continue'), React.createElement("div", {
+  }, loading ? 'Checking…' : step === 'create' ? 'Set PIN and continue' : 'Continue'), React.createElement("div", {
     style: {
       fontSize: 11.5,
       color: 'var(--ink-4, var(--ink-3))',
       textAlign: 'center',
       marginTop: 14
     }
-  }, "Only PANs the admin has registered can apply."));
+  }, step === 'pan' ? 'Only PANs the admin has registered can log in.' : 'You stay logged in on this device until you log out.'));
 }
 function MemberApply({
   ipo,
@@ -776,7 +970,7 @@ function MemberApply({
       return;
     }
     let alive = true;
-    window.MemberAPI.myIpoApplications(session.loginPan, ipo.id).then(existing => {
+    window.MemberAPI.myIpoApplications(session, ipo.id).then(existing => {
       if (!alive) return;
       const applied = {};
       setRows(prev => {
@@ -801,7 +995,7 @@ function MemberApply({
     return () => {
       alive = false;
     };
-  }, [ipo && ipo.id, session.loginPan]);
+  }, [ipo && ipo.id, session.key]);
   const setRow = (id, patch) => setRows(prev => ({
     ...prev,
     [id]: {
@@ -825,7 +1019,7 @@ function MemberApply({
         category: rows[p.id].category,
         lots: Math.max(1, parseInt(rows[p.id].lots, 10) || 1)
       }));
-      const res = await window.MemberAPI.submitApplications(session.loginPan, ipo.id, payload);
+      const res = await window.MemberAPI.submitApplications(session, ipo.id, payload);
       setDone({
         count: res && res.count || payload.length,
         updated: hasExisting
@@ -1222,7 +1416,7 @@ function IpoApplicantsGrid({
     let alive = true;
     setLoading(true);
     setErr('');
-    window.MemberAPI.ipoApplicants(session.loginPan, ipo.id).then(d => {
+    window.MemberAPI.ipoApplicants(session, ipo.id).then(d => {
       if (alive) {
         setRows(d || []);
         setLoading(false);
@@ -1236,7 +1430,7 @@ function IpoApplicantsGrid({
     return () => {
       alive = false;
     };
-  }, [ipo.id, session.loginPan]);
+  }, [ipo.id, session.key]);
   const cols = [{
     key: 'holder',
     label: 'Applicant',

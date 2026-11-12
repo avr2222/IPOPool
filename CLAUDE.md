@@ -29,3 +29,6 @@ worker picks up changes.
 SQL in `supabase/migrations/`. Apply new ones in order in the Supabase SQL
 editor. The internal group-pooling feature needs migrations through 026.
 Migration 027 adds admin-entered market holidays (Settings).
+Migration 028 adds the member PIN and session tokens; the app falls back to
+PAN-only login until it is applied. Run 029 (locks the old PAN-only member
+functions) only after the 028-aware app is live.
