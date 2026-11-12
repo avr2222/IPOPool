@@ -10,7 +10,19 @@
   <link rel="icon" href="icon.svg" sizes="any" />
 
   <!-- PWA -->
-  <link rel="manifest" href="manifest.json" />
+  <!-- Two installable identities share this one page: the admin app
+       (manifest.json, start_url "./") and the member "My Profits" portal
+       (manifest-member.json, start_url "./#/me"). Installing from a member
+       route must NOT hand a member an icon that reopens to the admin login
+       -- swapped here, before the browser evaluates installability. -->
+  <link rel="manifest" href="manifest.json" id="pwa-manifest" />
+  <script>
+    (function () {
+      if (/#\/me\/?$/.test(location.hash) || /#\/apply\//.test(location.hash)) {
+        document.getElementById('pwa-manifest').setAttribute('href', 'manifest-member.json');
+      }
+    })();
+  </script>
   <meta name="theme-color" content="#0B8A4B" />
   <meta name="mobile-web-app-capable" content="yes" />
 

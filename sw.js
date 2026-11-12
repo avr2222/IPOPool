@@ -2,7 +2,7 @@
 // Strategy: network-first for app files and CDN libs (so deploys reach users
 // without bumping this version), cache fallback for offline, and network-only
 // for Supabase API calls (so reads are never served stale after writes).
-const CACHE = 'ipo-pool-v63';
+const CACHE = 'ipo-pool-v64';
 
 const APP_ASSETS = [
   './',
@@ -26,6 +26,7 @@ const APP_ASSETS = [
   './build/app.js',
   './icon.svg',
   './manifest.json',
+  './manifest-member.json',
 ];
 
 self.addEventListener('install', e => {
