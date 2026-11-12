@@ -185,10 +185,14 @@ window.localDateStr = localDateStr;
 //   open      = T-2  (an issue must stay open at least 3 working days)
 //   allotment = T+1  (basis of allotment finalised)
 //   listing   = T+3
-// Working days skip Saturdays, Sundays and the market holidays that fall on
-// the same date every year. Festival holidays that move each year (Holi,
-// Diwali, Dussehra…) aren't known in advance, so the filled dates stay
-// editable for those weeks.
+// Working days skip Saturdays, Sundays and market holidays. Three sources:
+//   FIXED_HOLIDAYS    same date every year
+//   DATED_HOLIDAYS    the exchange's published list for a given year (festivals
+//                     move, and NSE only publishes next year's list in December)
+//   extra holidays    dates the admin adds in Settings (pool_settings
+//                     .market_holidays, migration 027) -- how a new year's list
+//                     gets in without a code change
+// The filled dates stay editable either way.
 var FIXED_HOLIDAYS = {            // 'MM-DD' -> name
   '01-26': 'Republic Day',
   '04-14': 'Dr. Ambedkar Jayanti',
@@ -197,8 +201,38 @@ var FIXED_HOLIDAYS = {            // 'MM-DD' -> name
   '10-02': 'Gandhi Jayanti',
   '12-25': 'Christmas',
 };
+var DATED_HOLIDAYS = {            // 'YYYY-MM-DD' -> name (NSE equity segment, 2026)
+  '2026-03-03': 'Holi',
+  '2026-03-26': 'Ram Navami',
+  '2026-03-31': 'Mahavir Jayanti',
+  '2026-04-03': 'Good Friday',
+  '2026-05-28': 'Bakri Id',
+  '2026-06-26': 'Muharram',
+  '2026-09-14': 'Ganesh Chaturthi',
+  '2026-10-20': 'Dussehra',
+  '2026-11-10': 'Diwali Balipratipada',
+  '2026-11-24': 'Guru Nanak Jayanti',
+};
+// Admin-entered text -> ['YYYY-MM-DD', ...]. Accepts one date per line or any
+// mix of commas/spaces, with optional trailing notes; anything that is not a
+// real calendar date is dropped.
+function parseHolidayList(text) {
+  var out = [], seen = {};
+  (String(text || '').match(/\d{4}-\d{2}-\d{2}/g) || []).forEach(function(ds) {
+    var d = parseLocalDate(ds);
+    if (!d || localDateStr(d) !== ds || seen[ds]) return;
+    seen[ds] = true; out.push(ds);
+  });
+  return out.sort();
+}
+var _extraHolidays = {};          // 'YYYY-MM-DD' -> true
+function setExtraHolidays(text) {
+  _extraHolidays = {};
+  parseHolidayList(text).forEach(function(ds) { _extraHolidays[ds] = true; });
+}
 function marketHolidayName(dateStr) {
-  return FIXED_HOLIDAYS[String(dateStr).slice(5, 10)] || null;
+  var ds = String(dateStr).slice(0, 10);
+  return FIXED_HOLIDAYS[ds.slice(5, 10)] || DATED_HOLIDAYS[ds] || (_extraHolidays[ds] ? 'market holiday' : null);
 }
 function isTradingDay(d) {
   var day = d.getDay();
@@ -230,6 +264,10 @@ function ipoTimeline(closeStr) {
 window.ipoTimeline = ipoTimeline;
 window.addTradingDays = addTradingDays;
 window.FIXED_HOLIDAYS = FIXED_HOLIDAYS;
+window.DATED_HOLIDAYS = DATED_HOLIDAYS;
+window.parseHolidayList = parseHolidayList;
+window.setExtraHolidays = setExtraHolidays;
+window.marketHolidayName = marketHolidayName;
 
 function deriveIpoStatus(ipo, allots, pools) {
   var hasPool = pools.some(function(p){ return p.ipo === ipo.id; });
@@ -663,7 +701,15 @@ async function loadPoolSettings() {
     var res = await window.sb.from('pool_settings').select('*').eq('id', 1);
     _poolSettings = (!res.error && res.data && res.data[0]) ? res.data[0] : {};
   } catch (e) { _poolSettings = {}; }
+  setExtraHolidays(extraHolidaysText());
 }
+// The admin's extra market holidays: the shared row (027), else this device's
+// local copy, same resolution order as the numeric settings.
+function extraHolidaysText() {
+  if (_poolSettings.market_holidays != null) return String(_poolSettings.market_holidays);
+  try { return localStorage.getItem('marketHolidays') || ''; } catch (e) { return ''; }
+}
+window.extraHolidaysText = extraHolidaysText;
 
 // Brokerage is ONE flat charge per IPO — Settings calls it "flat amount
 // deducted per IPO sell" — but profit is pooled per category. The flat amount
@@ -1741,7 +1787,21 @@ async function loadDB() {
         });
         var row = { id: 1, updated_at: new Date().toISOString() };
         Object.keys(SETTING_COLUMNS).forEach(function(k) { row[SETTING_COLUMNS[k]] = vals[k]; });
+        // Extra market holidays (migration 027). Stored as normalised dates,
+        // one per line; kept locally too so a database without 027 still
+        // uses them on this device.
+        var holidaysLocalOnly = false;
+        if (vals.marketHolidays !== undefined) {
+          var holText = parseHolidayList(vals.marketHolidays).join('\n');
+          try { localStorage.setItem('marketHolidays', holText); } catch (e) {}
+          row.market_holidays = holText;
+        }
         var { data, error } = await window.sb.from('pool_settings').upsert(row, { onConflict: 'id' }).select();
+        if (error && row.market_holidays !== undefined && isMissingColumn(error, 'market_holidays')) {
+          delete row.market_holidays;
+          holidaysLocalOnly = true;
+          ({ data, error } = await window.sb.from('pool_settings').upsert(row, { onConflict: 'id' }).select());
+        }
         if (error) {
           if (/pool_settings/.test(error.message || '') && /(does not exist|schema cache|not find)/i.test(error.message || '')) {
             throw new Error('Saved on this device only. Run migration 019_pool_settings.sql in Supabase to share settings across devices.');
@@ -1750,6 +1810,7 @@ async function loadDB() {
         }
         if (!data || data.length === 0) throw new Error('Save failed — no rows updated (check admin permissions).');
         await loadDB();
+        if (holidaysLocalOnly) throw new Error('Settings saved, but the extra market holidays are on this device only. Run migration 027_market_holidays.sql in Supabase to share them.');
       },
 
       async updatePan(id, fields) {

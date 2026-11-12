@@ -509,7 +509,7 @@ function AutoDateNote({
       lineHeight: 1.5,
       marginTop: -4
     }
-  }, "Enter the close date — open, allotment and listing fill in automatically (T+3, skipping Saturdays, Sundays and fixed-date holidays like 26 Jan, 15 Aug, 2 Oct). Festival holidays aren't included, so adjust those weeks by hand.", t?.closeWarning && React.createElement("div", {
+  }, "Enter the close date — open, allotment and listing fill in automatically (T+3, skipping weekends and market holidays). Festival holidays are known only for years whose exchange list is built in or added under Settings → Market holidays, so check the dates in other years.", t?.closeWarning && React.createElement("div", {
     style: {
       color: 'var(--warn)',
       fontWeight: 700,
