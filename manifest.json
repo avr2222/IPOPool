@@ -9,19 +9,33 @@
   "background_color": "#F6F7F9",
   "theme_color": "#0B8A4B",
   "lang": "en-IN",
-  "categories": ["finance"],
+  "categories": [
+    "finance"
+  ],
   "icons": [
     {
-      "src": "icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "maskable"
+      "purpose": "any"
     }
   ],
   "shortcuts": [
@@ -29,7 +43,13 @@
       "name": "Profit Pool",
       "short_name": "Pool",
       "url": "./",
-      "icons": [{ "src": "icon.svg", "sizes": "any" }]
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
     }
   ]
 }
