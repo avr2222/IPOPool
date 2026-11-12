@@ -34,10 +34,13 @@ for (const name of FILES) {
   const code = fs.readFileSync(srcPath, 'utf8');
   const out = babel.transformSync(code, {
     filename: srcPath,
-    presets: [['@babel/preset-react', { runtime: 'classic' }]],
+    presets: [['@babel/preset-react', { runtime: 'classic', useSpread: true }]],
     compact: false,
     comments: false,
     sourceMaps: false,
+    // Keep non-ASCII text (₹, ·, …) literal instead of \uXXXX escapes, so the
+    // output doesn't churn between Babel versions.
+    generatorOpts: { jsescOption: { minimal: true } },
   }).code;
   const header = '// GENERATED from src/' + name + '.jsx by build.js — do not edit.\n';
   const dest = path.join(OUT, name + '.js');
