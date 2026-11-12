@@ -88,6 +88,38 @@ section('IPO timeline from close date');
   check('a bad date gives no timeline', t('not-a-date') === null && t('') === null);
 }
 
+// ── IPO details pasted into the New IPO form ────────────────────────────────
+section('IPO paste parser');
+{
+  const P = (t) => win.parseIpoPaste(t).fields;
+  const eq = (name, got, want) => check(name, JSON.stringify(got) === JSON.stringify(want), 'got ' + JSON.stringify(got));
+  const main = P([
+    'Tata Technologies IPO Details',
+    'IPO Date\tNovember 22, 2023 to November 24, 2023',
+    'Listing Date\tNovember 30, 2023',
+    'Face Value\t₹2 per share',
+    'Price Band\t₹475 to ₹500 per share',
+    'Lot Size\t30 Shares',
+    'Total Issue Size\t6,08,50,278 shares (aggregating up to ₹3,042.51 Cr)',
+    'Listing At\tBSE, NSE',
+    'IPO Open Date\tWednesday, November 22, 2023',
+    'IPO Close Date\tFriday, November 24, 2023',
+    'Basis of Allotment\tThursday, November 30, 2023',
+  ].join('\n'));
+  eq('mainboard table: every field', main, { openDate: '2023-11-22', closeDate: '2023-11-24', listDate: '2023-11-30',
+    price: 500, lotSize: 30, type: 'Mainboard', allotDate: '2023-11-30', name: 'Tata Technologies' });
+  const sme = P('Shreeji Global FMCG Ltd. IPO\nIPO Date\n4 to 7 Nov, 2025\nListing Date\n[.]\nPrice Band\n₹120 to ₹125 per share\nLot Size\n1,000 Shares\nListing At\nNSE SME\nTentative Allotment\nMon, Nov 10, 2025\nTentative Listing Date\nWed, Nov 12, 2025');
+  check('SME, value on the next line, day range, thousands comma',
+    sme.type === 'SME' && sme.openDate === '2025-11-04' && sme.closeDate === '2025-11-07' && sme.price === 125 &&
+    sme.lotSize === 1000 && sme.allotDate === '2025-11-10' && sme.listDate === '2025-11-12', JSON.stringify(sme));
+  const free = P('XYZ Infra IPO: issue price Rs 100, lot size 1200, closes on 14-11-2026, BSE SME');
+  check('free-form sentence, day-first numeric date', free.price === 100 && free.lotSize === 1200 && free.closeDate === '2026-11-14' && free.type === 'SME' && free.name === 'XYZ Infra', JSON.stringify(free));
+  check('face value is not mistaken for the price', P('Face Value ₹10 per share\nIssue Price ₹210 per share').price === 210);
+  eq('unrelated text finds nothing', P('hello there\nnothing useful 123'), {});
+  eq('empty and null input', [P(''), P(null)], [{}, {}]);
+  eq('impossible dates are dropped', win.ipoDatesIn('31 Feb 2026, 30 Feb 2026'), []);
+}
+
 // ── Lots pre-filled per category ────────────────────────────────────────────
 section('default lots per category');
 {

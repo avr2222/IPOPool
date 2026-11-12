@@ -408,6 +408,145 @@ function parseAllotmentPaste(text) {
 }
 window.parseAllotmentPaste = parseAllotmentPaste;
 
+// Parse IPO details pasted from an IPO listing page (or typed in a chat), so
+// the admin reviews a pre-filled form instead of typing every field.
+//
+// The text is read as "label  value" lines -- "Price Band ₹475 to ₹500 per
+// share", "Lot Size 30 Shares", "IPO Close Date Fri, Nov 24, 2023" -- with the
+// value allowed on the following line, since copying a web table often splits
+// them. Unrecognised lines are ignored. Never throws.
+//
+// Returns { fields, found }: fields holds only what was recognised, keyed like
+// the New IPO form ({ name, type, price, lotSize, openDate, closeDate,
+// allotDate, listDate }, dates as YYYY-MM-DD), and found lists those keys.
+var IPO_MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+// Every date mentioned in a string, in order, as YYYY-MM-DD. Understands
+// "Nov 24, 2023", "24 November 2023", "24-11-2023" / "24/11/2023" (day first,
+// the Indian convention) and "2023-11-24". A day+month without a year
+// ("22 to 24 Nov, 2023") borrows the year from the next date that has one.
+function ipoDatesIn(text) {
+  var str = String(text || ''), hits = [];
+  var MON = '(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?';
+  var push = function(idx, len, y, m, d) {
+    y = y ? +y : null; m = +m; d = +d;
+    if (y != null && y < 100) y += 2000;
+    if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return;
+    hits.push({ idx: idx, end: idx + len, y: y, m: m, d: d });
+  };
+  var m, re;
+  re = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g;
+  while ((m = re.exec(str))) push(m.index, m[0].length, m[1], m[2], m[3]);
+  re = /\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2}|\d{4})\b/g;
+  while ((m = re.exec(str))) push(m.index, m[0].length, m[3], m[2], m[1]);
+  re = new RegExp('\\b' + MON + '\\s+(\\d{1,2})(?!\\d)(?:st|nd|rd|th)?(?:\\s*,?\\s*(\\d{4}))?', 'gi');
+  while ((m = re.exec(str))) push(m.index, m[0].length, m[3], IPO_MONTHS[m[1].toLowerCase()], m[2]);
+  re = new RegExp('\\b(\\d{1,2})(?:st|nd|rd|th)?[\\s-]+' + MON + '(?:[\\s,-]+(\\d{4}))?', 'gi');
+  while ((m = re.exec(str))) push(m.index, m[0].length, m[3], IPO_MONTHS[m[2].toLowerCase()], m[1]);
+  // "22 to 24 Nov, 2023": the first day has no month of its own.
+  re = new RegExp('\\b(\\d{1,2})\\s*(?:to|-|–|—)\\s*(\\d{1,2})\\s+' + MON + '(?:[\\s,-]+(\\d{4}))?', 'gi');
+  while ((m = re.exec(str))) push(m.index, m[1].length, m[4], IPO_MONTHS[m[3].toLowerCase()], m[1]);
+  hits.sort(function(a, b) { return a.idx - b.idx; });
+  // "24 Nov 2023" is seen by both the day-first and month-first patterns;
+  // keep the earliest hit and drop any that start inside it.
+  var out = [], lastEnd = -1;
+  hits.forEach(function(h) {
+    if (h.idx < lastEnd) return;
+    lastEnd = h.end;
+    out.push(h);
+  });
+  for (var i = out.length - 1, yr = null; i >= 0; i--) {
+    if (out[i].y != null) yr = out[i].y; else out[i].y = yr;
+  }
+  return out.filter(function(h) { return h.y != null; }).map(function(h) {
+    var ds = h.y + '-' + String(h.m).padStart(2, '0') + '-' + String(h.d).padStart(2, '0');
+    var d = parseLocalDate(ds);
+    return d && localDateStr(d) === ds ? ds : null;
+  }).filter(Boolean);
+}
+// "₹475 to ₹500 per share" -> 500 (the upper band is the cut-off price an
+// application is made at); "Rs 100, lot size 1200" -> 100.
+function ipoPriceIn(val) {
+  var v = String(val || '').replace(/(\d),(?=\d)/g, '$1');
+  var first = /\d+(\.\d+)?/.exec(v);
+  if (!first) return null;
+  var range = /^(\d+(?:\.\d+)?)\s*(?:to|-|–|—)\s*(?:₹|rs\.?|inr)?\s*(\d+(?:\.\d+)?)/i.exec(v.slice(first.index));
+  var n = range ? Math.max(parseFloat(range[1]), parseFloat(range[2])) : parseFloat(first[0]);
+  return n > 0 ? n : null;
+}
+function parseIpoPaste(text) {
+  var fields = {};
+  var lines = String(text || '').split(/\r?\n/).map(function(l) { return l.replace(/\s+/g, ' ').trim(); }).filter(Boolean);
+  // Value for a label matched on line i: the rest of that line, else the next line.
+  var valueOf = function(i, m) {
+    var rest = lines[i].slice(m.index + m[0].length).replace(/^[\s:–—-]+/, '').trim();
+    return rest || lines[i + 1] || '';
+  };
+  var set = function(k, v) { if (fields[k] == null && v != null && v !== '' && !(typeof v === 'number' && isNaN(v))) fields[k] = v; };
+  var LABELS = [
+    ['range', /^(ipo date|issue period|bidding dates?|subscription (period|dates?)|offer period)\b/i],
+    ['open',  /^(ipo |issue |bid(ding)? |offer )?open(s|ing)?( date| on)?\b/i],
+    ['close', /^(ipo |issue |bid(ding)? |offer )?clos(e|es|ing)( date| on)?\b/i],
+    ['allot', /^(tentative |basis of |finali[sz]ation of basis of )?allotment( date| status)?\b/i],
+    ['list',  /^(tentative |ipo |expected )?listing date\b/i],
+    ['price', /^(ipo |issue |final |cut[- ]?off )?price( band| range)?\b/i],
+    ['lot',   /^(market |bid |minimum )?lot( size)?\b/i],
+    ['board', /^(listing at|listing on|listed on|exchanges?|issue type|ipo type|segment)\b/i],
+  ];
+  lines.forEach(function(line, i) {
+    for (var k = 0; k < LABELS.length; k++) {
+      var m = LABELS[k][1].exec(line);
+      if (!m) continue;
+      var key = LABELS[k][0], val = valueOf(i, m), dates;
+      if (key === 'range') {
+        dates = ipoDatesIn(val);
+        if (dates.length >= 2) { set('openDate', dates[0]); set('closeDate', dates[1]); }
+      } else if (key === 'open' || key === 'close' || key === 'allot' || key === 'list') {
+        dates = ipoDatesIn(val);
+        if (dates.length) set(key + 'Date', dates[0]);
+      } else if (key === 'price') {
+        set('price', ipoPriceIn(val));
+      } else if (key === 'lot') {
+        var lm = val.replace(/(\d),(?=\d)/g, '$1').match(/\d+/);
+        if (lm) set('lotSize', parseInt(lm[0], 10));
+      } else if (key === 'board') {
+        if (/\bsme\b|emerge/i.test(val)) set('type', 'SME');
+        else if (/\b(bse|nse)\b|mainboard|main board/i.test(val)) set('type', 'Mainboard');
+      }
+      return;
+    }
+  });
+  // Free-form text ("issue price Rs 100, lot size 1200, closes on 14-11-2026"):
+  // for anything still missing, look for the label anywhere and read what follows.
+  var all = lines.join('\n');
+  var after = function(re) { var m = re.exec(all); return m ? all.slice(m.index + m[0].length, m.index + m[0].length + 48).split('\n')[0] : null; };
+  var v;
+  if (fields.price == null && (v = after(/\b(issue |ipo |final |cut[- ]?off )?price( band| range)?\b/i))) {
+    set('price', ipoPriceIn(v));
+  }
+  if (fields.lotSize == null && (v = after(/\b(market |bid |minimum )?lot( size)?\b/i))) {
+    var ln = v.replace(/(\d),(?=\d)/g, '$1').match(/\d+/);
+    if (ln) set('lotSize', parseInt(ln[0], 10));
+  }
+  [['openDate', /\bopen(s|ing)?( date| on)?\b/i], ['closeDate', /\bclos(e|es|ing)( date| on)?\b/i],
+   ['allotDate', /\ballotment( date)?\b/i], ['listDate', /\blisting( date| on)?\b/i]].forEach(function(p) {
+    if (fields[p[0]] != null) return;
+    var d = ipoDatesIn(after(p[1]) || '');
+    if (d.length) set(p[0], d[0]);
+  });
+  // Board, if no labelled line settled it.
+  if (fields.type == null && /\b(nse|bse)\s+sme\b|nse\s+emerge|\bsme\s+ipo\b/i.test(lines.join('\n'))) fields.type = 'SME';
+  // Name: the first "<Company> IPO" heading.
+  for (var i = 0; i < lines.length && fields.name == null; i++) {
+    var nm = /^(.{2,80}?)\s+IPO\b/i.exec(lines[i]);
+    if (nm && !/^(about|the|upcoming|current|latest|sme|mainboard|apply|what|how|is)\b/i.test(nm[1]) && !LABELS.some(function(l) { return l[1].test(lines[i]); })) {
+      fields.name = nm[1].trim();
+    }
+  }
+  return { fields: fields, found: Object.keys(fields) };
+}
+window.parseIpoPaste = parseIpoPaste;
+window.ipoDatesIn = ipoDatesIn;
+
 // Price of one lot = lot size × cut-off price. Derived in the db layer rather
 // than in the form, because the form forgetting to send it is exactly how
 // lot_value stayed NULL on every IPO and left the dashboard reporting a total
